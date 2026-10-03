@@ -20,3 +20,9 @@ jobs:
 
       - name: Ejecutar FOMO Brain
         run: python fomo_brain.py
+      - name: Guardar memoria FOMO
+        uses: actions/upload-artifact@v4
+        with:
+          name: fomo-memory
+          path: fomo_memory.json
+          if-no-files-found: ignore
