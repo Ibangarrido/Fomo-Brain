@@ -3,13 +3,13 @@ import json
 import urllib.parse
 import urllib.request
 
-# FOMO Radar v3
+# FOMO Radar v4
 SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin"]
 
 # Filtros iniciales para buscar proyectos pequeños
 MIN_LIQUIDITY = 5_000
 MAX_MARKET_CAP = 5_000_000
-MIN_VOLUME_1H = 1_000
+MIN_VOLUME_1H = 5_000
 MAX_EXPOSURE_EUR = 10.0
 
 
@@ -48,7 +48,8 @@ def analizar_par(pair):
 
     if vol_1h < MIN_VOLUME_1H:
         return None
-
+    if change_5m <= 0 and change_1h <= 0:
+        return None
     score = 0
 
     # Liquidez suficiente
@@ -69,7 +70,7 @@ def analizar_par(pair):
     if change_1h > 5:
         score += 1
 
-    if change_1h > 15:
+    if change_1h > 10:
         score += 2
 
     # Evitar premiar una subida ya extremadamente vertical
@@ -141,7 +142,9 @@ def main():
 
         except Exception as error:
             print(f"⚠️ Error buscando {termino}: {error}")
-
+    candidatos = {
+        k: v for k, v in candidatos.items() if v["score"] >= 3
+    }
     ranking = sorted(
         candidatos.values(),
         key=lambda x: (
@@ -153,7 +156,7 @@ def main():
     )
 
     print(f"Candidatos filtrados: {len(ranking)}")
-    print("TOP 10 FOMO RADAR v3")
+    print("TOP 10 FOMO RADAR v4")
 
     if not ranking:
         print("Sin candidatos que cumplan los filtros.")
