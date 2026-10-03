@@ -160,6 +160,7 @@ def main():
 
     if not ranking:
         print("Sin candidatos que cumplan los filtros.")
+        guardar_memoria(ranking)
         return
     guardar_memoria(ranking)
     for posicion, token in enumerate(ranking[:10], start=1):
