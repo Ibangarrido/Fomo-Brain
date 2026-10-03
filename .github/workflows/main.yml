@@ -1,0 +1,11 @@
+name: Prueba FOMO
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prueba
+        run: echo "FOMO Brain funciona"
