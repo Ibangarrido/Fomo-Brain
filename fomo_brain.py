@@ -162,7 +162,7 @@ def main():
         print("Sin candidatos que cumplan los filtros.")
         guardar_memoria(ranking)
         return
-       comparar_con_memoria(ranking)
+    comparar_con_memoria(ranking)
     guardar_memoria(ranking)
     for posicion, token in enumerate(ranking[:10], start=1):
         print("")
