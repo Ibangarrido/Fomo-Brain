@@ -143,7 +143,7 @@ def main():
         except Exception as error:
             print(f"⚠️ Error buscando {termino}: {error}")
     candidatos = {
-        k: v for k, v in candidatos.items() if v["score"] >= 3
+        k: v for k, v in candidatos.items() if v["score"] >= 2
     }
     ranking = sorted(
         candidatos.values(),
