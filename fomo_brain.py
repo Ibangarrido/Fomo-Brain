@@ -162,6 +162,7 @@ def main():
         print("Sin candidatos que cumplan los filtros.")
         guardar_memoria(ranking)
         return
+       comparar_con_memoria(ranking)
     guardar_memoria(ranking)
     for posicion, token in enumerate(ranking[:10], start=1):
         print("")
@@ -192,6 +193,81 @@ def main():
         f"Modo análisis únicamente | "
         f"exposición futura máxima: €{MAX_EXPOSURE_EUR:.2f}"
     )
+def comparar_con_memoria(ranking):
+    try:
+        with open("fomo_memory.json", "r") as archivo:
+            memoria = json.load(archivo)
+        if not isinstance(memoria, list):
+            memoria = []
+    except (FileNotFoundError, json.JSONDecodeError):
+        memoria = []
+
+    print("")
+    print("🧠 EVOLUCION DESDE LA ULTIMA LECTURA")
+
+    for token in ranking[:10]:
+        anteriores = [
+            x for x in memoria
+            if x.get("address") == token["address"]
+            and x.get("chain") == token["chain"]
+        ]
+
+        if not anteriores:
+            print(f"{token['symbol']}: NUEVO EN EL RADAR")
+            continue
+
+        anterior = anteriores[-1]
+
+        def variacion(actual, previo):
+            if previo in (None, 0):
+                return None
+            return ((actual - previo) / previo) * 100
+
+        precio = variacion(token["price"], anterior.get("price"))
+        mc = variacion(token["mc"], anterior.get("mc"))
+        liquidez = variacion(
+            token["liquidity"], anterior.get("liquidity")
+        )
+        volumen = variacion(token["vol1h"], anterior.get("vol1h"))
+        score_anterior = anterior.get("score", 0)
+        delta_score = token["score"] - score_anterior
+
+        print("")
+        print(f"{token['symbol']} | ultima lectura: {anterior.get('hora')}")
+        print(
+            f"precio={precio:+.2f}% | MC={mc:+.2f}%"
+            if precio is not None and mc is not None
+            else "precio/MC: sin comparacion"
+        )
+        print(
+            f"liquidez={liquidez:+.2f}% | volumen1h={volumen:+.2f}%"
+            if liquidez is not None and volumen is not None
+            else "liquidez/volumen: sin comparacion"
+        )
+        print(
+            f"score={score_anterior}/9 -> {token['score']}/9 "
+            f"({delta_score:+d})"
+        )
+
+        senales = 0
+        if precio is not None and precio > 0:
+            senales += 1
+        if volumen is not None and volumen > 10:
+            senales += 1
+        if liquidez is not None and liquidez > 0:
+            senales += 1
+        if delta_score > 0:
+            senales += 1
+
+        if senales >= 3:
+            estado = "ACELERANDO"
+        elif senales >= 1:
+            estado = "MIXTO"
+        else:
+            estado = "PERDIENDO MOMENTUM"
+
+        print(f"estado={estado}")
+
 def guardar_memoria(ranking):
     ahora = datetime.now(timezone.utc).isoformat()
 
