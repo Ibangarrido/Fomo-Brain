@@ -161,7 +161,7 @@ def main():
     if not ranking:
         print("Sin candidatos que cumplan los filtros.")
         return
-
+    guardar_memoria(ranking)
     for posicion, token in enumerate(ranking[:10], start=1):
         print("")
         print(
@@ -191,7 +191,28 @@ def main():
         f"Modo análisis únicamente | "
         f"exposición futura máxima: €{MAX_EXPOSURE_EUR:.2f}"
     )
+def guardar_memoria(ranking):
+    ahora = datetime.now(timezone.utc).isoformat()
+    memoria = []
 
+    for token in ranking[:10]:
+        memoria.append({
+            "hora": ahora,
+            "symbol": token["symbol"],
+            "name": token["name"],
+            "address": token["address"],
+            "chain": token["chain"],
+            "price": token["price"],
+            "mc": token["mc"],
+            "liquidity": token["liquidity"],
+            "vol1h": token["vol1h"],
+            "change5m": token["change5m"],
+            "change1h": token["change1h"],
+            "score": token["score"]
+        })
+
+    with open("fomo_memory.json", "w") as archivo:
+        json.dump(memoria, archivo, indent=2)
 
 if __name__ == "__main__":
     main()
