@@ -194,8 +194,17 @@ def main():
     )
 def guardar_memoria(ranking):
     ahora = datetime.now(timezone.utc).isoformat()
-    memoria = []
 
+    # Recuperar el historial de ejecuciones anteriores
+    try:
+        with open("fomo_memory.json", "r") as archivo:
+            memoria = json.load(archivo)
+            if not isinstance(memoria, list):
+                memoria = []
+    except (FileNotFoundError, json.JSONDecodeError):
+        memoria = []
+
+    # Añadir las nuevas observaciones sin borrar las anteriores
     for token in ranking[:10]:
         memoria.append({
             "hora": ahora,
@@ -212,8 +221,10 @@ def guardar_memoria(ranking):
             "score": token["score"]
         })
 
+    # Evitar que el archivo crezca indefinidamente
+    memoria = memoria[-1000:]
+
     with open("fomo_memory.json", "w") as archivo:
         json.dump(memoria, archivo, indent=2)
-
 if __name__ == "__main__":
     main()
