@@ -451,6 +451,49 @@ def cargar_eventos():
         return []
 
 
+def consultar_x():
+    """Consulta publicaciones recientes mediante la API oficial de X."""
+    if not EVENT_RADAR_ENABLED or not SOCIAL_FEED_CONNECTED:
+        return []
+
+    query = "(crypto OR memecoin OR meme OR token OR coin) from:realDonaldTrump -is:retweet"
+    params = urllib.parse.urlencode({
+        "query": query,
+        "max_results": 10,
+        "tweet.fields": "created_at,author_id"
+    })
+    url = "https://api.x.com/2/tweets/search/recent?" + params
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": "Bearer " + X_BEARER_TOKEN,
+            "User-Agent": "FOMO-Brain/7.0"
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        print(f"X API: ERROR CONTROLADO | {type(exc).__name__}: {exc}")
+        return []
+
+    eventos = []
+    for post in payload.get("data", []):
+        texto = str(post.get("text", ""))
+        lower = texto.lower()
+        keywords = [k for k in EVENT_KEYWORDS if k in lower]
+        eventos.append({
+            "source": "X",
+            "account": "realDonaldTrump",
+            "id": post.get("id"),
+            "created_at": post.get("created_at"),
+            "text": texto,
+            "keywords": keywords
+        })
+    return eventos
+
+
 def guardar_eventos(eventos):
     """Persiste eventos para correlacionarlos entre ejecuciones."""
     with open(EVENT_MEMORY_FILE, "w") as archivo:
@@ -490,7 +533,15 @@ def main():
 
     print("🧠 FOMO Radar v7 - GRADUATION + EVENT LEARNING LAB")
     eventos = cargar_eventos()
+    nuevos_eventos = consultar_x()
+    conocidos = {str(e.get("id")) for e in eventos if e.get("id")}
+    for evento in nuevos_eventos:
+        if str(evento.get("id")) not in conocidos:
+            eventos.append(evento)
+    if nuevos_eventos:
+        guardar_eventos(eventos)
     print(resumen_event_radar(eventos))
+    print(f"X API: nuevos_eventos={len(nuevos_eventos)}")
     print(f"Hora UTC: {ahora.isoformat()}")
     print(
         "Buscando memecoins pequeñas "
