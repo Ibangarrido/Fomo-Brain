@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import json
 import urllib.parse
 import urllib.request
+import os
 
 # FOMO Radar v7 - Graduation + Event Learning Lab
 SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]
@@ -13,7 +14,9 @@ LEARNING_ONLY = True
 # Fuentes sociales se activarán únicamente mediante feeds/API autorizados.
 # Mientras no exista una fuente conectada, NO se fabrican eventos.
 EVENT_RADAR_ENABLED = True
-SOCIAL_FEED_CONNECTED = False
+# Se activa automáticamente cuando GitHub tenga el secreto X_BEARER_TOKEN.
+X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "").strip()
+SOCIAL_FEED_CONNECTED = bool(X_BEARER_TOKEN)
 EVENT_KEYWORDS = [
     "meme", "memecoin", "coin", "token", "crypto",
     "doge", "pepe", "pump", "moon"
@@ -434,20 +437,33 @@ def guardar_memoria(ranking):
 
 
 def cargar_eventos():
-    """Carga eventos sociales ya verificados.
+    """Carga eventos sociales verificados ya registrados.
 
-    V7 no hace scraping de X. Cuando conectemos un feed/API autorizado,
-    esta función será el punto de entrada. Hasta entonces devuelve [].
+    V7 no hace scraping de X. X_BEARER_TOKEN habilita el conector oficial
+    cuando terminemos de añadir la consulta a la API. Sin credenciales,
+    el radar sigue funcionando con cero eventos y nunca inventa datos.
     """
-    if not EVENT_RADAR_ENABLED or not SOCIAL_FEED_CONNECTED:
-        return []
-
     try:
         with open(EVENT_MEMORY_FILE, "r") as archivo:
             eventos = json.load(archivo)
         return eventos if isinstance(eventos, list) else []
     except (FileNotFoundError, json.JSONDecodeError):
         return []
+
+
+def guardar_eventos(eventos):
+    """Persiste eventos para correlacionarlos entre ejecuciones."""
+    with open(EVENT_MEMORY_FILE, "w") as archivo:
+        json.dump(eventos[-200:], archivo, indent=2)
+
+
+def resumen_event_radar(eventos):
+    estado = "CONECTADO" if SOCIAL_FEED_CONNECTED else "PENDIENTE"
+    return (
+        f"Event Radar: {'ACTIVO' if EVENT_RADAR_ENABLED else 'OFF'} "
+        f"| X oficial: {estado} "
+        f"| eventos verificados={len(eventos)}"
+    )
 
 
 def relacion_evento_token(token, eventos):
@@ -474,11 +490,7 @@ def main():
 
     print("🧠 FOMO Radar v7 - GRADUATION + EVENT LEARNING LAB")
     eventos = cargar_eventos()
-    print(
-        f"Event Radar: {'ACTIVO' if EVENT_RADAR_ENABLED else 'OFF'} "
-        f"| feed social: {'CONECTADO' if SOCIAL_FEED_CONNECTED else 'PENDIENTE'} "
-        f"| eventos verificados={len(eventos)}"
-    )
+    print(resumen_event_radar(eventos))
     print(f"Hora UTC: {ahora.isoformat()}")
     print(
         "Buscando memecoins pequeñas "
