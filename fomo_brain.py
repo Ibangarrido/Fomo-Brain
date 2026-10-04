@@ -3,8 +3,21 @@ import json
 import urllib.parse
 import urllib.request
 
-# FOMO Radar v6 - Graduation Learning Lab
+# FOMO Radar v7 - Graduation + Event Learning Lab
 SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]\n\n# Fase actual: APRENDIZAJE. No compra, no firma, no mueve fondos.\nLEARNING_ONLY = True
+
+# EVENT RADAR v7
+# Fuentes sociales se activarán únicamente mediante feeds/API autorizados.
+# Mientras no exista una fuente conectada, NO se fabrican eventos.
+EVENT_RADAR_ENABLED = True
+SOCIAL_FEED_CONNECTED = False
+EVENT_KEYWORDS = [
+    "meme", "memecoin", "coin", "token", "crypto",
+    "doge", "pepe", "pump", "moon"
+]
+EVENT_ACCOUNTS = [
+    "realDonaldTrump"
+]
 
 # Filtros iniciales
 MIN_LIQUIDITY = 5_000
@@ -16,6 +29,7 @@ MIN_VOLUME_1H = 5_000
 MAX_EXPOSURE_EUR = 10.0
 
 MEMORY_FILE = "fomo_memory.json"
+EVENT_MEMORY_FILE = "fomo_event_memory.json"
 
 
 def pedir_json(url):
@@ -416,10 +430,52 @@ def guardar_memoria(ranking):
         )
 
 
+def cargar_eventos():
+    """Carga eventos sociales ya verificados.
+
+    V7 no hace scraping de X. Cuando conectemos un feed/API autorizado,
+    esta función será el punto de entrada. Hasta entonces devuelve [].
+    """
+    if not EVENT_RADAR_ENABLED or not SOCIAL_FEED_CONNECTED:
+        return []
+
+    try:
+        with open(EVENT_MEMORY_FILE, "r") as archivo:
+            eventos = json.load(archivo)
+        return eventos if isinstance(eventos, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def relacion_evento_token(token, eventos):
+    """Relaciona por texto un token con eventos verificados recientes."""
+    symbol = str(token.get("symbol", "")).lower()
+    name = str(token.get("name", "")).lower()
+    coincidencias = []
+
+    for evento in eventos:
+        texto = str(evento.get("text", "")).lower()
+        palabras = evento.get("keywords", []) or []
+        if (
+            (symbol and len(symbol) >= 3 and symbol in texto)
+            or (name and len(name) >= 4 and name in texto)
+            or any(str(p).lower() in symbol + " " + name for p in palabras)
+        ):
+            coincidencias.append(evento)
+
+    return coincidencias
+
+
 def main():
     ahora = datetime.now(timezone.utc)
 
-    print("🧠 FOMO Radar v6 - GRADUATION LEARNING LAB")
+    print("🧠 FOMO Radar v7 - GRADUATION + EVENT LEARNING LAB")
+    eventos = cargar_eventos()
+    print(
+        f"Event Radar: {'ACTIVO' if EVENT_RADAR_ENABLED else 'OFF'} "
+        f"| feed social: {'CONECTADO' if SOCIAL_FEED_CONNECTED else 'PENDIENTE'} "
+        f"| eventos verificados={len(eventos)}"
+    )
     print(f"Hora UTC: {ahora.isoformat()}")
     print(
         "Buscando memecoins pequeñas "
@@ -499,7 +555,7 @@ def main():
         f"{len(ranking)}"
     )
 
-    print("TOP 10 FOMO RADAR v6")
+    print("TOP 10 FOMO RADAR v7")
 
     if not ranking:
         print(
@@ -571,6 +627,11 @@ def main():
         )
 
         print(
+            f"eventos_relacionados={token.get('eventMatches', 0)} "
+            f"| fuentes={','.join(token.get('eventSources', [])) or '-'}"
+        )
+
+        print(
             f"token={token['address']}"
         )
 
@@ -583,7 +644,7 @@ def main():
         )
 
     print("")
-    print("✅ FOMO Radar v6 terminado")
+    print("✅ FOMO Radar v7 terminado")
 
     print(
         "Modo análisis únicamente | "
