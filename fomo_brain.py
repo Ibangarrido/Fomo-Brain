@@ -3,8 +3,8 @@ import json
 import urllib.parse
 import urllib.request
 
-# FOMO Radar v5 - Early Token Radar
-SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]
+# FOMO Radar v6 - Graduation Learning Lab
+SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]\n\n# Fase actual: APRENDIZAJE. No compra, no firma, no mueve fondos.\nLEARNING_ONLY = True
 
 # Filtros iniciales
 MIN_LIQUIDITY = 5_000
@@ -419,7 +419,7 @@ def guardar_memoria(ranking):
 def main():
     ahora = datetime.now(timezone.utc)
 
-    print("🧠 FOMO Radar v5 - EARLY TOKEN RADAR")
+    print("🧠 FOMO Radar v6 - GRADUATION LEARNING LAB")
     print(f"Hora UTC: {ahora.isoformat()}")
     print(
         "Buscando memecoins pequeñas "
@@ -499,7 +499,7 @@ def main():
         f"{len(ranking)}"
     )
 
-    print("TOP 10 FOMO RADAR v5")
+    print("TOP 10 FOMO RADAR v6")
 
     if not ranking:
         print(
@@ -565,7 +565,9 @@ def main():
 
         print(
             f"presion compradora="
-            f"{token['buyRatio5m']:.1%}"
+            f"{token['buyRatio5m']:.1%} "
+            f"| netTrades5m={token.get('netTrades5m', 0):+d} "
+            f"| vol/liquidez1h={token.get('volumeLiquidity1h', 0):.2f}x"
         )
 
         print(
@@ -581,7 +583,7 @@ def main():
         )
 
     print("")
-    print("✅ FOMO Radar v5 terminado")
+    print("✅ FOMO Radar v6 terminado")
 
     print(
         "Modo análisis únicamente | "
