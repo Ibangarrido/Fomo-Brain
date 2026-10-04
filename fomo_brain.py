@@ -3,20 +3,25 @@ import json
 import urllib.parse
 import urllib.request
 
-# FOMO Radar v4
+# FOMO Radar v5 - Early Token Radar
 SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin"]
 
-# Filtros iniciales para buscar proyectos pequeños
+# Filtros iniciales
 MIN_LIQUIDITY = 5_000
 MAX_MARKET_CAP = 5_000_000
 MIN_VOLUME_1H = 5_000
+
+# Solo referencia para una futura fase de gestion de riesgo.
+# Esta version NO ejecuta compras.
 MAX_EXPOSURE_EUR = 10.0
+
+MEMORY_FILE = "fomo_memory.json"
 
 
 def pedir_json(url):
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "FOMO-Brain/3.0"}
+        headers={"User-Agent": "FOMO-Brain/5.0"}
     )
     with urllib.request.urlopen(req, timeout=15) as response:
         return json.loads(response.read().decode())
@@ -29,17 +34,109 @@ def numero(valor):
         return 0.0
 
 
+def variacion(actual, previo):
+    try:
+        actual = float(actual)
+        previo = float(previo)
+
+        if previo == 0:
+            return None
+
+        return ((actual - previo) / previo) * 100
+
+    except (TypeError, ValueError):
+        return None
+
+
+def edad_par_minutos(pair):
+    creado_ms = numero(pair.get("pairCreatedAt"))
+
+    if creado_ms <= 0:
+        return None
+
+    try:
+        creado = datetime.fromtimestamp(
+            creado_ms / 1000,
+            tz=timezone.utc
+        )
+
+        return max(
+            0.0,
+            (
+                datetime.now(timezone.utc) - creado
+            ).total_seconds() / 60
+        )
+
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
+def clasificar_token(token):
+    score = token["score"]
+    edad = token.get("ageMinutes")
+    ratio = token.get("buyRatio5m", 0)
+    trades = token.get("trades5m", 0)
+
+    # Candidato especialmente interesante:
+    # joven + actividad + dominio comprador.
+    if (
+        edad is not None
+        and edad <= 60
+        and trades >= 20
+        and ratio >= 0.65
+        and score >= 7
+    ):
+        return "EARLY FUERTE"
+
+    if (
+        edad is not None
+        and edad <= 180
+        and ratio >= 0.55
+        and score >= 5
+    ):
+        return "VIGILAR"
+
+    if score >= 6:
+        return "MOMENTUM"
+
+    return "NORMAL"
+
+
 def analizar_par(pair):
-    liquidity = numero((pair.get("liquidity") or {}).get("usd"))
-    market_cap = numero(pair.get("marketCap") or pair.get("fdv"))
+    liquidity = numero(
+        (pair.get("liquidity") or {}).get("usd")
+    )
+
+    market_cap = numero(
+        pair.get("marketCap") or pair.get("fdv")
+    )
 
     volume = pair.get("volume") or {}
     vol_1h = numero(volume.get("h1"))
+    vol_5m = numero(volume.get("m5"))
 
     changes = pair.get("priceChange") or {}
     change_1h = numero(changes.get("h1"))
     change_5m = numero(changes.get("m5"))
 
+    # Compras y ventas recientes
+    txns = pair.get("txns") or {}
+    tx_5m = txns.get("m5") or {}
+
+    buys_5m = int(numero(tx_5m.get("buys")))
+    sells_5m = int(numero(tx_5m.get("sells")))
+
+    trades_5m = buys_5m + sells_5m
+
+    buy_ratio_5m = (
+        buys_5m / trades_5m
+        if trades_5m > 0
+        else 0.0
+    )
+
+    age_minutes = edad_par_minutos(pair)
+
+    # Filtros basicos
     if liquidity < MIN_LIQUIDITY:
         return None
 
@@ -48,22 +145,24 @@ def analizar_par(pair):
 
     if vol_1h < MIN_VOLUME_1H:
         return None
+
     if change_5m <= 0 and change_1h <= 0:
         return None
+
     score = 0
 
-    # Liquidez suficiente
+    # Liquidez
     if liquidity >= 10_000:
         score += 1
 
-    # Actividad de volumen respecto a liquidez
+    # Volumen respecto a liquidez
     if liquidity > 0 and vol_1h / liquidity >= 0.10:
         score += 2
 
     if liquidity > 0 and vol_1h / liquidity >= 0.50:
         score += 2
 
-    # Momentum
+    # Momentum de precio
     if change_5m > 2:
         score += 1
 
@@ -73,13 +172,29 @@ def analizar_par(pair):
     if change_1h > 10:
         score += 2
 
-    # Evitar premiar una subida ya extremadamente vertical
+    # Actividad compradora reciente
+    if trades_5m >= 20 and buy_ratio_5m >= 0.60:
+        score += 1
+
+    # Token/par muy joven
+    if age_minutes is not None and age_minutes <= 60:
+        score += 1
+
+    # Bonus por volumen fuerte en 5 minutos
+    if (
+        liquidity > 0
+        and vol_5m / liquidity >= 0.10
+    ):
+        score += 1
+
+    # Penalizacion:
+    # evitar perseguir una subida que ya sea demasiado vertical
     if change_1h > 150:
         score -= 2
 
     base = pair.get("baseToken") or {}
 
-    return {
+    resultado = {
         "symbol": base.get("symbol", "?"),
         "name": base.get("name", "?"),
         "address": base.get("address", "?"),
@@ -90,117 +205,41 @@ def analizar_par(pair):
         "mc": market_cap,
         "liquidity": liquidity,
         "vol1h": vol_1h,
+        "vol5m": vol_5m,
         "change5m": change_5m,
         "change1h": change_1h,
+        "buys5m": buys_5m,
+        "sells5m": sells_5m,
+        "trades5m": trades_5m,
+        "buyRatio5m": buy_ratio_5m,
+        "ageMinutes": age_minutes,
         "score": score,
         "url": pair.get("url", "")
     }
 
-
-def main():
-    ahora = datetime.now(timezone.utc)
-
-    print("🧠 FOMO Radar v3")
-    print(f"Hora UTC: {ahora.isoformat()}")
-    print("Buscando memecoins pequeñas con actividad...")
-
-    candidatos = {}
-
-    for termino in SEARCHES:
-        try:
-            query = urllib.parse.quote(termino)
-            url = (
-                "https://api.dexscreener.com/latest/dex/search/"
-                f"?q={query}"
-            )
-
-            datos = pedir_json(url)
-
-            for pair in datos.get("pairs") or []:
-                resultado = analizar_par(pair)
-
-                if resultado is None:
-                    continue
-
-                # Dirección + chain evita duplicados básicos
-                clave = (
-                    resultado["chain"],
-                    resultado["address"]
-                )
-
-                anterior = candidatos.get(clave)
-
-                if (
-                    anterior is None
-                    or resultado["score"] > anterior["score"]
-                    or (
-                        resultado["score"] == anterior["score"]
-                        and resultado["vol1h"] > anterior["vol1h"]
-                    )
-                ):
-                    candidatos[clave] = resultado
-
-        except Exception as error:
-            print(f"⚠️ Error buscando {termino}: {error}")
-    candidatos = {
-        k: v for k, v in candidatos.items() if v["score"] >= 2
-    }
-    ranking = sorted(
-        candidatos.values(),
-        key=lambda x: (
-            x["score"],
-            x["vol1h"],
-            x["change1h"]
-        ),
-        reverse=True
+    resultado["estadoEarly"] = clasificar_token(
+        resultado
     )
 
-    print(f"Candidatos filtrados: {len(ranking)}")
-    print("TOP 10 FOMO RADAR v4")
+    return resultado
 
-    if not ranking:
-        print("Sin candidatos que cumplan los filtros.")
-        guardar_memoria(ranking)
-        return
-    comparar_con_memoria(ranking)
-    guardar_memoria(ranking)
-    for posicion, token in enumerate(ranking[:10], start=1):
-        print("")
-        print(
-            f"#{posicion} {token['symbol']} ({token['name']}) "
-            f"| score={token['score']}/9"
-        )
-        print(
-            f"chain={token['chain']} | dex={token['dex']} "
-            f"| precio=${token['price']}"
-        )
-        print(
-            f"MC=${token['mc']:.0f} "
-            f"| liquidez=${token['liquidity']:.0f} "
-            f"| vol1h=${token['vol1h']:.0f}"
-        )
-        print(
-            f"5m={token['change5m']:.2f}% "
-            f"| 1h={token['change1h']:.2f}%"
-        )
-        print(f"token={token['address']}")
-        print(f"pair={token['pair']}")
-        print(f"url={token['url']}")
 
-    print("")
-    print("✅ Radar v3 terminado")
-    print(
-        f"Modo análisis únicamente | "
-        f"exposición futura máxima: €{MAX_EXPOSURE_EUR:.2f}"
-    )
-def comparar_con_memoria(ranking):
+def cargar_memoria():
     try:
-        with open("fomo_memory.json", "r") as archivo:
+        with open(MEMORY_FILE, "r") as archivo:
             memoria = json.load(archivo)
-        if not isinstance(memoria, list):
-            memoria = []
+
+        if isinstance(memoria, list):
+            return memoria
+
     except (FileNotFoundError, json.JSONDecodeError):
-        memoria = []
+        pass
+
+    return []
+
+
+def comparar_con_memoria(ranking):
+    memoria = cargar_memoria()
 
     print("")
     print("🧠 EVOLUCION DESDE LA ULTIMA LECTURA")
@@ -213,71 +252,136 @@ def comparar_con_memoria(ranking):
         ]
 
         if not anteriores:
-            print(f"{token['symbol']}: NUEVO EN EL RADAR")
+            print("")
+            print(
+                f"🆕 {token['symbol']}: NUEVO EN EL RADAR "
+                f"| {token['estadoEarly']}"
+            )
             continue
 
         anterior = anteriores[-1]
 
-        def variacion(actual, previo): return ((float(actual) - float(previo)) / float(previo)) * 100 if float(previo) != 0 else None
-
-        precio = variacion(token["price"], anterior.get("price"))
-        mc = variacion(token["mc"], anterior.get("mc"))
-        liquidez = variacion(
-            token["liquidity"], anterior.get("liquidity")
+        precio = variacion(
+            token["price"],
+            anterior.get("price")
         )
-        volumen = variacion(token["vol1h"], anterior.get("vol1h"))
-        score_anterior = anterior.get("score", 0)
-        delta_score = token["score"] - score_anterior
+
+        mc = variacion(
+            token["mc"],
+            anterior.get("mc")
+        )
+
+        liquidez = variacion(
+            token["liquidity"],
+            anterior.get("liquidity")
+        )
+
+        volumen = variacion(
+            token["vol1h"],
+            anterior.get("vol1h")
+        )
+
+        volumen_5m = variacion(
+            token["vol5m"],
+            anterior.get("vol5m")
+        )
+
+        compras = variacion(
+            token["buys5m"],
+            anterior.get("buys5m")
+        )
+
+        score_anterior = int(
+            anterior.get("score", 0)
+        )
+
+        delta_score = (
+            token["score"] - score_anterior
+        )
 
         print("")
-        print(f"{token['symbol']} | ultima lectura: {anterior.get('hora')}")
         print(
-            f"precio={precio:+.2f}% | MC={mc:+.2f}%"
-            if precio is not None and mc is not None
-            else "precio/MC: sin comparacion"
+            f"{token['symbol']} | "
+            f"ultima lectura: {anterior.get('hora')}"
         )
+
+        if precio is not None and mc is not None:
+            print(
+                f"precio={precio:+.2f}% "
+                f"| MC={mc:+.2f}%"
+            )
+        else:
+            print("precio/MC: sin comparacion")
+
+        if liquidez is not None and volumen is not None:
+            print(
+                f"liquidez={liquidez:+.2f}% "
+                f"| volumen1h={volumen:+.2f}%"
+            )
+        else:
+            print(
+                "liquidez/volumen1h: "
+                "sin comparacion"
+            )
+
+        if volumen_5m is not None:
+            print(
+                f"volumen5m={volumen_5m:+.2f}%"
+            )
+
+        if compras is not None:
+            print(
+                f"compras5m={compras:+.2f}%"
+            )
+
         print(
-            f"liquidez={liquidez:+.2f}% | volumen1h={volumen:+.2f}%"
-            if liquidez is not None and volumen is not None
-            else "liquidez/volumen: sin comparacion"
-        )
-        print(
-            f"score={score_anterior}/9 -> {token['score']}/9 "
+            f"score={score_anterior}/12 "
+            f"-> {token['score']}/12 "
             f"({delta_score:+d})"
         )
 
         senales = 0
+
         if precio is not None and precio > 0:
             senales += 1
+
         if volumen is not None and volumen > 10:
             senales += 1
+
         if liquidez is not None and liquidez > 0:
             senales += 1
+
         if delta_score > 0:
             senales += 1
 
-        if senales >= 3:
-            estado = "ACELERANDO"
+        if token["buyRatio5m"] >= 0.60:
+            senales += 1
+
+        if (
+            token["ageMinutes"] is not None
+            and token["ageMinutes"] <= 60
+        ):
+            senales += 1
+
+        if senales >= 5:
+            estado = "🔥 ACELERACION FUERTE"
+        elif senales >= 3:
+            estado = "🚀 ACELERANDO"
         elif senales >= 1:
-            estado = "MIXTO"
+            estado = "👀 MIXTO / VIGILAR"
         else:
-            estado = "PERDIENDO MOMENTUM"
+            estado = "📉 PERDIENDO MOMENTUM"
 
         print(f"estado={estado}")
 
+
 def guardar_memoria(ranking):
-    ahora = datetime.now(timezone.utc).isoformat()
+    ahora = datetime.now(
+        timezone.utc
+    ).isoformat()
 
-    # Recuperar el historial de ejecuciones anteriores
-    try:
-        with open("fomo_memory.json", "r") as archivo:
-            memoria = json.load(archivo)
-            if not isinstance(memoria, list):
-                memoria = []
-    except (FileNotFoundError, json.JSONDecodeError):
-        memoria = []
+    memoria = cargar_memoria()
 
-    # Añadir las nuevas observaciones sin borrar las anteriores
     for token in ranking[:10]:
         memoria.append({
             "hora": ahora,
@@ -289,15 +393,201 @@ def guardar_memoria(ranking):
             "mc": token["mc"],
             "liquidity": token["liquidity"],
             "vol1h": token["vol1h"],
+            "vol5m": token["vol5m"],
             "change5m": token["change5m"],
             "change1h": token["change1h"],
-            "score": token["score"]
+            "buys5m": token["buys5m"],
+            "sells5m": token["sells5m"],
+            "trades5m": token["trades5m"],
+            "buyRatio5m": token["buyRatio5m"],
+            "ageMinutes": token["ageMinutes"],
+            "score": token["score"],
+            "estadoEarly": token["estadoEarly"]
         })
 
-    # Evitar que el archivo crezca indefinidamente
+    # Limitar crecimiento del historial
     memoria = memoria[-1000:]
 
-    with open("fomo_memory.json", "w") as archivo:
-        json.dump(memoria, archivo, indent=2)
+    with open(MEMORY_FILE, "w") as archivo:
+        json.dump(
+            memoria,
+            archivo,
+            indent=2
+        )
+
+
+def main():
+    ahora = datetime.now(timezone.utc)
+
+    print("🧠 FOMO Radar v5 - EARLY TOKEN RADAR")
+    print(f"Hora UTC: {ahora.isoformat()}")
+    print(
+        "Buscando memecoins pequeñas "
+        "con actividad temprana..."
+    )
+
+    candidatos = {}
+
+    for termino in SEARCHES:
+        try:
+            query = urllib.parse.quote(termino)
+
+            url = (
+                "https://api.dexscreener.com/"
+                "latest/dex/search/"
+                f"?q={query}"
+            )
+
+            datos = pedir_json(url)
+
+            for pair in datos.get("pairs") or []:
+                resultado = analizar_par(pair)
+
+                if resultado is None:
+                    continue
+
+                clave = (
+                    resultado["chain"],
+                    resultado["address"]
+                )
+
+                anterior = candidatos.get(clave)
+
+                if (
+                    anterior is None
+                    or resultado["score"]
+                    > anterior["score"]
+                    or (
+                        resultado["score"]
+                        == anterior["score"]
+                        and resultado["vol1h"]
+                        > anterior["vol1h"]
+                    )
+                ):
+                    candidatos[clave] = resultado
+
+        except Exception as error:
+            print(
+                f"⚠️ Error buscando "
+                f"{termino}: {error}"
+            )
+
+    candidatos = {
+        k: v
+        for k, v in candidatos.items()
+        if v["score"] >= 2
+    }
+
+    ranking = sorted(
+        candidatos.values(),
+        key=lambda x: (
+            x["score"],
+            x["buyRatio5m"],
+            -(
+                x["ageMinutes"]
+                if x["ageMinutes"] is not None
+                else 999999
+            ),
+            x["vol5m"],
+            x["vol1h"]
+        ),
+        reverse=True
+    )
+
+    print(
+        f"Candidatos filtrados: "
+        f"{len(ranking)}"
+    )
+
+    print("TOP 10 FOMO RADAR v5")
+
+    if not ranking:
+        print(
+            "Sin candidatos que cumplan "
+            "los filtros."
+        )
+        guardar_memoria(ranking)
+        return
+
+    comparar_con_memoria(ranking)
+    guardar_memoria(ranking)
+
+    for posicion, token in enumerate(
+        ranking[:10],
+        start=1
+    ):
+        print("")
+
+        print(
+            f"#{posicion} "
+            f"{token['symbol']} "
+            f"({token['name']}) "
+            f"| score={token['score']}/12 "
+            f"| {token['estadoEarly']}"
+        )
+
+        print(
+            f"chain={token['chain']} "
+            f"| dex={token['dex']} "
+            f"| precio=${token['price']}"
+        )
+
+        print(
+            f"MC=${token['mc']:.0f} "
+            f"| liquidez="
+            f"${token['liquidity']:.0f}"
+        )
+
+        print(
+            f"vol5m=${token['vol5m']:.0f} "
+            f"| vol1h=${token['vol1h']:.0f}"
+        )
+
+        print(
+            f"5m={token['change5m']:.2f}% "
+            f"| 1h={token['change1h']:.2f}%"
+        )
+
+        edad = token["ageMinutes"]
+
+        edad_txt = (
+            f"{edad:.0f} min"
+            if edad is not None
+            else "desconocida"
+        )
+
+        print(
+            f"edad={edad_txt} "
+            f"| compras5m={token['buys5m']} "
+            f"| ventas5m={token['sells5m']}"
+        )
+
+        print(
+            f"presion compradora="
+            f"{token['buyRatio5m']:.1%}"
+        )
+
+        print(
+            f"token={token['address']}"
+        )
+
+        print(
+            f"pair={token['pair']}"
+        )
+
+        print(
+            f"url={token['url']}"
+        )
+
+    print("")
+    print("✅ FOMO Radar v5 terminado")
+
+    print(
+        "Modo análisis únicamente | "
+        f"exposición futura máxima: "
+        f"€{MAX_EXPOSURE_EUR:.2f}"
+    )
+
+
 if __name__ == "__main__":
     main()
