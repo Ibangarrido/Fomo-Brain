@@ -1,9 +1,12 @@
 name: FOMO Brain
 
 on:
+  # Respaldo manual y punto de entrada para un reloj externo fiable.
   workflow_dispatch:
+
+  # Respaldo nativo de GitHub. Puede sufrir retrasos o saltos bajo carga.
   schedule:
-    - cron: "7,22,37,52 * * * *"  # FOMO Brain automatico cada 15 minutos
+    - cron: "7,22,37,52 * * * *"
 
 jobs:
   analyze:
