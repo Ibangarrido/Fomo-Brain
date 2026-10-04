@@ -218,15 +218,7 @@ def comparar_con_memoria(ranking):
 
         anterior = anteriores[-1]
 
-        def variacion(actual, previo):
-        try:
-        actual = float(actual)
-        previo = float(previo)
-        if previo == 0:
-            return None
-        return ((actual - previo) / previo) * 100
-        except (TypeError, ValueError):
-        return None
+        def variacion(actual, previo): return ((float(actual) - float(previo)) / float(previo)) * 100 if float(previo) != 0 else None
 
         precio = variacion(token["price"], anterior.get("price"))
         mc = variacion(token["mc"], anterior.get("mc"))
