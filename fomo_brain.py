@@ -528,6 +528,139 @@ def relacion_evento_token(token, eventos):
     return coincidencias
 
 
+# Cartera de prueba: dinero virtual, sin wallets ni ordenes reales.
+PAPER_FILE = "fomo_paper.json"
+PAPER_FEE = 0.01
+PAPER_SLIPPAGE = 0.02
+
+
+def simular_cartera(ranking):
+    now = datetime.now(timezone.utc)
+    try:
+        with open(PAPER_FILE) as handle:
+            state = json.load(handle)
+    except FileNotFoundError:
+        state = {"version": 1, "started_at": now.isoformat(),
+                 "cash": 100.0, "reserve": 0.0, "positions": [],
+                 "closed": [], "seen": [], "observations": []}
+    if state.get("version") != 1:
+        raise ValueError("Version de cartera virtual no compatible")
+    notes = []
+    closed_this_run = set()
+    cost = (1 + PAPER_SLIPPAGE) * (1 + PAPER_FEE)
+    proceeds_factor = (1 - PAPER_SLIPPAGE) * (1 - PAPER_FEE)
+    for pos in list(state["positions"]):
+        # Mantener seguimiento incluso si desaparece de los filtros.
+        try:
+            url = ("https://api.dexscreener.com/latest/dex/search/?q="
+                   + urllib.parse.quote(pos["address"]))
+            pairs = pedir_json(url).get("pairs") or []
+            pair = next((p for p in pairs
+                         if p.get("chainId") == pos["chain"]
+                         and p.get("pairAddress") == pos["pair"]), None)
+            price = numero((pair or {}).get("priceUsd"))
+            liquidity = numero(((pair or {}).get("liquidity") or {}).get("usd"))
+            if price <= 0 or liquidity < MIN_LIQUIDITY:
+                raise ValueError("Sin precio o liquidez suficiente; venta no verificable")
+            pos["mark_net"] = pos["quantity"] * price * proceeds_factor
+            pos["last_quote_at"] = now.isoformat()
+            pos["quote_status"] = "OK"
+        except Exception as exc:
+            pos["quote_status"] = "NO VERIFICABLE"
+            notes.append(pos["symbol"] + ": " + str(exc))
+            continue
+        pnl_pct = (pos["mark_net"] / pos["budget"] - 1) * 100
+        age = (now - datetime.fromisoformat(pos["opened_at"])).total_seconds() / 3600
+        pos["peak_price"] = max(pos.get("peak_price", price), price)
+        drawdown = (price / pos["peak_price"] - 1) * 100
+        reason = ("STOP -15%" if pnl_pct <= -15 else
+                  "TRAILING -15%" if pos.get("partial_taken") and drawdown <= -15 else
+                  "TIEMPO 24h" if age >= 24 else None)
+        partial = not reason and not pos.get("partial_taken") and pnl_pct >= 30
+        if partial:
+            reason = "PARCIAL +30%"
+        fraction = 0.5 if partial else 1.0
+        if reason:
+            proceeds = pos["mark_net"] * fraction
+            allocated_cost = pos["budget"] * fraction
+            profit = proceeds - allocated_cost
+            reserved = max(profit, 0) * 0.5
+            state["reserve"] += reserved
+            state["cash"] += proceeds - reserved
+            state["closed"].append(dict(pos, closed_at=now.isoformat(),
+                                        exit_price=price, proceeds=proceeds,
+                                        profit=profit, reserved=reserved,
+                                        exit_reason=reason, sold_fraction=fraction,
+                                        allocated_cost=allocated_cost,
+                                        sold_quantity=pos["quantity"] * fraction))
+            if partial:
+                pos["quantity"] *= 0.5
+                pos["budget"] *= 0.5
+                pos["mark_net"] *= 0.5
+                pos["partial_taken"] = True
+                pos["peak_price"] = price
+            else:
+                state["positions"].remove(pos)
+                closed_this_run.add(pos["chain"] + ":" + pos["address"])
+            notes.append("SALIDA VIRTUAL " + pos["symbol"] + " | " + reason
+                         + " | resultado EUR " + format(profit, ".2f"))
+    # Una sola entrada por token durante este experimento, sin reentradas.
+    for token in ranking:
+        key = token["chain"] + ":" + token["address"]
+        if (key in state["seen"] or key in closed_this_run
+                or len(state["positions"]) >= 3 or state["cash"] < 10):
+            continue
+        price = numero(token["price"])
+        if (price <= 0 or token["score"] < 6
+                or token["liquidity"] < 10_000
+                or token["buyRatio5m"] < 0.60 or token["trades5m"] < 20
+                or token["change1h"] > 150):
+            continue
+        budget = min(10.0, MAX_EXPOSURE_EUR)
+        quantity = budget / (price * cost)
+        state["cash"] -= budget
+        state["seen"].append(key)
+        state["positions"].append({
+            "symbol": token["symbol"], "address": token["address"],
+            "chain": token["chain"], "pair": token["pair"],
+            "opened_at": now.isoformat(), "entry_price": price,
+            "budget": budget, "quantity": quantity,
+            "mark_net": quantity * price * proceeds_factor,
+            "last_quote_at": now.isoformat(), "quote_status": "OK",
+            "entry_score": token["score"], "url": token["url"],
+            "partial_taken": False, "peak_price": price})
+        notes.append("ENTRADA VIRTUAL " + token["symbol"] + " | EUR "
+                     + format(budget, ".2f"))
+    equity = (state["cash"] + state["reserve"]
+              + sum(p["mark_net"] for p in state["positions"]))
+    stale = sum(p["quote_status"] != "OK" for p in state["positions"])
+    state["observations"].append({
+        "at": now.isoformat(), "cash": state["cash"],
+        "reserve": state["reserve"], "estimated_equity": equity,
+        "open": len(state["positions"]), "closed": len(state["closed"]),
+        "unverified_quotes": stale})
+    state["observations"] = state["observations"][-3000:]
+    state["assumptions"] = {
+        "initial_eur": 100, "max_trade_eur": 10, "max_positions": 3,
+        "fee_per_side": PAPER_FEE, "slippage_per_side": PAPER_SLIPPAGE,
+        "stop_net_pct": -15, "partial_target_net_pct": 30,
+        "partial_fraction": 0.5, "trailing_peak_pct": -15, "max_hours": 24,
+        "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
+        "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
+    with open(PAPER_FILE + ".tmp", "w") as handle:
+        json.dump(state, handle, indent=2)
+    os.replace(PAPER_FILE + ".tmp", PAPER_FILE)
+    print("\nCARTERA VIRTUAL — NO EJECUTA ORDENES REALES")
+    for note in notes:
+        print(note)
+    print(f"Liquido EUR {state['cash']:.2f} | reserva EUR {state['reserve']:.2f}")
+    print(f"Abiertas={len(state['positions'])} | ventas registradas={len(state['closed'])}")
+    print(f"Patrimonio estimado EUR {equity:.2f} | resultado EUR {equity - 100:+.2f}")
+    print(f"Cotizaciones no verificables={stale}; conservan ultimo valor, NO son liquidez")
+    print("Costes supuestos POR LADO: comision 1%, deslizamiento 2%; FX fijo 1:1")
+    print("Stops evaluados cada 15 min: pueden ejecutarse virtualmente con perdidas mayores")
+
+
 def main():
     ahora = datetime.now(timezone.utc)
 
@@ -620,6 +753,8 @@ def main():
         f"Candidatos filtrados: "
         f"{len(ranking)}"
     )
+
+    simular_cartera(ranking)
 
     print("TOP 10 FOMO RADAR v7")
 
@@ -721,3 +856,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
