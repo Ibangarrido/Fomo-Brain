@@ -4,7 +4,7 @@ import urllib.parse
 import urllib.request
 
 # FOMO Radar v5 - Early Token Radar
-SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin"]
+SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]
 
 # Filtros iniciales
 MIN_LIQUIDITY = 5_000
@@ -523,7 +523,8 @@ def main():
             f"{token['symbol']} "
             f"({token['name']}) "
             f"| score={token['score']}/12 "
-            f"| {token['estadoEarly']}"
+            f"| {token['estadoEarly']} "
+            f"| graduacion={'SI' if token.get('graduationCandidate') else 'NO'}"
         )
 
         print(
