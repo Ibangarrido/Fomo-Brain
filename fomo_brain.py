@@ -534,6 +534,27 @@ PAPER_FEE = 0.01
 PAPER_SLIPPAGE = 0.02
 
 
+def cotizar_posicion(pos):
+    """Consulta el par exacto y comprueba identidad, precio y liquidez."""
+    chain = urllib.parse.quote(pos["chain"], safe="")
+    pair_id = urllib.parse.quote(pos["pair"], safe="")
+    url = f"https://api.dexscreener.com/latest/dex/pairs/{chain}/{pair_id}"
+    data = pedir_json(url)
+    pair = next((p for p in data.get("pairs") or []
+                 if p.get("chainId") == pos["chain"]
+                 and p.get("pairAddress") == pos["pair"]
+                 and (p.get("baseToken") or {}).get("address") == pos["address"]), None)
+    if pair is None:
+        raise ValueError("El par exacto no aparece en la fuente; no se sustituye por otro token")
+    price = numero(pair.get("priceUsd"))
+    liquidity = numero((pair.get("liquidity") or {}).get("usd"))
+    if price <= 0:
+        raise ValueError("El par no tiene precio valido")
+    if liquidity < MIN_LIQUIDITY:
+        raise ValueError(f"Liquidez insuficiente ({liquidity:.2f} USD); salida no verificable")
+    return price, liquidity
+
+
 def simular_cartera(ranking):
     now = datetime.now(timezone.utc)
     try:
@@ -552,16 +573,7 @@ def simular_cartera(ranking):
     for pos in list(state["positions"]):
         # Mantener seguimiento incluso si desaparece de los filtros.
         try:
-            url = ("https://api.dexscreener.com/latest/dex/search/?q="
-                   + urllib.parse.quote(pos["address"]))
-            pairs = pedir_json(url).get("pairs") or []
-            pair = next((p for p in pairs
-                         if p.get("chainId") == pos["chain"]
-                         and p.get("pairAddress") == pos["pair"]), None)
-            price = numero((pair or {}).get("priceUsd"))
-            liquidity = numero(((pair or {}).get("liquidity") or {}).get("usd"))
-            if price <= 0 or liquidity < MIN_LIQUIDITY:
-                raise ValueError("Sin precio o liquidez suficiente; venta no verificable")
+            price, liquidity = cotizar_posicion(pos)
             pos["mark_net"] = pos["quantity"] * price * proceeds_factor
             pos["last_quote_at"] = now.isoformat()
             pos["quote_status"] = "OK"
@@ -604,10 +616,13 @@ def simular_cartera(ranking):
                 closed_this_run.add(pos["chain"] + ":" + pos["address"])
             notes.append("SALIDA VIRTUAL " + pos["symbol"] + " | " + reason
                          + " | resultado EUR " + format(profit, ".2f"))
+    quotes_blocked = any(p["quote_status"] != "OK" for p in state["positions"])
+    if quotes_blocked:
+        notes.append("ENTRADAS PAUSADAS: hay posiciones sin cotizacion verificable")
     # Una sola entrada por token durante este experimento, sin reentradas.
     for token in ranking:
         key = token["chain"] + ":" + token["address"]
-        if (key in state["seen"] or key in closed_this_run
+        if (quotes_blocked or key in state["seen"] or key in closed_this_run
                 or len(state["positions"]) >= 3 or state["cash"] < 10):
             continue
         price = numero(token["price"])
@@ -615,6 +630,13 @@ def simular_cartera(ranking):
                 or token["liquidity"] < 10_000
                 or token["buyRatio5m"] < 0.60 or token["trades5m"] < 20
                 or token["change1h"] > 150):
+            continue
+        try:
+            price, entry_liquidity = cotizar_posicion(token)
+            if entry_liquidity < 10_000:
+                continue
+        except Exception as exc:
+            notes.append("ENTRADA OMITIDA " + token["symbol"] + ": " + str(exc))
             continue
         budget = min(10.0, MAX_EXPOSURE_EUR)
         quantity = budget / (price * cost)
@@ -634,11 +656,15 @@ def simular_cartera(ranking):
     equity = (state["cash"] + state["reserve"]
               + sum(p["mark_net"] for p in state["positions"]))
     stale = sum(p["quote_status"] != "OK" for p in state["positions"])
+    realized = sum(x["profit"] for x in state["closed"])
+    known_value = state["cash"] + state["reserve"] + sum(
+        p["mark_net"] for p in state["positions"] if p["quote_status"] == "OK")
     state["observations"].append({
         "at": now.isoformat(), "cash": state["cash"],
         "reserve": state["reserve"], "estimated_equity": equity,
         "open": len(state["positions"]), "closed": len(state["closed"]),
-        "unverified_quotes": stale})
+        "unverified_quotes": stale, "valuation_complete": stale == 0,
+        "verified_component": known_value, "realized_pnl": realized})
     state["observations"] = state["observations"][-3000:]
     state["assumptions"] = {
         "initial_eur": 100, "max_trade_eur": 10, "max_positions": 3,
@@ -655,7 +681,15 @@ def simular_cartera(ranking):
         print(note)
     print(f"Liquido EUR {state['cash']:.2f} | reserva EUR {state['reserve']:.2f}")
     print(f"Abiertas={len(state['positions'])} | ventas registradas={len(state['closed'])}")
-    print(f"Patrimonio estimado EUR {equity:.2f} | resultado EUR {equity - 100:+.2f}")
+    if stale:
+        print(f"VALORACION INCOMPLETA: ultimo valor contable EUR {equity:.2f}; no es beneficio actual")
+        print(f"Parte valorada EUR {known_value:.2f}; resto desconocido")
+    else:
+        print(f"Patrimonio estimado EUR {equity:.2f} | resultado EUR {equity - 100:+.2f}")
+    print(f"Resultado realizado virtual EUR {realized:+.2f}")
+    for pos in state["positions"]:
+        print(f"POSICION {pos['symbol']} | token={pos['address']} | "
+              f"estado={pos['quote_status']} | ultima_cotizacion={pos['last_quote_at']}")
     print(f"Cotizaciones no verificables={stale}; conservan ultimo valor, NO son liquidez")
     print("Costes supuestos POR LADO: comision 1%, deslizamiento 2%; FX fijo 1:1")
     print("Stops evaluados cada 15 min: pueden ejecutarse virtualmente con perdidas mayores")
@@ -856,4 +890,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
