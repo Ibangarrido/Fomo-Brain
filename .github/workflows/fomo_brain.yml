@@ -8,6 +8,10 @@ on:
   schedule:
     - cron: "7,22,37,52 * * * *"
 
+concurrency:
+  group: fomo-brain-state
+  cancel-in-progress: false
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -39,6 +43,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fomo-memory
-          path: fomo_memory.json
+          path: |
+            fomo_memory.json
+            fomo_event_memory.json
+            fomo_paper.json
           if-no-files-found: ignore
           overwrite: true
