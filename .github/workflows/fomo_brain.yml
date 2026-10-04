@@ -3,7 +3,7 @@ name: FOMO Brain
 on:
   workflow_dispatch:
   schedule:
-    - cron: "7,22,37,52 * * * *"  # FOMO Brain automatico cada 5 minutos
+    - cron: "7,22,37,52 * * * *"  # FOMO Brain automatico cada 15 minutos
 
 jobs:
   analyze:
