@@ -4,7 +4,10 @@ import urllib.parse
 import urllib.request
 
 # FOMO Radar v7 - Graduation + Event Learning Lab
-SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]\n\n# Fase actual: APRENDIZAJE. No compra, no firma, no mueve fondos.\nLEARNING_ONLY = True
+SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]
+
+# Fase actual: APRENDIZAJE. No compra, no firma, no mueve fondos.
+LEARNING_ONLY = True
 
 # EVENT RADAR v7
 # Fuentes sociales se activarán únicamente mediante feeds/API autorizados.
