@@ -31,6 +31,8 @@ jobs:
           if_no_artifact_found: ignore
 
       - name: Ejecutar FOMO Brain
+        env:
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: python fomo_brain.py
 
       - name: Guardar memoria FOMO
