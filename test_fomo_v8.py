@@ -136,6 +136,22 @@ class V9Tests(unittest.TestCase):
         self.assertEqual(state['cash'], 90)
         self.assertEqual(state['assumptions']['strategy'], 'confirmacion V9')
 
+    def test_learning_entry_limits(self):
+        t = b.analizar_par(pair())
+        t.update(trades5m=20, buyRatio5m=.55, ageMinutes=240,
+                 liquidity=20000, vol5m=3000)
+        old = dict(t, hora=(datetime.now(timezone.utc)-timedelta(minutes=15)).isoformat(),
+                   price=.95, liquidity=21000, vol5m=5000)
+        with patch.object(b, 'cargar_memoria', return_value=[old]):
+            self.assertIsNone(b.motivo_entrada(t, True))
+            for field, value in [('trades5m', 19), ('buyRatio5m', .54),
+                                 ('ageMinutes', 1441), ('change5m', 26),
+                                 ('liquidity', 19000), ('vol5m', 2999),
+                                 ('price', .94)]:
+                with self.subTest(field=field):
+                    rejected = dict(t, **{field: value})
+                    self.assertIsNotNone(b.motivo_entrada(rejected, True))
+
     def test_v9_fomo_confluence_is_bounded_and_verified(self):
         t = b.analizar_par(pair())
         candidates = {("solana", "a"): t}
