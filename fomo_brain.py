@@ -37,7 +37,7 @@ EVENT_ACCOUNTS = [
 ]
 
 # Filtros iniciales
-MIN_LIQUIDITY = 5_000
+MIN_LIQUIDITY = 10_000
 MAX_MARKET_CAP = 2_000_000
 MIN_VOLUME_1H = 5_000
 
@@ -852,10 +852,10 @@ def pares_token(chain, address):
 
 def motivo_entrada(token, confirm=False):
     checks = [(numero(token["price"]) <= 0, "precio ausente"),
-              (token["score"] < 6, "score < 6"),
+              (token["score"] < 5, "score < 5"),
               (token["liquidity"] < 10_000, "liquidez < 10000 USD"),
-              (token["buyRatio5m"] < (0.65 if confirm else 0.60), "ratio compras insuficiente"),
-              (token["trades5m"] < (40 if confirm else 20), "actividad 5m insuficiente"),
+              (token["buyRatio5m"] < 0.60, "ratio compras insuficiente"),
+              (token["trades5m"] < (25 if confirm else 20), "actividad 5m insuficiente"),
               (token["change1h"] > 150, "subida 1h > 150%")]
     for failed, reason in checks:
         if failed:
