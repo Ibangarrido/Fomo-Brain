@@ -38,12 +38,22 @@ jobs:
       - name: Verificar simulacion V10 sin red
         run: python test_fomo_v8.py
 
+      - name: Verificar prueba de seguimiento virtual
+        run: python test_whale_paper.py
+
+      - name: Instalar lector publico de alertas
+        run: python -m pip install websocket-client==1.8.0
+
       - name: Ejecutar FOMO Brain
         env:
           BRAIN_CYCLES: "15"
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
-        run: python fomo_brain.py
+        run: |
+          python whale_paper.py &
+          whale_pid=$!
+          trap 'kill -TERM "$whale_pid" 2>/dev/null || true; wait "$whale_pid" || true' EXIT
+          python fomo_brain.py
 
       - name: Guardar memoria FOMO
         if: always()
@@ -58,5 +68,6 @@ jobs:
             fomo_shadow_v9.json
             fomo_paper_v10.json
             fomo_paper_v10_impulse.json
+            fomo_paper_whale.json
           if-no-files-found: ignore
           overwrite: true
