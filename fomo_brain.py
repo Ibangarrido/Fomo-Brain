@@ -5,11 +5,21 @@ import urllib.request
 import os
 import math
 
-# FOMO Radar v8 - descubrimiento, trazabilidad y comparacion virtual
+# FOMO Brain v9 - DEX + FOMO Trader Radar + simulacion comparativa
+# V9 sigue siendo PAPER ONLY: no firma, no compra y no mueve fondos.
 SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]
 
 # Fase actual: APRENDIZAJE. No compra, no firma, no mueve fondos.
 LEARNING_ONLY = True
+
+# FOMO TRADER RADAR V9
+# Fuente opcional SOLO LECTURA. Debe ser un feed/API autorizado por el usuario/proveedor.
+# Sin URL configurada, V9 sigue funcionando y declara radar FOMO desconectado.
+FOMO_RADAR_FEED_URL = os.getenv("FOMO_RADAR_FEED_URL", "").strip()
+FOMO_RADAR_TOKEN = os.getenv("FOMO_RADAR_TOKEN", "").strip()
+FOMO_RADAR_CONNECTED = bool(FOMO_RADAR_FEED_URL)
+FOMO_RADAR_STATUS = "PENDIENTE"
+FOMO_RADAR_MAX_EVENTS = 500
 
 # EVENT RADAR v8
 # Fuentes sociales se activarán únicamente mediante feeds/API autorizados.
@@ -38,6 +48,7 @@ MAX_EXPOSURE_EUR = 10.0
 MEMORY_FILE = "fomo_memory.json"
 EVENT_MEMORY_FILE = "fomo_event_memory.json"
 SHADOW_FILE = "fomo_shadow_v8.json"
+V9_FILE = "fomo_shadow_v9.json"
 JSON_CACHE = {}
 REJECTIONS = []
 X_STATUS = "PENDIENTE"
@@ -267,6 +278,73 @@ def analizar_par(pair):
 
     return resultado
 
+
+
+def consultar_fomo_trader_radar():
+    """Lee un feed autorizado de actividad FOMO; nunca usa credenciales de la cuenta.
+
+    Formato aceptado: lista JSON o {"events": [...]}.
+    Cada evento debe identificar chain, address/tokenAddress, trader y side.
+    Solo BUY verificados participan en la confluencia.
+    """
+    global FOMO_RADAR_STATUS
+    if not FOMO_RADAR_CONNECTED:
+        FOMO_RADAR_STATUS = "SIN FUENTE AUTORIZADA"
+        return []
+
+    headers = {"User-Agent": "FOMO-Brain/9.0", "Accept": "application/json"}
+    if FOMO_RADAR_TOKEN:
+        headers["Authorization"] = "Bearer " + FOMO_RADAR_TOKEN
+    req = urllib.request.Request(FOMO_RADAR_FEED_URL, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        FOMO_RADAR_STATUS = "ERROR CONTROLADO"
+        print(f"FOMO Trader Radar: ERROR CONTROLADO | {type(exc).__name__}: {exc}")
+        return []
+
+    raw = payload.get("events", []) if isinstance(payload, dict) else payload
+    if not isinstance(raw, list):
+        FOMO_RADAR_STATUS = "FORMATO INVALIDO"
+        return []
+
+    events = []
+    for e in raw[:FOMO_RADAR_MAX_EVENTS]:
+        if not isinstance(e, dict):
+            continue
+        chain = str(e.get("chain") or e.get("chainId") or "").strip().lower()
+        address = str(e.get("address") or e.get("tokenAddress") or "").strip()
+        trader = str(e.get("trader") or e.get("wallet") or e.get("profile") or "").strip()
+        side = str(e.get("side") or e.get("action") or "").strip().upper()
+        verified = e.get("verified", True) is True
+        if chain and address and trader and side in ("BUY", "SELL") and verified:
+            events.append({"chain": chain, "address": address, "trader": trader,
+                           "side": side, "verified": True,
+                           "timestamp": e.get("timestamp") or e.get("created_at")})
+    FOMO_RADAR_STATUS = "CONECTADO"
+    return events
+
+
+def aplicar_confluencia_fomo(candidatos, eventos):
+    """Añade señal de confluencia sin convertirla en una recomendacion."""
+    by_token = {}
+    for e in eventos:
+        if e["side"] != "BUY":
+            continue
+        key = (e["chain"], e["address"])
+        by_token.setdefault(key, set()).add(e["trader"])
+
+    for key, token in candidatos.items():
+        traders = sorted(by_token.get((str(key[0]).lower(), key[1]), set()))
+        token["fomoTraders"] = traders
+        token["fomoConfluence"] = len(traders)
+        # Bonus acotado: FOMO complementa, nunca sustituye liquidez/momentum.
+        bonus = 2 if len(traders) >= 3 else 1 if len(traders) >= 2 else 0
+        token["fomoBonus"] = bonus
+        token["score"] += bonus
+        token["estadoEarly"] = clasificar_token(token)
+    return candidatos
 
 def cargar_memoria():
     try:
@@ -875,7 +953,9 @@ def descubrir_pares():
 def main():
     ahora = datetime.now(timezone.utc)
 
-    print("🧠 FOMO Radar v8 - ANALISIS Y COMPARACION VIRTUAL")
+    print("🧠 FOMO Brain v9 - DEX + FOMO TRADER RADAR + PAPER")
+    fomo_events = consultar_fomo_trader_radar()
+    print(f"FOMO Trader Radar: {FOMO_RADAR_STATUS} | eventos verificados={len(fomo_events)}")
     eventos = cargar_eventos()
     nuevos_eventos = consultar_x()
     conocidos = {str(e.get("id")) for e in eventos if e.get("id")}
@@ -924,6 +1004,8 @@ def main():
         if v["score"] >= 2
     }
 
+    candidatos = aplicar_confluencia_fomo(candidatos, fomo_events)
+
     ranking = sorted(
         candidatos.values(),
         key=lambda x: (
@@ -946,8 +1028,10 @@ def main():
     )
 
     simular_cartera(ranking)
-    print("COMPARACION V8: escenario alternativo sobre 100 EUR FICTICIOS; no sumar ambas carteras")
-    simular_cartera(ranking, SHADOW_FILE, "COMPARACION V8", confirm=True)
+    print("COMPARACION V8: se conserva como control historico; no sumar carteras")
+    simular_cartera(ranking, SHADOW_FILE, "CONTROL V8", confirm=True)
+    print("V9: cartera shadow independiente; confluencia FOMO suma solo si el feed autorizado aporta evidencia")
+    simular_cartera(ranking, V9_FILE, "V9 FOMO RADAR", confirm=True)
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
@@ -955,7 +1039,7 @@ def main():
     for item in REJECTIONS[:60]:
         print(f"DESCARTE PAR {item['chain']}:{item['address']} | {item['pair']} | {item['reason']}")
 
-    print("TOP 10 FOMO RADAR v8")
+    print("TOP 10 FOMO BRAIN v9")
 
     if not ranking:
         print(
@@ -1032,6 +1116,12 @@ def main():
         )
 
         print(
+            f"fomo_confluencia={token.get('fomoConfluence', 0)} "
+            f"| bonus={token.get('fomoBonus', 0)} "
+            f"| traders={','.join(token.get('fomoTraders', [])[:5]) or '-'}"
+        )
+
+        print(
             f"token={token['address']}"
         )
 
@@ -1044,7 +1134,7 @@ def main():
         )
 
     print("")
-    print("✅ FOMO Radar v8 terminado")
+    print("✅ FOMO Brain v9 terminado")
 
     print(
         "Modo análisis únicamente | "
