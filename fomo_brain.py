@@ -4,6 +4,7 @@ import urllib.parse
 import urllib.request
 import os
 import math
+import time
 
 # FOMO Brain v9 - DEX + FOMO Trader Radar + simulacion comparativa
 # V9 sigue siendo PAPER ONLY: no firma, no compra y no mueve fondos.
@@ -48,6 +49,7 @@ MAX_EXPOSURE_EUR = 10.0
 MEMORY_FILE = "fomo_memory.json"
 EVENT_MEMORY_FILE = "fomo_event_memory.json"
 V9_FILE = "fomo_shadow_v9.json"
+V10_FILE = "fomo_paper_v10.json"
 JSON_CACHE = {}
 REJECTIONS = []
 X_STATUS = "PENDIENTE"
@@ -686,7 +688,7 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
-def simular_cartera(ranking, paper_file=V9_FILE, label="V9 FOMO RADAR", confirm=True):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True):
     now = datetime.now(timezone.utc)
     try:
         with open(paper_file) as handle:
@@ -809,8 +811,8 @@ def simular_cartera(ranking, paper_file=V9_FILE, label="V9 FOMO RADAR", confirm=
         "partial_fraction": 0.5, "trailing_peak_pct": -15, "max_hours": 24,
         "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
-    state["assumptions"]["strategy"] = "confirmacion V9" if confirm else "reglas base"
-    state["assumptions"]["entry_policy"] = "V9 aprendizaje: 20 trades, compras >=55%, edad 10-1440m, precio creciente, liquidez >=95% y volumen5m >=60% de lectura previa" if confirm else "reglas base"
+    state["assumptions"]["strategy"] = "confirmacion V10" if confirm else "reglas base"
+    state["assumptions"]["entry_policy"] = "V10 early: edad del par 2-60m, momentum5m 2-60%, 20 trades, compras >=55%, confirmacion 0.5-5m, precio creciente, liquidez >=95%, volumen5m >=60%; subida1h solo aviso" if confirm else "reglas base"
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -832,7 +834,7 @@ def simular_cartera(ranking, paper_file=V9_FILE, label="V9 FOMO RADAR", confirm=
               f"estado={pos['quote_status']} | ultima_cotizacion={pos['last_quote_at']}")
     print(f"Cotizaciones no verificables={stale}; conservan ultimo valor, NO son liquidez")
     print("Costes supuestos POR LADO: comision 1%, deslizamiento 2%; FX fijo 1:1")
-    print("Stops evaluados cada 15 min: pueden ejecutarse virtualmente con perdidas mayores")
+    print("Stops evaluados en cada lectura; intervalo objetivo 60s dentro de la run, con huecos entre runs. No garantizados.")
 
 
 def identidad_par(pair, chain, address):
@@ -857,17 +859,17 @@ def motivo_entrada(token, confirm=False):
               (token["liquidity"] < 10_000, "liquidez < 10000 USD"),
               (token["buyRatio5m"] < (0.55 if confirm else 0.60), "ratio compras insuficiente"),
               (token["trades5m"] < 20, "actividad 5m insuficiente"),
-              (token["change1h"] > 150, "subida 1h > 150%")]
+              (not confirm and token["change1h"] > 150, "subida 1h > 150%")]
     for failed, reason in checks:
         if failed:
             return reason
     if not confirm:
         return None
     age = token.get("ageMinutes")
-    if age is None or not 10 <= age <= 1440:
-        return "comparacion: edad fuera de 10-1440 min"
-    if not 0 < token["change5m"] <= 25:
-        return "comparacion: momentum 5m fuera de 0-25%"
+    if age is None or not 2 <= age <= 60:
+        return "comparacion: edad fuera de 2-60 min"
+    if not 2 <= token["change5m"] <= 60:
+        return "comparacion: momentum 5m fuera de 2-60%"
     now = datetime.now(timezone.utc)
     prev = [x for x in cargar_memoria()
             if x.get("chain") == token["chain"] and x.get("address") == token["address"]
@@ -879,8 +881,8 @@ def motivo_entrada(token, confirm=False):
         minutes = (now - datetime.fromisoformat(old["hora"])).total_seconds() / 60
     except (ValueError, KeyError):
         return "comparacion: lectura previa invalida"
-    if not 5 <= minutes <= 30:
-        return "comparacion: lectura previa fuera de 5-30 min"
+    if not 0.5 <= minutes <= 5:
+        return "comparacion: lectura previa fuera de 0.5-5 min"
     if (numero(token["price"]) <= numero(old.get("price"))
             or token["liquidity"] < 0.95 * numero(old.get("liquidity"))
             or token["vol5m"] < 0.60 * numero(old.get("vol5m"))):
@@ -949,14 +951,14 @@ def descubrir_pares():
     return pairs, sources
 
 
-def main():
+def main(refresh_events=True):
     ahora = datetime.now(timezone.utc)
 
-    print("🧠 FOMO Brain v9 - DEX + FOMO TRADER RADAR + PAPER")
+    print("🧠 FOMO Brain v10 - DEX + FOMO TRADER RADAR + PAPER")
     fomo_events = consultar_fomo_trader_radar()
     print(f"FOMO Trader Radar: {FOMO_RADAR_STATUS} | eventos verificados={len(fomo_events)}")
     eventos = cargar_eventos()
-    nuevos_eventos = consultar_x()
+    nuevos_eventos = consultar_x() if refresh_events else []
     conocidos = {str(e.get("id")) for e in eventos if e.get("id")}
     added = 0
     for evento in nuevos_eventos:
@@ -1026,8 +1028,8 @@ def main():
         f"{len(ranking)}"
     )
 
-    print("V9: prueba PAPER independiente; confluencia FOMO suma solo si el feed autorizado aporta evidencia")
-    simular_cartera(ranking, V9_FILE, "V9 FOMO RADAR", confirm=True)
+    print("V10 EARLY: edad del PAR 2-60m; no equivale a edad del token ni a graduacion FOMO. Subida1h >150% es aviso.")
+    simular_cartera(ranking, V10_FILE, "V10 EARLY", confirm=True)
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
@@ -1130,7 +1132,7 @@ def main():
         )
 
     print("")
-    print("✅ FOMO Brain v9 terminado")
+    print("✅ FOMO Brain v10 terminado")
 
     print(
         "Modo análisis únicamente | "
@@ -1139,5 +1141,25 @@ def main():
     )
 
 
+def run_session(cycles=1, interval_seconds=60):
+    # Ventana acotada: no cambia el cron ni presupone continuidad entre runs.
+    if not 1 <= cycles <= 13 or interval_seconds < 60:
+        raise ValueError("Sesion: 1-13 lecturas e intervalo >=60s")
+    started = time.monotonic()
+    for index in range(cycles):
+        if index and time.monotonic() - started >= 720:
+            break
+        JSON_CACHE.clear()
+        REJECTIONS.clear()
+        print(f"V10 LECTURA {index + 1}/{cycles}", flush=True)
+        main(refresh_events=index == 0)
+        if index + 1 < cycles:
+            remaining = 720 - (time.monotonic() - started)
+            delay = max(0, started + (index + 1) * interval_seconds - time.monotonic())
+            if remaining <= 0 or delay >= remaining:
+                break
+            time.sleep(delay)
+
+
 if __name__ == "__main__":
-    main()
+    run_session(int(os.getenv("BRAIN_CYCLES", "1")))
