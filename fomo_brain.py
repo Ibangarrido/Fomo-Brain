@@ -770,6 +770,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             if fresh is None:
                 notes.append(f"DESCARTE {key} | par fresco no supera filtros")
                 continue
+            # No perseguir una cotizacion que ya se alejo de la señal del radar.
+            drift = variacion(price, token.get("price"))
+            if confirm and (drift is None or abs(drift) > 5):
+                notes.append(f"DESCARTE {key} | cotizacion se aleja >5% de la señal")
+                continue
             reason = motivo_entrada(fresh, confirm, entry_mode)
             if reason:
                 notes.append(f"DESCARTE {key} | {reason}")
@@ -789,9 +794,17 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "mark_net": quantity * price * proceeds_factor,
             "last_quote_at": now.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
-            "partial_taken": False, "peak_price": price})
+            "partial_taken": False, "peak_price": price,
+            "entry_policy_version": "early-r2" if entry_mode == "early" and confirm else entry_mode,
+            "entry_snapshot": {k: fresh.get(k) for k in (
+                "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
+                "buys5m", "sells5m", "change5m", "change1h", "ageMinutes")},
+            "signal_price": token.get("price"), "quote_drift_pct": drift})
         notes.append("ENTRADA VIRTUAL " + token["symbol"] + " | EUR "
-                     + format(budget, ".2f"))
+                     + format(budget, ".2f")
+                     + f" | precio={price} | liquidez={fresh['liquidity']:.0f}"
+                     + f" | trades5m={fresh['trades5m']} | compras={fresh['buyRatio5m']:.1%}"
+                     + f" | volumen5m={fresh['vol5m']:.0f} | cambio5m={fresh['change5m']:.2f}%")
     equity = (state["cash"] + state["reserve"]
               + sum(p["mark_net"] for p in state["positions"]))
     stale = sum(p["quote_status"] != "OK" for p in state["positions"])
@@ -813,7 +826,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
     state["assumptions"]["strategy"] = "confirmacion V10" if confirm else "reglas base"
-    state["assumptions"]["entry_policy"] = "V10 early: edad del par 2-60m, momentum5m 2-60%, 20 trades, compras >=55%, confirmacion 0.5-5m, precio creciente, liquidez >=95%, volumen5m >=60%; subida1h solo aviso" if confirm else "reglas base"
+    state["assumptions"]["entry_policy"] = "V10 early r2: edad del par 2-60m, momentum5m 2-60% en ambas lecturas, 40 trades, compras >=60%, liquidez >=20000 USD; confirmacion 0.5-5m, precio +1-12%, liquidez >=95%, volumen5m no decreciente; subida1h solo aviso" if confirm else "reglas base"
+    state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
     state["assumptions"]["entry_mode"] = entry_mode
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "impulse":
@@ -872,6 +886,11 @@ def motivo_entrada(token, confirm=False, entry_mode="early"):
             return reason
     if not confirm:
         return None
+    if entry_mode == "early":
+        if token["liquidity"] < 20_000:
+            return "early r2: liquidez < 20000 USD"
+        if token["trades5m"] < 40 or token["buyRatio5m"] < 0.60:
+            return "early r2: requiere 40 trades y compras >=60%"
     age = token.get("ageMinutes")
     if entry_mode == "early" and (age is None or not 2 <= age <= 60):
         return "comparacion: edad fuera de 2-60 min"
@@ -900,10 +919,15 @@ def motivo_entrada(token, confirm=False, entry_mode="early"):
         if token["liquidity"] < 0.95 * numero(old.get("liquidity")):
             return "impulso: liquidez cae mas del 5%"
         return None
-    if (numero(token["price"]) <= numero(old.get("price"))
-            or token["liquidity"] < 0.95 * numero(old.get("liquidity"))
-            or token["vol5m"] < 0.60 * numero(old.get("vol5m"))):
-        return "comparacion: precio/liquidez/volumen no confirman"
+    if not 2 <= numero(old.get("change5m")) <= 60:
+        return "early r2: lectura anterior sin momentum positivo sostenido"
+    growth = variacion(token["price"], old.get("price"))
+    if growth is None or not 1 <= growth <= 12:
+        return "early r2: precio entre lecturas fuera de 1-12%"
+    if token["liquidity"] < 0.95 * numero(old.get("liquidity")):
+        return "early r2: liquidez cae mas del 5%"
+    if token["vol5m"] < numero(old.get("vol5m")):
+        return "early r2: volumen5m decreciente"
     return None
 
 

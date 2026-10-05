@@ -138,19 +138,53 @@ class V10Tests(unittest.TestCase):
 
     def test_learning_entry_limits(self):
         t = b.analizar_par(pair())
-        t.update(trades5m=20, buyRatio5m=.55, ageMinutes=30,
+        t.update(trades5m=40, buyRatio5m=.60, ageMinutes=30,
                  liquidity=20000, vol5m=3000)
         old = dict(t, hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
-                   price=.95, liquidity=21000, vol5m=5000)
+                   price=.95, liquidity=21000, vol5m=3000)
         with patch.object(b, 'cargar_memoria', return_value=[old]):
             self.assertIsNone(b.motivo_entrada(t, True))
-            for field, value in [('trades5m', 19), ('buyRatio5m', .54),
+            for field, value in [('trades5m', 39), ('buyRatio5m', .59),
                                  ('ageMinutes', 61), ('change5m', 61),
                                  ('liquidity', 19000), ('vol5m', 2999),
                                  ('price', .94)]:
                 with self.subTest(field=field):
                     rejected = dict(t, **{field: value})
                     self.assertIsNotNone(b.motivo_entrada(rejected, True))
+
+    def test_early_rejects_fading_volume_rebound_and_price_jump(self):
+        t = b.analizar_par(pair())
+        old = dict(t, hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
+                   price=.95, vol5m=3000)
+        with patch.object(b, 'cargar_memoria', return_value=[old]):
+            self.assertIsNone(b.motivo_entrada(t, True))
+            self.assertIn('volumen5m decreciente', b.motivo_entrada(dict(t, vol5m=2000), True))
+            self.assertIn('1-12%', b.motivo_entrada(dict(t, price=1.1), True))
+        with patch.object(b, 'cargar_memoria', return_value=[dict(old, change5m=-20)]):
+            self.assertIn('sostenido', b.motivo_entrada(t, True))
+
+    def test_fresh_quote_drift_rejects_without_spending_and_records_accepted_snapshot(self):
+        t = b.analizar_par(pair())
+        old = dict(t, hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
+                   price=.95, vol5m=2000)
+        with patch.object(b, 'cargar_memoria', return_value=[old]):
+            with patch.object(b, 'cotizar_posicion', return_value=(1.06, 20000, pair(price=1.06))):
+                b.simular_cartera([t])
+            with open(b.V10_FILE) as f:
+                rejected = json.load(f)
+            self.assertEqual(rejected['cash'], 100)
+            self.assertEqual(rejected['positions'], [])
+            self.assertIn('cotizacion se aleja', rejected['last_run_notes'][0])
+            with patch.object(b, 'cotizar_posicion', return_value=(1.01, 20000, pair(price=1.01))):
+                b.simular_cartera([t])
+        with open(b.V10_FILE) as f:
+            accepted = json.load(f)
+        self.assertEqual(accepted['cash'], 90)
+        pos = accepted['positions'][0]
+        self.assertEqual(float(pos['entry_snapshot']['price']), 1.01)
+        self.assertEqual(pos['entry_policy_version'], 'early-r2')
+        self.assertAlmostEqual(pos['quote_drift_pct'], 1)
+        self.assertEqual(float(pos['signal_price']), 1)
 
     def test_early_allows_hourly_pump_but_requires_recent_confirmation(self):
         t = b.analizar_par(pair())
