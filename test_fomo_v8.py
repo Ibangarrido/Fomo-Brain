@@ -119,6 +119,25 @@ class V8Tests(unittest.TestCase):
         self.assertAlmostEqual(end['observations'][-1]['estimated_equity'] - 100,
                                sum(x['profit'] for x in end['closed']))
 
+    def test_v9_fomo_confluence_is_bounded_and_verified(self):
+        t = b.analizar_par(pair())
+        candidates = {("solana", "a"): t}
+        events = [
+            {"chain": "solana", "address": "a", "trader": "T1", "side": "BUY", "verified": True},
+            {"chain": "solana", "address": "a", "trader": "T2", "side": "BUY", "verified": True},
+            {"chain": "solana", "address": "a", "trader": "T3", "side": "SELL", "verified": True},
+        ]
+        base = t["score"]
+        b.aplicar_confluencia_fomo(candidates, events)
+        self.assertEqual(t["fomoConfluence"], 2)
+        self.assertEqual(t["fomoBonus"], 1)
+        self.assertEqual(t["score"], base + 1)
+
+    def test_v9_no_feed_means_no_fabricated_events(self):
+        with patch.object(b, "FOMO_RADAR_CONNECTED", False):
+            self.assertEqual(b.consultar_fomo_trader_radar(), [])
+            self.assertEqual(b.FOMO_RADAR_STATUS, "SIN FUENTE AUTORIZADA")
+
     def test_nonfinite_prices_rejected(self):
         self.assertEqual(b.numero('NaN'), 0)
         self.assertEqual(b.numero('Infinity'), 0)
