@@ -3,14 +3,15 @@ import json
 import urllib.parse
 import urllib.request
 import os
+import math
 
-# FOMO Radar v7 - Graduation + Event Learning Lab
+# FOMO Radar v8 - descubrimiento, trazabilidad y comparacion virtual
 SEARCHES = ["pump", "meme", "doge", "pepe", "cat", "moon", "coin", "graduated", "launchpad"]
 
 # Fase actual: APRENDIZAJE. No compra, no firma, no mueve fondos.
 LEARNING_ONLY = True
 
-# EVENT RADAR v7
+# EVENT RADAR v8
 # Fuentes sociales se activarán únicamente mediante feeds/API autorizados.
 # Mientras no exista una fuente conectada, NO se fabrican eventos.
 EVENT_RADAR_ENABLED = True
@@ -36,20 +37,40 @@ MAX_EXPOSURE_EUR = 10.0
 
 MEMORY_FILE = "fomo_memory.json"
 EVENT_MEMORY_FILE = "fomo_event_memory.json"
+SHADOW_FILE = "fomo_shadow_v8.json"
+JSON_CACHE = {}
+REJECTIONS = []
+X_STATUS = "PENDIENTE"
+STUDY_TOKENS = [
+    ("solana", "6Kixbp4noymaazXvuNqjdHqaeYG7YVhpfcw5APxYAQk1"),
+    ("solana", "E4X5HjWLZfHe3i1HWWutFdA7ywW7ytXWaCvEJV5Mpump"),
+]
+
+
+def descartar(pair, reason):
+    REJECTIONS.append({"chain": pair.get("chainId"),
+                       "address": (pair.get("baseToken") or {}).get("address"),
+                       "pair": pair.get("pairAddress"), "reason": reason})
+    return None
 
 
 def pedir_json(url):
+    if url in JSON_CACHE:
+        return JSON_CACHE[url]
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "FOMO-Brain/5.0"}
+        headers={"User-Agent": "FOMO-Brain/8.0"}
     )
     with urllib.request.urlopen(req, timeout=15) as response:
-        return json.loads(response.read().decode())
+        data = json.loads(response.read().decode())
+    JSON_CACHE[url] = data
+    return data
 
 
 def numero(valor):
     try:
-        return float(valor or 0)
+        value = float(valor or 0)
+        return value if math.isfinite(value) else 0.0
     except (TypeError, ValueError):
         return 0.0
 
@@ -116,7 +137,7 @@ def clasificar_token(token):
     ):
         return "VIGILAR"
 
-    if score >= 6:
+    if score >= 6 and trades >= 20 and ratio >= 0.60 and token.get("change5m", 0) > 0:
         return "MOMENTUM"
 
     return "NORMAL"
@@ -158,16 +179,16 @@ def analizar_par(pair):
 
     # Filtros basicos
     if liquidity < MIN_LIQUIDITY:
-        return None
+        return descartar(pair, "liquidez < 5000 USD")
 
     if market_cap <= 0 or market_cap > MAX_MARKET_CAP:
-        return None
+        return descartar(pair, "capitalizacion ausente o > 5M USD")
 
     if vol_1h < MIN_VOLUME_1H:
-        return None
+        return descartar(pair, "volumen 1h < 5000 USD")
 
     if change_5m <= 0 and change_1h <= 0:
-        return None
+        return descartar(pair, "sin momentum positivo 5m/1h")
 
     score = 0
 
@@ -234,6 +255,9 @@ def analizar_par(pair):
         "buyRatio5m": buy_ratio_5m,
         "ageMinutes": age_minutes,
         "score": score,
+        "netTrades5m": buys_5m - sells_5m,
+        "volumeLiquidity1h": vol_1h / liquidity if liquidity else None,
+        "graduationStatus": "NO VERIFICADA",
         "url": pair.get("url", "")
     }
 
@@ -264,7 +288,7 @@ def comparar_con_memoria(ranking):
     print("")
     print("🧠 EVOLUCION DESDE LA ULTIMA LECTURA")
 
-    for token in ranking[:10]:
+    for token in ranking[:100]:
         anteriores = [
             x for x in memoria
             if x.get("address") == token["address"]
@@ -409,6 +433,7 @@ def guardar_memoria(ranking):
             "name": token["name"],
             "address": token["address"],
             "chain": token["chain"],
+            "pair": token["pair"],
             "price": token["price"],
             "mc": token["mc"],
             "liquidity": token["liquidity"],
@@ -426,7 +451,7 @@ def guardar_memoria(ranking):
         })
 
     # Limitar crecimiento del historial
-    memoria = memoria[-1000:]
+    memoria = memoria[-10000:]
 
     with open(MEMORY_FILE, "w") as archivo:
         json.dump(
@@ -439,8 +464,8 @@ def guardar_memoria(ranking):
 def cargar_eventos():
     """Carga eventos sociales verificados ya registrados.
 
-    V7 no hace scraping de X. X_BEARER_TOKEN habilita el conector oficial
-    cuando terminemos de añadir la consulta a la API. Sin credenciales,
+    V8 no hace scraping de X. X_BEARER_TOKEN habilita el conector oficial
+    mediante la API oficial. Sin credenciales,
     el radar sigue funcionando con cero eventos y nunca inventa datos.
     """
     try:
@@ -453,7 +478,9 @@ def cargar_eventos():
 
 def consultar_x():
     """Consulta publicaciones recientes mediante la API oficial de X."""
+    global X_STATUS
     if not EVENT_RADAR_ENABLED or not SOCIAL_FEED_CONNECTED:
+        X_STATUS = "SIN CREDENCIALES" if not SOCIAL_FEED_CONNECTED else "OFF"
         return []
 
     query = "(crypto OR memecoin OR meme OR token OR coin) from:realDonaldTrump -is:retweet"
@@ -467,7 +494,7 @@ def consultar_x():
         url,
         headers={
             "Authorization": "Bearer " + X_BEARER_TOKEN,
-            "User-Agent": "FOMO-Brain/7.0"
+            "User-Agent": "FOMO-Brain/8.0"
         }
     )
 
@@ -475,8 +502,15 @@ def consultar_x():
         with urllib.request.urlopen(req, timeout=15) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
+        X_STATUS = "ERROR"
         print(f"X API: ERROR CONTROLADO | {type(exc).__name__}: {exc}")
         return []
+
+    if payload.get("errors"):
+        X_STATUS = "RESPUESTA CON ERRORES"
+        print("X API: respuesta parcial/con errores; no confirma cobertura")
+    else:
+        X_STATUS = "CONSULTA OK"
 
     eventos = []
     for post in payload.get("data", []):
@@ -501,7 +535,7 @@ def guardar_eventos(eventos):
 
 
 def resumen_event_radar(eventos):
-    estado = "CONECTADO" if SOCIAL_FEED_CONNECTED else "PENDIENTE"
+    estado = X_STATUS
     return (
         f"Event Radar: {'ACTIVO' if EVENT_RADAR_ENABLED else 'OFF'} "
         f"| X oficial: {estado} "
@@ -539,26 +573,47 @@ def cotizar_posicion(pos):
     chain = urllib.parse.quote(pos["chain"], safe="")
     pair_id = urllib.parse.quote(pos["pair"], safe="")
     url = f"https://api.dexscreener.com/latest/dex/pairs/{chain}/{pair_id}"
-    data = pedir_json(url)
+    try:
+        data = pedir_json(url)
+    except Exception:
+        # El endpoint del contrato puede seguir disponible si falla el del par.
+        data = {"pairs": []}
     pair = next((p for p in data.get("pairs") or []
                  if p.get("chainId") == pos["chain"]
                  and p.get("pairAddress") == pos["pair"]
                  and (p.get("baseToken") or {}).get("address") == pos["address"]), None)
+    original_pair = pos["pair"]
+    if (pair is None or numero(pair.get("priceUsd")) <= 0
+            or numero((pair.get("liquidity") or {}).get("usd")) < MIN_LIQUIDITY):
+        # Buscar un mercado del MISMO contrato y cadena; nunca por nombre.
+        candidates = pares_token(pos["chain"], pos["address"])
+        valid = [p for p in candidates if identidad_par(p, pos["chain"], pos["address"])
+                 and numero(p.get("priceUsd")) > 0
+                 and numero((p.get("liquidity") or {}).get("usd")) >= MIN_LIQUIDITY]
+        if valid:
+            pair = max(valid, key=lambda p: numero((p.get("liquidity") or {}).get("usd")))
     if pair is None:
-        raise ValueError("El par exacto no aparece en la fuente; no se sustituye por otro token")
+        raise ValueError("Sin par verificable del mismo contrato y cadena")
     price = numero(pair.get("priceUsd"))
     liquidity = numero((pair.get("liquidity") or {}).get("usd"))
     if price <= 0:
         raise ValueError("El par no tiene precio valido")
     if liquidity < MIN_LIQUIDITY:
         raise ValueError(f"Liquidez insuficiente ({liquidity:.2f} USD); salida no verificable")
-    return price, liquidity
+    if pair["pairAddress"] != original_pair:
+        pos.setdefault("pair_history", []).append({
+            "at": datetime.now(timezone.utc).isoformat(), "from": original_pair,
+            "to": pair["pairAddress"], "reason": "par original sin liquidez/precio verificable"})
+        pos["pair"] = pair["pairAddress"]
+        pos["url"] = pair.get("url", "")
+        print(f"CAMBIO PAR {pos['chain']}:{pos['address']} | {original_pair} -> {pos['pair']}")
+    return price, liquidity, pair
 
 
-def simular_cartera(ranking):
+def simular_cartera(ranking, paper_file=PAPER_FILE, label="PRINCIPAL", confirm=False):
     now = datetime.now(timezone.utc)
     try:
-        with open(PAPER_FILE) as handle:
+        with open(paper_file) as handle:
             state = json.load(handle)
     except FileNotFoundError:
         state = {"version": 1, "started_at": now.isoformat(),
@@ -573,7 +628,7 @@ def simular_cartera(ranking):
     for pos in list(state["positions"]):
         # Mantener seguimiento incluso si desaparece de los filtros.
         try:
-            price, liquidity = cotizar_posicion(pos)
+            price, liquidity, _ = cotizar_posicion(pos)
             pos["mark_net"] = pos["quantity"] * price * proceeds_factor
             pos["last_quote_at"] = now.isoformat()
             pos["quote_status"] = "OK"
@@ -622,21 +677,26 @@ def simular_cartera(ranking):
     # Una sola entrada por token durante este experimento, sin reentradas.
     for token in ranking:
         key = token["chain"] + ":" + token["address"]
-        if (quotes_blocked or key in state["seen"] or key in closed_this_run
-                or len(state["positions"]) >= 3 or state["cash"] < 10):
-            continue
-        price = numero(token["price"])
-        if (price <= 0 or token["score"] < 6
-                or token["liquidity"] < 10_000
-                or token["buyRatio5m"] < 0.60 or token["trades5m"] < 20
-                or token["change1h"] > 150):
+        reason = ("caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
+                  "cartera sin valoracion completa" if quotes_blocked else
+                  "token ya operado" if key in state["seen"] or key in closed_this_run else
+                  "maximo 3 posiciones" if len(state["positions"]) >= 3 else
+                  "efectivo < 10 EUR" if state["cash"] < 10 else None)
+        if reason:
+            notes.append(f"DESCARTE {key} | {reason}")
             continue
         try:
-            price, entry_liquidity = cotizar_posicion(token)
-            if entry_liquidity < 10_000:
+            price, entry_liquidity, fresh_pair = cotizar_posicion(token)
+            fresh = analizar_par(fresh_pair)
+            if fresh is None:
+                notes.append(f"DESCARTE {key} | par fresco no supera filtros")
+                continue
+            reason = motivo_entrada(fresh, confirm)
+            if reason:
+                notes.append(f"DESCARTE {key} | {reason}")
                 continue
         except Exception as exc:
-            notes.append("ENTRADA OMITIDA " + token["symbol"] + ": " + str(exc))
+            notes.append("ENTRADA OMITIDA " + key + ": " + str(exc))
             continue
         budget = min(10.0, MAX_EXPOSURE_EUR)
         quantity = budget / (price * cost)
@@ -649,7 +709,7 @@ def simular_cartera(ranking):
             "budget": budget, "quantity": quantity,
             "mark_net": quantity * price * proceeds_factor,
             "last_quote_at": now.isoformat(), "quote_status": "OK",
-            "entry_score": token["score"], "url": token["url"],
+            "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price})
         notes.append("ENTRADA VIRTUAL " + token["symbol"] + " | EUR "
                      + format(budget, ".2f"))
@@ -673,10 +733,13 @@ def simular_cartera(ranking):
         "partial_fraction": 0.5, "trailing_peak_pct": -15, "max_hours": 24,
         "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
-    with open(PAPER_FILE + ".tmp", "w") as handle:
+    state["assumptions"]["strategy"] = "confirmacion V8" if confirm else "reglas base V8"
+    state["last_rejections"] = REJECTIONS[-300:]
+    state["last_run_notes"] = notes
+    with open(paper_file + ".tmp", "w") as handle:
         json.dump(state, handle, indent=2)
-    os.replace(PAPER_FILE + ".tmp", PAPER_FILE)
-    print("\nCARTERA VIRTUAL — NO EJECUTA ORDENES REALES")
+    os.replace(paper_file + ".tmp", paper_file)
+    print(f"\nCARTERA VIRTUAL {label} — NO EJECUTA ORDENES REALES")
     for note in notes:
         print(note)
     print(f"Liquido EUR {state['cash']:.2f} | reserva EUR {state['reserve']:.2f}")
@@ -688,27 +751,145 @@ def simular_cartera(ranking):
         print(f"Patrimonio estimado EUR {equity:.2f} | resultado EUR {equity - 100:+.2f}")
     print(f"Resultado realizado virtual EUR {realized:+.2f}")
     for pos in state["positions"]:
-        print(f"POSICION {pos['symbol']} | token={pos['address']} | "
+        print(f"POSICION {pos['symbol']} | chain={pos['chain']} | token={pos['address']} | "
               f"estado={pos['quote_status']} | ultima_cotizacion={pos['last_quote_at']}")
     print(f"Cotizaciones no verificables={stale}; conservan ultimo valor, NO son liquidez")
     print("Costes supuestos POR LADO: comision 1%, deslizamiento 2%; FX fijo 1:1")
     print("Stops evaluados cada 15 min: pueden ejecutarse virtualmente con perdidas mayores")
 
 
+def identidad_par(pair, chain, address):
+    return (pair.get("chainId") == chain
+            and (pair.get("baseToken") or {}).get("address") == address
+            and bool(pair.get("pairAddress")))
+
+
+def pares_token(chain, address):
+    url = ("https://api.dexscreener.com/token-pairs/v1/"
+           + urllib.parse.quote(chain, safe="") + "/"
+           + urllib.parse.quote(address, safe=""))
+    data = pedir_json(url)
+    if not isinstance(data, list):
+        raise ValueError("Respuesta token-pairs no valida")
+    return [p for p in data if identidad_par(p, chain, address)]
+
+
+def motivo_entrada(token, confirm=False):
+    checks = [(numero(token["price"]) <= 0, "precio ausente"),
+              (token["score"] < 6, "score < 6"),
+              (token["liquidity"] < 10_000, "liquidez < 10000 USD"),
+              (token["buyRatio5m"] < (0.65 if confirm else 0.60), "ratio compras insuficiente"),
+              (token["trades5m"] < (40 if confirm else 20), "actividad 5m insuficiente"),
+              (token["change1h"] > 150, "subida 1h > 150%")]
+    for failed, reason in checks:
+        if failed:
+            return reason
+    if not confirm:
+        return None
+    age = token.get("ageMinutes")
+    if age is None or not 10 <= age <= 180:
+        return "comparacion: edad fuera de 10-180 min"
+    if not 0 < token["change5m"] <= 25:
+        return "comparacion: momentum 5m fuera de 0-25%"
+    now = datetime.now(timezone.utc)
+    prev = [x for x in cargar_memoria()
+            if x.get("chain") == token["chain"] and x.get("address") == token["address"]
+            and x.get("pair") == token["pair"]]
+    if not prev:
+        return "comparacion: falta lectura previa del mismo par"
+    old = prev[-1]
+    try:
+        minutes = (now - datetime.fromisoformat(old["hora"])).total_seconds() / 60
+    except (ValueError, KeyError):
+        return "comparacion: lectura previa invalida"
+    if not 5 <= minutes <= 30:
+        return "comparacion: lectura previa fuera de 5-30 min"
+    if (numero(token["price"]) <= numero(old.get("price"))
+            or token["liquidity"] < numero(old.get("liquidity"))
+            or token["vol5m"] < numero(old.get("vol5m"))):
+        return "comparacion: precio/liquidez/volumen no confirman"
+    return None
+
+
+def descubrir_pares():
+    pairs = {}
+    sources = {}
+
+    def add(pair, source):
+        key = (pair.get("chainId"), pair.get("pairAddress"))
+        if not all(key):
+            return
+        pairs[key] = pair
+        sources.setdefault(key, set()).add(source)
+
+    for term in SEARCHES:
+        try:
+            data = pedir_json("https://api.dexscreener.com/latest/dex/search/?q="
+                              + urllib.parse.quote(term))
+            for pair in data.get("pairs") or []:
+                add(pair, "busqueda:" + term)
+        except Exception as exc:
+            print(f"FUENTE ERROR busqueda:{term} | {exc}")
+
+    # Perfiles no equivalen a todos los lanzamientos ni a una recomendacion.
+    requested = dict.fromkeys(STUDY_TOKENS)
+    for endpoint in ("token-profiles/latest/v1", "token-profiles/recent-updates/v1"):
+        try:
+            profiles = pedir_json("https://api.dexscreener.com/" + endpoint)
+            if not isinstance(profiles, list):
+                raise ValueError("Respuesta perfiles no valida")
+            for p in profiles[:20]:
+                if p.get("chainId") and p.get("tokenAddress"):
+                    requested.setdefault((p["chainId"], p["tokenAddress"]), None)
+        except Exception as exc:
+            print(f"FUENTE ERROR {endpoint} | {exc}")
+    for old in reversed(cargar_memoria()):
+        if len(requested) >= 60:
+            break
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(old["hora"])).total_seconds()
+            if age <= 86400 and old.get("chain") and old.get("address"):
+                requested.setdefault((old["chain"], old["address"]), None)
+        except (ValueError, KeyError):
+            pass
+    for chain, address in requested:
+        try:
+            found = pares_token(chain, address)
+            for pair in found:
+                add(pair, "seguimiento" if (chain, address) in STUDY_TOKENS else "perfil/historial")
+            if (chain, address) in STUDY_TOKENS:
+                print(f"ESTUDIO {chain}:{address} | pares={len(found)} | fuera de cartera por defecto")
+                if found:
+                    p = max(found, key=lambda p: numero((p.get("liquidity") or {}).get("usd")))
+                    print(f"ESTUDIO DATOS {chain}:{address} | par={p['pairAddress']} | "
+                          f"precio={p.get('priceUsd', 'NO DISPONIBLE')} | "
+                          f"liquidez={numero((p.get('liquidity') or {}).get('usd')):.2f} | "
+                          f"compras5m={(p.get('txns') or {}).get('m5', {}).get('buys', 'NO DISPONIBLE')} | "
+                          f"ventas5m={(p.get('txns') or {}).get('m5', {}).get('sells', 'NO DISPONIBLE')}")
+        except Exception as exc:
+            print(f"FUENTE ERROR token:{chain}:{address} | {exc}")
+    print(f"COBERTURA V8 pares recibidos={len(pairs)} | contratos consultados={len(requested)}")
+    return pairs, sources
+
+
 def main():
     ahora = datetime.now(timezone.utc)
 
-    print("🧠 FOMO Radar v7 - GRADUATION + EVENT LEARNING LAB")
+    print("🧠 FOMO Radar v8 - ANALISIS Y COMPARACION VIRTUAL")
     eventos = cargar_eventos()
     nuevos_eventos = consultar_x()
     conocidos = {str(e.get("id")) for e in eventos if e.get("id")}
+    added = 0
     for evento in nuevos_eventos:
-        if str(evento.get("id")) not in conocidos:
+        event_id = str(evento.get("id") or "")
+        if event_id and event_id not in conocidos:
             eventos.append(evento)
+            conocidos.add(event_id)
+            added += 1
     if nuevos_eventos:
         guardar_eventos(eventos)
     print(resumen_event_radar(eventos))
-    print(f"X API: nuevos_eventos={len(nuevos_eventos)}")
+    print(f"X API: publicaciones devueltas={len(nuevos_eventos)} | nuevos_eventos={added}")
     print(f"Hora UTC: {ahora.isoformat()}")
     print(
         "Buscando memecoins pequeñas "
@@ -717,50 +898,26 @@ def main():
 
     candidatos = {}
 
-    for termino in SEARCHES:
-        try:
-            query = urllib.parse.quote(termino)
+    pairs, sources = descubrir_pares()
+    for pool_key, pair in pairs.items():
+        resultado = analizar_par(pair)
+        if resultado is None:
+            continue
+        resultado["discoverySources"] = sorted(sources[pool_key])
+        # Solo coincidencia explicita de contrato; texto generico no confirma vinculo.
+        linked = [e for e in eventos if resultado["address"] in str(e.get("text", ""))]
+        resultado["eventMatches"] = len(linked)
+        resultado["eventSources"] = sorted({e["source"] for e in linked})
+        key = (resultado["chain"], resultado["address"])
+        old = candidatos.get(key)
+        # El par con mas liquidez, no el score mas alto de un pool diminuto.
+        if old is None or resultado["liquidity"] > old["liquidity"]:
+            candidatos[key] = resultado
 
-            url = (
-                "https://api.dexscreener.com/"
-                "latest/dex/search/"
-                f"?q={query}"
-            )
-
-            datos = pedir_json(url)
-
-            for pair in datos.get("pairs") or []:
-                resultado = analizar_par(pair)
-
-                if resultado is None:
-                    continue
-
-                clave = (
-                    resultado["chain"],
-                    resultado["address"]
-                )
-
-                anterior = candidatos.get(clave)
-
-                if (
-                    anterior is None
-                    or resultado["score"]
-                    > anterior["score"]
-                    or (
-                        resultado["score"]
-                        == anterior["score"]
-                        and resultado["vol1h"]
-                        > anterior["vol1h"]
-                    )
-                ):
-                    candidatos[clave] = resultado
-
-        except Exception as error:
-            print(
-                f"⚠️ Error buscando "
-                f"{termino}: {error}"
-            )
-
+    for token in candidatos.values():
+        if token["score"] < 2:
+            REJECTIONS.append({"chain": token["chain"], "address": token["address"],
+                               "pair": token["pair"], "reason": "score < 2"})
     candidatos = {
         k: v
         for k, v in candidatos.items()
@@ -789,8 +946,16 @@ def main():
     )
 
     simular_cartera(ranking)
+    print("COMPARACION V8: 100 EUR adicionales SOLO FICTICIOS; resultado independiente")
+    simular_cartera(ranking, SHADOW_FILE, "COMPARACION V8", confirm=True)
+    counts = {}
+    for item in REJECTIONS:
+        counts[item["reason"]] = counts.get(item["reason"], 0) + 1
+    print("DESCARTES DESCUBRIMIENTO " + json.dumps(counts, ensure_ascii=False))
+    for item in REJECTIONS[:60]:
+        print(f"DESCARTE PAR {item['chain']}:{item['address']} | {item['pair']} | {item['reason']}")
 
-    print("TOP 10 FOMO RADAR v7")
+    print("TOP 10 FOMO RADAR v8")
 
     if not ranking:
         print(
@@ -815,7 +980,7 @@ def main():
             f"({token['name']}) "
             f"| score={token['score']}/12 "
             f"| {token['estadoEarly']} "
-            f"| graduacion={'SI' if token.get('graduationCandidate') else 'NO'}"
+            f"| graduacion={token['graduationStatus']}"
         )
 
         print(
@@ -879,7 +1044,7 @@ def main():
         )
 
     print("")
-    print("✅ FOMO Radar v7 terminado")
+    print("✅ FOMO Radar v8 terminado")
 
     print(
         "Modo análisis únicamente | "
@@ -890,5 +1055,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
