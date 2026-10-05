@@ -946,7 +946,7 @@ def main():
     )
 
     simular_cartera(ranking)
-    print("COMPARACION V8: 100 EUR adicionales SOLO FICTICIOS; resultado independiente")
+    print("COMPARACION V8: escenario alternativo sobre 100 EUR FICTICIOS; no sumar ambas carteras")
     simular_cartera(ranking, SHADOW_FILE, "COMPARACION V8", confirm=True)
     counts = {}
     for item in REJECTIONS:
