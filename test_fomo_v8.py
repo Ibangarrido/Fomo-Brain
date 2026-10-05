@@ -273,13 +273,17 @@ class V10Tests(unittest.TestCase):
             self.assertIsNotNone(b.motivo_entrada(t, True, 'impulse'))
 
     def test_impulse_rejects_extended_five_minute_candle(self):
-        old = self.token(change5m=12, price=1.0, vol5m=1000, liquidity=30000,
-                         trades5m=80, buyRatio5m=0.65)
-        token = self.token(change5m=45.71, price=1.05, vol5m=1200, liquidity=30000,
-                           trades5m=192, buyRatio5m=0.63)
-        with patch.object(b, 'ultima_lectura_par', return_value=old):
-            reason = b.razon_confirmacion(token, 'impulse')
+        token = dict(b.analizar_par(pair()), change5m=45.71, price=1.05,
+                     vol5m=1200, liquidity=30000, trades5m=192, buyRatio5m=0.63)
+        old = dict(token, change5m=12, price=1.0, vol5m=1000,
+                   hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat())
+        with patch.object(b, 'cargar_memoria', return_value=[old]):
+            reason = b.motivo_entrada(token, True, 'impulse')
         self.assertIn('vela 5m extendida', reason)
+        with patch.object(b, 'cargar_memoria', return_value=[old]):
+            self.assertIsNone(b.motivo_entrada(dict(token, change5m=25), True, 'impulse'))
+            self.assertIn('vela 5m extendida',
+                          b.motivo_entrada(dict(token, change5m=25.01), True, 'impulse'))
 
 
     def test_impulse_wallet_is_separate_and_persists(self):
