@@ -52,7 +52,9 @@ jobs:
         run: |
           python whale_paper.py &
           whale_pid=$!
-          trap 'kill -TERM "$whale_pid" 2>/dev/null || true; wait "$whale_pid" || true' EXIT
+          WHALE_TRADER=unipcs python whale_paper.py &
+          unipcs_pid=$!
+          trap 'kill -TERM "$whale_pid" "$unipcs_pid" 2>/dev/null || true; wait "$whale_pid" || true; wait "$unipcs_pid" || true' EXIT
           python fomo_brain.py
 
       - name: Guardar memoria FOMO
@@ -69,5 +71,6 @@ jobs:
             fomo_paper_v10.json
             fomo_paper_v10_impulse.json
             fomo_paper_whale.json
+            fomo_paper_whale_unipcs.json
           if-no-files-found: ignore
           overwrite: true

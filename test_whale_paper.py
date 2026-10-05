@@ -1,4 +1,7 @@
 import unittest
+import tempfile
+import json
+from unittest.mock import patch
 import whale_paper as w
 
 
@@ -53,6 +56,20 @@ class WhaleTests(unittest.TestCase):
         e, _ = w.normalize(alert(), 1120, 1000)
         w.process(s, e, 1120, lambda _: self.fail('identity change quoted'))
         self.assertEqual(s['cash'], 100)
+
+    def test_state_cannot_cross_profiles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = directory + '/state.json'
+            with open(path, 'w') as f:
+                json.dump({'trader': 'FartmanSacks'}, f)
+            with patch.object(w, 'FILE', path), patch.object(w, 'TRADER', 'unipcs'):
+                with self.assertRaises(ValueError):
+                    w.load()
+
+    def test_selected_trader_rejects_other_profile(self):
+        with patch.object(w, 'TRADER', 'unipcs'):
+            self.assertIsNone(w.normalize(alert(trader='FartmanSacks'), 1120, 1000)[0])
+            self.assertIsNotNone(w.normalize(alert(trader='unipcs'), 1120, 1000)[0])
 
     def test_stop_uses_current_quote_net_costs(self):
         s = state()

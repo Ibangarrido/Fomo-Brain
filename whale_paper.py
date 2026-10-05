@@ -8,8 +8,10 @@ import urllib.parse
 from datetime import datetime, timezone
 import fomo_brain as brain
 
-FILE = 'fomo_paper_whale.json'
-TRADER = 'FartmanSacks'
+TRADER = os.getenv('WHALE_TRADER', 'FartmanSacks').strip()
+if TRADER not in ('FartmanSacks', 'unipcs'):
+    raise ValueError('Perfil no configurado para esta prueba')
+FILE = 'fomo_paper_whale.json' if TRADER == 'FartmanSacks' else 'fomo_paper_whale_unipcs.json'
 # App alerts are provider reports, not transaction receipts or verified wallet attribution.
 URL = 'wss://api.fomoapi.io/ws/alerts?' + urllib.parse.urlencode({'trader': TRADER})
 CHAIN_IDS = {4663: 'robinhood', 1399811149: 'solana', 1: 'ethereum', 56: 'bsc', 8453: 'base'}
@@ -25,7 +27,10 @@ def stamp(ts):
 def load():
     try:
         with open(FILE) as f:
-            return json.load(f)
+            state = json.load(f)
+        if state.get('trader') != TRADER:
+            raise ValueError('El estado pertenece a otro perfil; no se mezclan carteras')
+        return state
     except FileNotFoundError:
         return {'version': 'WHALE DEMO r1', 'trader': TRADER, 'cash': 100.0,
                 'realized': 0.0, 'positions': [], 'closed': [], 'events': [], 'seen': []}
@@ -85,7 +90,7 @@ def close(state, pos, price, now, reason):
     state['closed'].append({**pos, 'exit_at': stamp(now), 'exit_price': price,
                             'net_pnl': pnl, 'reason': reason})
     state['positions'].remove(pos)
-    print(f"WHALE VIRTUAL SALIDA {pos['symbol']} | {stamp(now)} | neto={pnl:+.2f} EUR | {reason}", flush=True)
+    print(f"WHALE {TRADER} VIRTUAL SALIDA {pos['symbol']} | {stamp(now)} | neto={pnl:+.2f} EUR | {reason}", flush=True)
 
 
 def process(state, event, now, quoter=quote):
@@ -125,7 +130,7 @@ def process(state, event, now, quoter=quote):
                                    'cost': 10.0, 'peak': price, 'mark_net': 10 * SELL_FACTOR / BUY_FACTOR,
                                    'quote_at': stamp(now), 'quote_ok': True})
         event['result'] = 'ENTRADA VIRTUAL'
-        print(f"WHALE VIRTUAL ENTRADA {event['symbol']} | {stamp(now)} | precio={price} | retraso={event['delay_seconds']:.0f}s | 10 EUR", flush=True)
+        print(f"WHALE {TRADER} VIRTUAL ENTRADA {event['symbol']} | {stamp(now)} | precio={price} | retraso={event['delay_seconds']:.0f}s | 10 EUR", flush=True)
 
 
 def mark(state, now, quoter=quote):
@@ -146,8 +151,8 @@ def mark(state, now, quoter=quote):
     state['last_accounting_equity'] = state['cash'] + sum(p['mark_net'] for p in state['positions'])
     state['equity_verified'] = state['stale_positions'] == 0
     for pos in state['positions']:
-        print(f"WHALE POSICION {pos['symbol']} | {pos['chain']}:{pos['address']} | entrada={pos['entry_at']} | ultima cotizacion={pos['quote_at']} | verificable={pos['quote_ok']}", flush=True)
-    print(f"WHALE DEMO | patrimonio contable={state['last_accounting_equity']:.2f} EUR | verificable={state['equity_verified']} | realizado={state['realized']:+.2f} | abiertas={len(state['positions'])} | eventos={len(state['events'])}", flush=True)
+        print(f"WHALE {TRADER} POSICION {pos['symbol']} | {pos['chain']}:{pos['address']} | entrada={pos['entry_at']} | ultima cotizacion={pos['quote_at']} | verificable={pos['quote_ok']}", flush=True)
+    print(f"WHALE {TRADER} DEMO | patrimonio contable={state['last_accounting_equity']:.2f} EUR | verificable={state['equity_verified']} | realizado={state['realized']:+.2f} | abiertas={len(state['positions'])} | eventos={len(state['events'])}", flush=True)
 
 
 def run(seconds=900):
@@ -160,7 +165,7 @@ def run(seconds=900):
     next_mark = 0
     ws = None
     next_connect = 0
-    print('WHALE DEMO r1 | FartmanSacks | cartera independiente 100 EUR virtuales | proveedor no oficial; sin verificacion de tx | demo ~60s de retraso', flush=True)
+    print(f'WHALE DEMO r1 | {TRADER} | cartera independiente 100 EUR virtuales | proveedor no oficial; sin verificacion de tx | demo ~60s de retraso', flush=True)
     try:
         while not STOP and time.monotonic() < deadline:
             now = time.time()
@@ -176,10 +181,10 @@ def run(seconds=900):
                     ws = websocket.create_connection(URL, timeout=5)
                     ws.settimeout(1)
                     state['feed_status'] = 'CONECTADO; esperando alertas'
-                    print('WHALE FEED: CONECTADO (no implica operaciones)', flush=True)
+                    print(f'WHALE {TRADER} FEED: CONECTADO (no implica operaciones)', flush=True)
                 except Exception as exc:
                     state['feed_status'] = 'NO DISPONIBLE: ' + type(exc).__name__
-                    print('WHALE FEED: ' + state['feed_status'], flush=True)
+                    print(f'WHALE {TRADER} FEED: ' + state['feed_status'], flush=True)
                     next_connect = now + 30
                     save(state)
                     continue
@@ -187,20 +192,20 @@ def run(seconds=900):
                 msg = json.loads(ws.recv())
                 if msg.get('type') == 'welcome':
                     state['provider_delay_seconds'] = msg.get('delaySeconds')
-                    print('WHALE FEED welcome: ' + json.dumps({k: msg.get(k) for k in ('realtime', 'delaySeconds')}), flush=True)
+                    print(f'WHALE {TRADER} FEED welcome: ' + json.dumps({k: msg.get(k) for k in ('realtime', 'delaySeconds')}), flush=True)
                 event, reason = normalize(msg, time.time(), started)
                 if event:
                     process(state, event, time.time())
-                    print(f"WHALE ALERTA {event['symbol']} {event['side']} | {event.get('result', 'duplicada')} | tx NO verificada", flush=True)
+                    print(f"WHALE {TRADER} ALERTA {event['symbol']} {event['side']} | {event.get('result', 'duplicada')} | tx NO verificada", flush=True)
                     save(state)
                 elif msg.get('type') == 'alert':
                     state['rejected_alerts'] = state.get('rejected_alerts', 0) + 1
-                    print('WHALE DESCARTE: ' + str(reason), flush=True)
+                    print(f'WHALE {TRADER} DESCARTE: ' + str(reason), flush=True)
             except websocket.WebSocketTimeoutException:
                 pass
             except Exception as exc:
                 state['feed_status'] = 'DESCONECTADO: ' + type(exc).__name__
-                print('WHALE FEED: ' + state['feed_status'], flush=True)
+                print(f'WHALE {TRADER} FEED: ' + state['feed_status'], flush=True)
                 ws.close()
                 ws = None
                 next_connect = time.time() + 30
@@ -210,7 +215,7 @@ def run(seconds=900):
         mark(state, time.time())
         state['watcher_status'] = 'SESION FINALIZADA'
         save(state)
-        print('WHALE FIN: observacion solo durante esta run; huecos entre runs. Costes 1%+2% por lado; FX 1:1; sin gas/MEV.', flush=True)
+        print(f'WHALE {TRADER} FIN: observacion solo durante esta run; huecos entre runs. Costes 1%+2% por lado; FX 1:1; sin gas/MEV.', flush=True)
 
 
 if __name__ == '__main__':

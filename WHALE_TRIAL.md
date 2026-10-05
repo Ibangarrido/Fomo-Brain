@@ -1,6 +1,10 @@
 # WHALE DEMO r1 — experimento virtual prospectivo
 
-Perfil seleccionado por el usuario: [FartmanSacks](https://fomo.family/profile/FartmanSacks).
+Perfiles seleccionados por el usuario: [FartmanSacks](https://fomo.family/profile/FartmanSacks)
+y [unipcs](https://fomo.family/profile/unipcs). Cada uno tiene su propia cartera
+de 100 EUR virtuales y su lector; no se suman. `WHALE_TRADER=unipcs` selecciona
+el segundo y escribe `fomo_paper_whale_unipcs.json`. Por defecto se mantiene
+FartmanSacks y su estado existente. Se rechaza un estado de otro perfil.
 Fuente: [FomoAPI, proveedor independiente y no oficial](https://fomoapi.io/docs),
 WebSocket público `/ws/alerts?trader=FartmanSacks`, sin clave ni suscripción.
 Según su documentación, la demo tiene 60 segundos de retraso; se registra el
