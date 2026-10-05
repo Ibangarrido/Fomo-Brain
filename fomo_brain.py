@@ -189,10 +189,10 @@ def analizar_par(pair):
 
     # Filtros basicos
     if liquidity < MIN_LIQUIDITY:
-        return descartar(pair, "liquidez < 5000 USD")
+        return descartar(pair, f"liquidez < {MIN_LIQUIDITY:g} USD")
 
     if market_cap <= 0 or market_cap > MAX_MARKET_CAP:
-        return descartar(pair, "capitalizacion ausente o > 5M USD")
+        return descartar(pair, f"capitalizacion ausente o > {MAX_MARKET_CAP:g} USD")
 
     if vol_1h < MIN_VOLUME_1H:
         return descartar(pair, "volumen 1h < 5000 USD")
@@ -810,6 +810,7 @@ def simular_cartera(ranking, paper_file=V9_FILE, label="V9 FOMO RADAR", confirm=
         "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
     state["assumptions"]["strategy"] = "confirmacion V9" if confirm else "reglas base"
+    state["assumptions"]["entry_policy"] = "V9 aprendizaje: 20 trades, compras >=55%, edad 10-1440m, precio creciente, liquidez >=95% y volumen5m >=60% de lectura previa" if confirm else "reglas base"
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -854,8 +855,8 @@ def motivo_entrada(token, confirm=False):
     checks = [(numero(token["price"]) <= 0, "precio ausente"),
               (token["score"] < 5, "score < 5"),
               (token["liquidity"] < 10_000, "liquidez < 10000 USD"),
-              (token["buyRatio5m"] < 0.60, "ratio compras insuficiente"),
-              (token["trades5m"] < (25 if confirm else 20), "actividad 5m insuficiente"),
+              (token["buyRatio5m"] < (0.55 if confirm else 0.60), "ratio compras insuficiente"),
+              (token["trades5m"] < 20, "actividad 5m insuficiente"),
               (token["change1h"] > 150, "subida 1h > 150%")]
     for failed, reason in checks:
         if failed:
@@ -863,8 +864,8 @@ def motivo_entrada(token, confirm=False):
     if not confirm:
         return None
     age = token.get("ageMinutes")
-    if age is None or not 10 <= age <= 180:
-        return "comparacion: edad fuera de 10-180 min"
+    if age is None or not 10 <= age <= 1440:
+        return "comparacion: edad fuera de 10-1440 min"
     if not 0 < token["change5m"] <= 25:
         return "comparacion: momentum 5m fuera de 0-25%"
     now = datetime.now(timezone.utc)
@@ -881,8 +882,8 @@ def motivo_entrada(token, confirm=False):
     if not 5 <= minutes <= 30:
         return "comparacion: lectura previa fuera de 5-30 min"
     if (numero(token["price"]) <= numero(old.get("price"))
-            or token["liquidity"] < numero(old.get("liquidity"))
-            or token["vol5m"] < numero(old.get("vol5m"))):
+            or token["liquidity"] < 0.95 * numero(old.get("liquidity"))
+            or token["vol5m"] < 0.60 * numero(old.get("vol5m"))):
         return "comparacion: precio/liquidez/volumen no confirman"
     return None
 
