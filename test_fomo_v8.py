@@ -21,7 +21,7 @@ def pair(address='a', pool='p', liquidity=20000, price=1):
             'pairCreatedAt': int((datetime.now(timezone.utc)-timedelta(minutes=30)).timestamp()*1000)}
 
 
-class V8Tests(unittest.TestCase):
+class V9Tests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.cwd = os.getcwd()
@@ -65,45 +65,45 @@ class V8Tests(unittest.TestCase):
         with open(b.MEMORY_FILE, 'w') as f:
             json.dump([old], f)
         self.assertIn('falta lectura', b.motivo_entrada(t, True))
-    def test_paper_preserves_main_and_tracks_stop(self):
+    def test_v9_preserves_state_and_tracks_stop(self):
         t = b.analizar_par(pair())
         with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
-            b.simular_cartera([t])
-        with open(b.PAPER_FILE) as f:
+            b.simular_cartera([t], confirm=False)
+        with open(b.V9_FILE) as f:
             s = json.load(f)
         self.assertEqual(s['cash'], 90)
         with patch.object(b, 'cotizar_posicion', side_effect=ValueError('sin liquidez')):
-            b.simular_cartera([b.analizar_par(pair('second'))])
-        with open(b.PAPER_FILE) as f:
+            b.simular_cartera([b.analizar_par(pair('second'))], confirm=False)
+        with open(b.V9_FILE) as f:
             stale = json.load(f)
         self.assertEqual(stale['cash'], 90)
         self.assertEqual(stale['closed'], [])
         self.assertFalse(stale['observations'][-1]['valuation_complete'])
         with patch.object(b, 'cotizar_posicion', return_value=(.5, 20000, pair(price=.5))):
             b.simular_cartera([])
-        with open(b.PAPER_FILE) as f:
+        with open(b.V9_FILE) as f:
             stopped = json.load(f)
         self.assertEqual(stopped['positions'], [])
         self.assertLess(stopped['closed'][0]['profit'], 0)
         with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
-            b.simular_cartera([], b.SHADOW_FILE, 'COMPARACION', True)
-        with open(b.PAPER_FILE) as f:
+            b.simular_cartera([], 'isolated_test.json', 'AISLADA', True)
+        with open(b.V9_FILE) as f:
             self.assertEqual(json.load(f), stopped)
     def test_study_not_auto_purchased(self):
         t = b.analizar_par(pair(b.STUDY_TOKENS[0][1]))
         with patch.object(b, 'cotizar_posicion') as quote:
-            b.simular_cartera([t])
+            b.simular_cartera([t], confirm=False)
             quote.assert_not_called()
-        with open(b.PAPER_FILE) as f:
+        with open(b.V9_FILE) as f:
             self.assertEqual(json.load(f)['cash'], 100)
 
     def test_partial_profit_reserve_and_trailing(self):
         t = b.analizar_par(pair())
         with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
-            b.simular_cartera([t])
+            b.simular_cartera([t], confirm=False)
         with patch.object(b, 'cotizar_posicion', return_value=(1.5, 20000, pair(price=1.5))):
             b.simular_cartera([])
-        with open(b.PAPER_FILE) as f:
+        with open(b.V9_FILE) as f:
             s = json.load(f)
         self.assertEqual(len(s['positions']), 1)
         self.assertTrue(s['positions'][0]['partial_taken'])
@@ -112,12 +112,29 @@ class V8Tests(unittest.TestCase):
         self.assertAlmostEqual(s['reserve'], s['closed'][0]['profit'] * .5)
         with patch.object(b, 'cotizar_posicion', return_value=(1.2, 20000, pair(price=1.2))):
             b.simular_cartera([])
-        with open(b.PAPER_FILE) as f:
+        with open(b.V9_FILE) as f:
             end = json.load(f)
         self.assertEqual(end['positions'], [])
         self.assertEqual(end['closed'][-1]['exit_reason'], 'TRAILING -15%')
         self.assertAlmostEqual(end['observations'][-1]['estimated_equity'] - 100,
                                sum(x['profit'] for x in end['closed']))
+
+    def test_v9_default_requires_confirmation_and_uses_v9_file(self):
+        t = b.analizar_par(pair())
+        with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
+            b.simular_cartera([t])
+        with open(b.V9_FILE) as f:
+            self.assertEqual(json.load(f)['cash'], 100)
+        old = dict(t, hora=(datetime.now(timezone.utc)-timedelta(minutes=15)).isoformat(),
+                   price=.95, liquidity=19000, vol5m=2000)
+        with open(b.MEMORY_FILE, 'w') as f:
+            json.dump([old], f)
+        with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
+            b.simular_cartera([t])
+        with open(b.V9_FILE) as f:
+            state = json.load(f)
+        self.assertEqual(state['cash'], 90)
+        self.assertEqual(state['assumptions']['strategy'], 'confirmacion V9')
 
     def test_v9_fomo_confluence_is_bounded_and_verified(self):
         t = b.analizar_par(pair())
