@@ -38,7 +38,7 @@ EVENT_ACCOUNTS = [
 
 # Filtros iniciales
 MIN_LIQUIDITY = 5_000
-MAX_MARKET_CAP = 5_000_000
+MAX_MARKET_CAP = 2_000_000
 MIN_VOLUME_1H = 5_000
 
 # Solo referencia para una futura fase de gestion de riesgo.
