@@ -18,10 +18,18 @@ IMPULSO no exige edad del par. Conserva 20 operaciones en 5m, liquidez >=10.000 
 
 El workflow pide 15 lecturas con intervalo objetivo de 60 segundos: aproximadamente 14 minutos del primer al ultimo punto. La ventana de sesion esta limitada a 900 segundos. Sustituye las 12 lecturas efectivas anteriores, que dejaban mas tiempo sin cotizar hasta la siguiente run. El cron y la concurrencia no cambian. Esto reduce huecos si las runs siguen llegando cada 15 minutos; no garantiza continuidad, ni que GitHub ejecute schedule. Los datos siguen siendo lecturas de la API, no ticks en tiempo real.
 
+## Precios indicativos con liquidez baja
+
+Cuando el par exacto del mismo contrato y cadena conserva precio valido pero su liquidez cae por debajo de 10.000 USD, la posicion guarda un precio, valor neto y resultado INDICATIVOS con fecha separada. No sustituyen el ultimo mark_net admitido, no representan efectivo, no autorizan parciales/cierres y no vuelven completa la valoracion. Se mantienen las entradas pausadas mientras haya posiciones no verificables.
+
+Si todas las posiciones tienen precio actual (admitido o indicativo), las observaciones pueden incluir indicative_only_equity, rotulado expresamente como no liquidable ni patrimonio verificable. Si una consulta posterior no ofrece precio, se eliminan los indicadores de la lectura anterior para no presentarlos como actuales. Un fallo del endpoint de respaldo conserva el precio indicativo valido del par exacto. Al recuperar una cotizacion admitida se reevalúan las salidas existentes.
+
+Dos pruebas adicionales comprueban precio indicativo sin venta/efectivo/entrada nueva, desaparicion del indicador si falta precio, salida solo al recuperar cotizacion admitida, fallo de respaldo e identidad de contrato. Este cambio es diagnostico; no altera filtros de entrada, costes ni reglas de salida.
+
 ## Evidencia y limites
 
 La entrada de ore en run 130 tenia 58,6% de compras. Gang reaparecio para entrar usando una referencia de aproximadamente dos minutos antes. Los nuevos filtros rechazan esos indicadores retrospectivos, pero no constituyen un backtest completo ni prueban rentabilidad futura.
 
-Validacion: 23 tests sin red; incluye entrada confirmada fuera del TOP 10 en ambas carteras y limite de memoria de 10.000 lecturas; incluye limites 30/90 segundos en ambas carteras, reproduccion de los indicadores de esas dos entradas, almacenamiento de la lectura previa, 15 lecturas durante 14 minutos, limite de sesion, persistencia, separacion de carteras, salidas y costes.
+Validacion: 25 tests sin red; incluye entrada confirmada fuera del TOP 10 en ambas carteras y limite de memoria de 10.000 lecturas; incluye limites 30/90 segundos en ambas carteras, reproduccion de los indicadores de esas dos entradas, almacenamiento de la lectura previa, 15 lecturas durante 14 minutos, limite de sesion, persistencia, separacion de carteras, salidas y costes.
 
 No se suman carteras. Todo es simulacion con comision y deslizamiento estimados; no se firman ni envian ordenes reales. Los stops se evaluan en cada lectura y una caida entre lecturas o runs puede superar el 15%. El numero de compras no demuestra flujo monetario neto ni compradores unicos. No hay fuente verificada de holders conectada.

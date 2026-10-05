@@ -653,6 +653,14 @@ PAPER_FEE = 0.01
 PAPER_SLIPPAGE = 0.02
 
 
+class CotizacionBajaLiquidez(ValueError):
+    """Precio identificable que NO autoriza una ejecucion virtual."""
+    def __init__(self, price, liquidity):
+        super().__init__(f"Liquidez insuficiente ({liquidity:.2f} USD); salida no verificable")
+        self.price = price
+        self.liquidity = liquidity
+
+
 def cotizar_posicion(pos):
     """Consulta el par exacto y comprueba identidad, precio y liquidez."""
     chain = urllib.parse.quote(pos["chain"], safe="")
@@ -671,7 +679,13 @@ def cotizar_posicion(pos):
     if (pair is None or numero(pair.get("priceUsd")) <= 0
             or numero((pair.get("liquidity") or {}).get("usd")) < MIN_LIQUIDITY):
         # Buscar un mercado del MISMO contrato y cadena; nunca por nombre.
-        candidates = pares_token(pos["chain"], pos["address"])
+        try:
+            candidates = pares_token(pos["chain"], pos["address"])
+        except Exception:
+            # Conservar un precio indicativo del par exacto aunque falle el respaldo.
+            if pair is None or numero(pair.get("priceUsd")) <= 0:
+                raise
+            candidates = []
         valid = [p for p in candidates if identidad_par(p, pos["chain"], pos["address"])
                  and numero(p.get("priceUsd")) > 0
                  and numero((p.get("liquidity") or {}).get("usd")) >= MIN_LIQUIDITY]
@@ -684,7 +698,7 @@ def cotizar_posicion(pos):
     if price <= 0:
         raise ValueError("El par no tiene precio valido")
     if liquidity < MIN_LIQUIDITY:
-        raise ValueError(f"Liquidez insuficiente ({liquidity:.2f} USD); salida no verificable")
+        raise CotizacionBajaLiquidez(price, liquidity)
     if pair["pairAddress"] != original_pair:
         pos.setdefault("pair_history", []).append({
             "at": datetime.now(timezone.utc).isoformat(), "from": original_pair,
@@ -712,11 +726,27 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     proceeds_factor = (1 - PAPER_SLIPPAGE) * (1 - PAPER_FEE)
     for pos in list(state["positions"]):
         # Mantener seguimiento incluso si desaparece de los filtros.
+        for field in ("indicative_price", "indicative_liquidity", "indicative_mark_net",
+                      "indicative_pnl_pct", "last_indicative_quote_at"):
+            pos.pop(field, None)
         try:
             price, liquidity, _ = cotizar_posicion(pos)
             pos["mark_net"] = pos["quantity"] * price * proceeds_factor
             pos["last_quote_at"] = now.isoformat()
             pos["quote_status"] = "OK"
+        except CotizacionBajaLiquidez as exc:
+            # Informar del precio actual sin convertir una salida no verificable en efectivo.
+            pos["quote_status"] = "NO VERIFICABLE"
+            pos["indicative_price"] = exc.price
+            pos["indicative_liquidity"] = exc.liquidity
+            pos["indicative_mark_net"] = pos["quantity"] * exc.price * proceeds_factor
+            pos["indicative_pnl_pct"] = (pos["indicative_mark_net"] / pos["budget"] - 1) * 100
+            pos["last_indicative_quote_at"] = now.isoformat()
+            notes.append(f"{pos['symbol']}: {exc}; precio indicativo={exc.price}"
+                         f" | valor indicativo EUR {pos['indicative_mark_net']:.2f}"
+                         f" | resultado indicativo {pos['indicative_pnl_pct']:+.2f}%"
+                         " | NO ES EFECTIVO NI VENTA EJECUTABLE")
+            continue
         except Exception as exc:
             pos["quote_status"] = "NO VERIFICABLE"
             notes.append(pos["symbol"] + ": " + str(exc))
@@ -818,12 +848,19 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     realized = sum(x["profit"] for x in state["closed"])
     known_value = state["cash"] + state["reserve"] + sum(
         p["mark_net"] for p in state["positions"] if p["quote_status"] == "OK")
+    indicative_only_equity = None
+    if stale and all(p["quote_status"] == "OK" or "indicative_mark_net" in p
+                     for p in state["positions"]):
+        indicative_only_equity = state["cash"] + state["reserve"] + sum(
+            p["mark_net"] if p["quote_status"] == "OK" else p["indicative_mark_net"]
+            for p in state["positions"])
     state["observations"].append({
         "at": now.isoformat(), "cash": state["cash"],
         "reserve": state["reserve"], "estimated_equity": equity,
         "open": len(state["positions"]), "closed": len(state["closed"]),
         "unverified_quotes": stale, "valuation_complete": stale == 0,
-        "verified_component": known_value, "realized_pnl": realized})
+        "verified_component": known_value, "realized_pnl": realized,
+        "indicative_only_equity": indicative_only_equity})
     state["observations"] = state["observations"][-3000:]
     state["assumptions"] = {
         "initial_eur": 100, "max_trade_eur": 10, "max_positions": 3,
@@ -853,6 +890,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if stale:
         print(f"VALORACION INCOMPLETA: ultimo valor contable EUR {equity:.2f}; no es beneficio actual")
         print(f"Parte valorada EUR {known_value:.2f}; resto desconocido")
+        if indicative_only_equity is not None:
+            print(f"VALOR INDICATIVO DE PRECIOS EUR {indicative_only_equity:.2f}; NO liquidable ni patrimonio verificable")
     else:
         print(f"Patrimonio estimado EUR {equity:.2f} | resultado EUR {equity - 100:+.2f}")
     print(f"Resultado realizado virtual EUR {realized:+.2f}")

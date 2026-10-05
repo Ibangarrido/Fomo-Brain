@@ -47,6 +47,62 @@ class V10Tests(unittest.TestCase):
     def test_no_pool_does_not_fabricate_sale(self):
         with self.assertRaises(ValueError):
             self.quote([], [pair('other')])
+
+    def test_low_liquidity_reports_price_without_sale_or_new_entry(self):
+        t = b.analizar_par(pair())
+        with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
+            b.simular_cartera([t], confirm=False)
+        with open(b.V10_FILE) as handle:
+            before = json.load(handle)
+        with patch.object(b, 'pedir_json', return_value={'pairs': [pair(liquidity=8000, price=.5)]}), \
+             patch.object(b, 'pares_token', return_value=[]):
+            b.simular_cartera([b.analizar_par(pair(address='second'))])
+        with open(b.V10_FILE) as handle:
+            low = json.load(handle)
+        pos = low['positions'][0]
+        self.assertEqual(low['cash'], 90)
+        self.assertEqual(low['reserve'], 0)
+        self.assertEqual(low['closed'], [])
+        self.assertEqual(len(low['seen']), 1)
+        self.assertEqual(pos['mark_net'], before['positions'][0]['mark_net'])
+        self.assertEqual(pos['last_quote_at'], before['positions'][0]['last_quote_at'])
+        self.assertEqual(pos['quote_status'], 'NO VERIFICABLE')
+        self.assertEqual(pos['indicative_price'], .5)
+        self.assertLess(pos['indicative_pnl_pct'], -15)
+        self.assertAlmostEqual(low['observations'][-1]['indicative_only_equity'],
+                               90 + pos['indicative_mark_net'])
+        self.assertEqual(low['observations'][-1]['verified_component'], 90)
+        self.assertFalse(low['observations'][-1]['valuation_complete'])
+        # Un error posterior no puede presentar el precio indicativo anterior como actual.
+        with patch.object(b, 'cotizar_posicion', side_effect=ValueError('sin precio')):
+            b.simular_cartera([])
+        with open(b.V10_FILE) as handle:
+            missing = json.load(handle)
+        self.assertNotIn('indicative_price', missing['positions'][0])
+        self.assertIsNone(missing['observations'][-1]['indicative_only_equity'])
+        self.assertEqual(missing['closed'], [])
+        # Solo al recuperar una cotizacion admitida se procesa la salida virtual.
+        with patch.object(b, 'cotizar_posicion', return_value=(.5, 20000, pair(price=.5))):
+            b.simular_cartera([])
+        with open(b.V10_FILE) as handle:
+            recovered = json.load(handle)
+        self.assertEqual(recovered['positions'], [])
+        self.assertEqual(recovered['closed'][0]['exit_reason'], 'STOP -15%')
+        self.assertNotIn('indicative_price', recovered['closed'][0])
+
+    def test_indicative_price_survives_fallback_outage_and_checks_identity(self):
+        pos = {'chain': 'solana', 'address': 'a', 'pair': 'p'}
+        with patch.object(b, 'pedir_json', return_value={'pairs': [pair(liquidity=8000, price=.5)]}), \
+             patch.object(b, 'pares_token', side_effect=ValueError('endpoint caido')):
+            with self.assertRaises(b.CotizacionBajaLiquidez) as error:
+                b.cotizar_posicion(pos)
+        self.assertEqual(error.exception.price, .5)
+        self.assertEqual(error.exception.liquidity, 8000)
+        with patch.object(b, 'pedir_json', return_value={'pairs': [pair(address='impostor', liquidity=8000, price=.5)]}), \
+             patch.object(b, 'pares_token', return_value=[]):
+            with self.assertRaises(ValueError) as invalid:
+                b.cotizar_posicion(pos)
+        self.assertNotIsInstance(invalid.exception, b.CotizacionBajaLiquidez)
     def test_discovery_metrics_and_rejections(self):
         t = b.analizar_par(pair())
         self.assertEqual(t['netTrades5m'], 25)
