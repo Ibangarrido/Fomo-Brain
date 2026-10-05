@@ -831,7 +831,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "last_quote_at": now.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
-            "entry_policy_version": ("early-r4" if entry_mode == "early" else "impulse-r3") if confirm else "base",
+            "entry_policy_version": ("early-r4" if entry_mode == "early" else "impulse-r4") if confirm else "base",
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
                 "buys5m", "sells5m", "change5m", "change1h", "ageMinutes")},
@@ -876,7 +876,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     state["assumptions"]["entry_mode"] = entry_mode
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "impulse":
-        state["assumptions"]["entry_policy"] = "V10 impulso r3: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-60%, compras >=60%, 20 trades"
+        state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -961,14 +961,21 @@ def motivo_entrada(token, confirm=False, entry_mode="early"):
     if not 0.5 <= minutes <= MAX_CONFIRMATION_MINUTES:
         return "comparacion: lectura previa fuera de 30-90 segundos"
     if entry_mode == "impulse":
+        # No perseguir velas 5m ya extendidas: la run 143 entro en HODLUP
+        # con +45.71%/5m y termino inmediatamente en stop. El impulso debe
+        # acelerar, pero todavia estar en una zona de entrada razonable.
+        if not 2 <= numero(old.get("change5m")) <= 25:
+            return "impulso r4: lectura anterior 5m fuera de 2-25%"
+        if not 2 <= numero(token.get("change5m")) <= 25:
+            return "impulso r4: vela 5m extendida fuera de 2-25%"
         price_growth = variacion(token["price"], old.get("price"))
         volume_growth = variacion(token["vol5m"], old.get("vol5m"))
         if price_growth is None or not 1 <= price_growth <= 20:
-            return "impulso: precio entre lecturas fuera de 1-20%"
+            return "impulso r4: precio entre lecturas fuera de 1-20%"
         if volume_growth is None or volume_growth < 10:
-            return "impulso: volumen5m no crece al menos 10%"
+            return "impulso r4: volumen5m no crece al menos 10%"
         if token["liquidity"] < 0.95 * numero(old.get("liquidity")):
-            return "impulso: liquidez cae mas del 5%"
+            return "impulso r4: liquidez cae mas del 5%"
         return None
     if not 2 <= numero(old.get("change5m")) <= 60:
         return "early r2: lectura anterior sin momentum positivo sostenido"
