@@ -182,7 +182,7 @@ class V10Tests(unittest.TestCase):
         self.assertEqual(accepted['cash'], 90)
         pos = accepted['positions'][0]
         self.assertEqual(float(pos['entry_snapshot']['price']), 1.01)
-        self.assertEqual(pos['entry_policy_version'], 'early-r3')
+        self.assertEqual(pos['entry_policy_version'], 'early-r4')
         self.assertEqual(pos['entry_confirmation']['hora'], old['hora'])
         self.assertEqual(pos['entry_confirmation']['price'], .95)
         self.assertAlmostEqual(pos['quote_drift_pct'], 1)
@@ -292,6 +292,38 @@ class V10Tests(unittest.TestCase):
             b.run_session(15)
         self.assertEqual(main.call_count, 1)
         sleep_mock.assert_not_called()
+
+    def test_candidate_outside_top10_can_confirm_and_enter_both_wallets(self):
+        ranking = [b.analizar_par(pair(address=f'a{i}', pool=f'p{i}', price=.95))
+                   for i in range(12)]
+        with patch.object(b, 'datetime') as clock:
+            clock.now.return_value = datetime.now(timezone.utc)-timedelta(minutes=1)
+            b.guardar_memoria(ranking)
+        previous = b.cargar_memoria()
+        self.assertEqual(len(previous), 12)
+        self.assertEqual(previous[-1]['address'], 'a11')
+        fresh_pair = pair(address='a11', pool='p11', price=1)
+        fresh_pair['volume']['m5'] = 4500
+        fresh = b.analizar_par(fresh_pair)
+        with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, fresh_pair)):
+            for mode, filename in [('early', b.V10_FILE), ('impulse', b.V10_IMPULSE_FILE)]:
+                b.simular_cartera([fresh], filename, mode, True, mode)
+                with open(filename) as handle:
+                    state = json.load(handle)
+                self.assertEqual(state['cash'], 90)
+                self.assertEqual(state['positions'][0]['address'], 'a11')
+                self.assertEqual(state['positions'][0]['entry_confirmation']['pair'], 'p11')
+                self.assertIn('todos los candidatos', state['assumptions']['candidate_memory_scope'])
+
+    def test_full_candidate_memory_keeps_history_bounded(self):
+        with open(b.MEMORY_FILE, 'w') as handle:
+            json.dump([{'marker': i} for i in range(10000)], handle)
+        ranking = [b.analizar_par(pair(address=f'a{i}', pool=f'p{i}')) for i in range(12)]
+        b.guardar_memoria(ranking)
+        memory = b.cargar_memoria()
+        self.assertEqual(len(memory), 10000)
+        self.assertEqual(memory[0]['marker'], 12)
+        self.assertEqual([x['address'] for x in memory[-12:]], [f'a{i}' for i in range(12)])
 
     def test_v9_fomo_confluence_is_bounded_and_verified(self):
         t = b.analizar_par(pair())

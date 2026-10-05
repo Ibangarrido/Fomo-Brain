@@ -1,10 +1,12 @@
-# V10: entradas EARLY r3 e IMPULSO r2
+# V10: entradas EARLY r4 e IMPULSO r3
 
 ## Alcance
 
-Ajuste experimental prospectivo tras las runs 128–130. No se recalculan resultados ni se reinician carteras. Las posiciones abiertas conservan las salidas existentes. Cada entrada nueva lleva su version de reglas (early-r3 o impulse-r2), indicadores de la cotizacion fresca, precio de la señal, desviacion y la lectura previa exacta usada para confirmar. El patrimonio acumulado mezcla versiones: no atribuir todo el resultado a la ultima revision.
+Ajuste experimental prospectivo tras las runs 128–133. No se recalculan resultados ni se reinician carteras. Las posiciones abiertas conservan las salidas existentes. Cada entrada nueva lleva su version de reglas (early-r4 o impulse-r3), indicadores de la cotizacion fresca, precio de la señal, desviacion y la lectura previa exacta usada para confirmar. El patrimonio acumulado mezcla versiones: no atribuir todo el resultado a la ultima revision.
 
 ## Entradas
+
+EARLY r4 e IMPULSO r3 amplian la memoria a TODOS los candidatos del ranking filtrado. Antes las carteras evaluaban todo el ranking, pero guardar_memoria solo persistia el TOP 10, dejando candidatos posteriores sin referencia reciente. TOP 10 sigue siendo solo el resumen de pantalla. Se conserva el limite de 10.000 lecturas y se informa de la cobertura en cada ciclo. Los umbrales de entrada, las salidas, los importes y las 15 lecturas no cambian; la ampliacion permite confirmar candidatos en el siguiente ciclo, no garantiza mas compras ni beneficios.
 
 Ambas carteras requieren compras >=60% por numero de operaciones y una lectura previa del mismo contrato, cadena y par de entre 30 y 90 segundos. Antes IMPULSO permitia 55% y la antiguedad de la lectura podia llegar a 5 minutos. Ambas rechazan cotizaciones que difieran mas del 5% del precio de la señal, en cualquier direccion.
 
@@ -20,6 +22,6 @@ El workflow pide 15 lecturas con intervalo objetivo de 60 segundos: aproximadame
 
 La entrada de ore en run 130 tenia 58,6% de compras. Gang reaparecio para entrar usando una referencia de aproximadamente dos minutos antes. Los nuevos filtros rechazan esos indicadores retrospectivos, pero no constituyen un backtest completo ni prueban rentabilidad futura.
 
-Validacion: 21 tests sin red; incluye limites 30/90 segundos en ambas carteras, reproduccion de los indicadores de esas dos entradas, almacenamiento de la lectura previa, 15 lecturas durante 14 minutos, limite de sesion, persistencia, separacion de carteras, salidas y costes.
+Validacion: 23 tests sin red; incluye entrada confirmada fuera del TOP 10 en ambas carteras y limite de memoria de 10.000 lecturas; incluye limites 30/90 segundos en ambas carteras, reproduccion de los indicadores de esas dos entradas, almacenamiento de la lectura previa, 15 lecturas durante 14 minutos, limite de sesion, persistencia, separacion de carteras, salidas y costes.
 
 No se suman carteras. Todo es simulacion con comision y deslizamiento estimados; no se firman ni envian ordenes reales. Los stops se evaluan en cada lectura y una caida entre lecturas o runs puede superar el 15%. El numero de compras no demuestra flujo monetario neto ni compradores unicos. No hay fuente verificada de holders conectada.

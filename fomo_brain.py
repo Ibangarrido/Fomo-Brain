@@ -509,7 +509,9 @@ def guardar_memoria(ranking):
 
     memoria = cargar_memoria()
 
-    for token in ranking[:10]:
+    # Las entradas recorren todo el ranking: todos necesitan una lectura previa.
+    # TOP 10 es solo la salida resumida de pantalla, no el universo confirmable.
+    for token in ranking:
         memoria.append({
             "hora": ahora,
             "symbol": token["symbol"],
@@ -542,6 +544,7 @@ def guardar_memoria(ranking):
             archivo,
             indent=2
         )
+    print(f"MEMORIA: {len(ranking)} candidatos guardados; historial={len(memoria)}/10000")
 
 
 def cargar_eventos():
@@ -798,7 +801,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "last_quote_at": now.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
-            "entry_policy_version": ("early-r3" if entry_mode == "early" else "impulse-r2") if confirm else "base",
+            "entry_policy_version": ("early-r4" if entry_mode == "early" else "impulse-r3") if confirm else "base",
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
                 "buys5m", "sells5m", "change5m", "change1h", "ageMinutes")},
@@ -830,12 +833,13 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
     state["assumptions"]["strategy"] = "confirmacion V10" if confirm else "reglas base"
-    state["assumptions"]["entry_policy"] = "V10 early r3: edad del par 2-60m, momentum5m 2-60% en ambas lecturas, 40 trades, compras >=60%, liquidez >=20000 USD; confirmacion 0.5-1.5m, precio +1-12%, liquidez >=95%, volumen5m no decreciente; subida1h solo aviso" if confirm else "reglas base"
+    state["assumptions"]["entry_policy"] = "V10 early r4: edad del par 2-60m, momentum5m 2-60% en ambas lecturas, 40 trades, compras >=60%, liquidez >=20000 USD; confirmacion 0.5-1.5m, precio +1-12%, liquidez >=95%, volumen5m no decreciente; subida1h solo aviso" if confirm else "reglas base"
+    state["assumptions"]["candidate_memory_scope"] = "todos los candidatos filtrados; TOP 10 solo para pantalla"
     state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
     state["assumptions"]["entry_mode"] = entry_mode
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "impulse":
-        state["assumptions"]["entry_policy"] = "V10 impulso r2: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-60%, compras >=60%, 20 trades"
+        state["assumptions"]["entry_policy"] = "V10 impulso r3: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-60%, compras >=60%, 20 trades"
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
