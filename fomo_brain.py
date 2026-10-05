@@ -47,7 +47,6 @@ MAX_EXPOSURE_EUR = 10.0
 
 MEMORY_FILE = "fomo_memory.json"
 EVENT_MEMORY_FILE = "fomo_event_memory.json"
-SHADOW_FILE = "fomo_shadow_v8.json"
 V9_FILE = "fomo_shadow_v9.json"
 JSON_CACHE = {}
 REJECTIONS = []
@@ -641,7 +640,6 @@ def relacion_evento_token(token, eventos):
 
 
 # Cartera de prueba: dinero virtual, sin wallets ni ordenes reales.
-PAPER_FILE = "fomo_paper.json"
 PAPER_FEE = 0.01
 PAPER_SLIPPAGE = 0.02
 
@@ -688,7 +686,7 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
-def simular_cartera(ranking, paper_file=PAPER_FILE, label="PRINCIPAL", confirm=False):
+def simular_cartera(ranking, paper_file=V9_FILE, label="V9 FOMO RADAR", confirm=True):
     now = datetime.now(timezone.utc)
     try:
         with open(paper_file) as handle:
@@ -811,7 +809,7 @@ def simular_cartera(ranking, paper_file=PAPER_FILE, label="PRINCIPAL", confirm=F
         "partial_fraction": 0.5, "trailing_peak_pct": -15, "max_hours": 24,
         "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
-    state["assumptions"]["strategy"] = "confirmacion V8" if confirm else "reglas base V8"
+    state["assumptions"]["strategy"] = "confirmacion V9" if confirm else "reglas base"
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -1027,10 +1025,7 @@ def main():
         f"{len(ranking)}"
     )
 
-    simular_cartera(ranking)
-    print("COMPARACION V8: se conserva como control historico; no sumar carteras")
-    simular_cartera(ranking, SHADOW_FILE, "CONTROL V8", confirm=True)
-    print("V9: cartera shadow independiente; confluencia FOMO suma solo si el feed autorizado aporta evidencia")
+    print("V9: prueba PAPER independiente; confluencia FOMO suma solo si el feed autorizado aporta evidencia")
     simular_cartera(ranking, V9_FILE, "V9 FOMO RADAR", confirm=True)
     counts = {}
     for item in REJECTIONS:
