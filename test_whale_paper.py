@@ -32,7 +32,7 @@ class WhaleTests(unittest.TestCase):
         self.assertEqual(s['cash'], 90)
         sell, _ = w.normalize(alert(alertType='sell', eventId='e2'), 1120, 1000)
         w.process(s, sell, 1120, lambda _: (1., 'pool'))
-        self.assertAlmostEqual(s['realized'], 10*.97/1.03-10)
+        self.assertAlmostEqual(s['realized'], 10*(.99*.98)/(1.01*1.02)-10)
         self.assertAlmostEqual(s['cash'], 100+s['realized'])
         self.assertFalse(e['transaction_verified'])
 
@@ -71,14 +71,93 @@ class WhaleTests(unittest.TestCase):
             self.assertIsNone(w.normalize(alert(trader='FartmanSacks'), 1120, 1000)[0])
             self.assertIsNotNone(w.normalize(alert(trader='unipcs'), 1120, 1000)[0])
 
+    def test_gecko_rate_budget_does_not_send_extra_request(self):
+        import time
+        with patch.object(w, 'GECKO_CALLS', [time.monotonic()] * 10), patch.object(w.brain, 'pedir_json') as fetch:
+            with self.assertRaises(ValueError):
+                w.gecko_json('https://example.test')
+            fetch.assert_not_called()
+
+    def test_gecko_exact_identity_and_quote_side(self):
+        def pool(address, base, quote, price, reserve=20000):
+            return {'id': 'robinhood_' + address,
+                    'attributes': {'address': address, 'base_token_price_usd': '3000',
+                                   'quote_token_price_usd': price, 'reserve_in_usd': reserve},
+                    'relationships': {'base_token': {'data': {'id': 'robinhood_' + base}},
+                                      'quote_token': {'data': {'id': 'robinhood_' + quote}}}}
+        good = pool('pool', 'weth', '0xabc', '0.02')
+        wrong = pool('wrong', 'weth', 'other', '200', 9999999)
+        price, pool_id, reserve = w.gecko_pool({'data': [wrong, good]}, '0xABC')
+        self.assertEqual(price, .02)
+        self.assertEqual(pool_id, 'pool')
+        for row in [wrong, pool('p', 'weth', '0xabc', '.02', 9999),
+                    pool('p', 'weth', '0xabc', 'nan')]:
+            with self.assertRaises(ValueError):
+                w.gecko_pool({'data': [row]}, '0xabc')
+
+    def test_robinhood_fallback_wires_provider_and_identity(self):
+        payload = {'data': [{'id': 'robinhood_pool', 'attributes': {
+            'address': 'pool', 'base_token_price_usd': '.03', 'reserve_in_usd': '20000'},
+            'relationships': {'base_token': {'data': {'id': 'robinhood_0xabc'}}}}]}
+        e, _ = w.normalize(alert(), 1120, 1000)
+        with patch.object(w.brain, 'pares_token', return_value=[]), patch.object(w.brain, 'pedir_json', return_value=payload) as fetch:
+            self.assertEqual(w.quote(e), (.03, 'pool'))
+            self.assertEqual(e['quote_source'], 'geckoterminal')
+            self.assertIn('/tokens/0xabc/pools', fetch.call_args.args[0])
+        with patch.object(w.brain, 'pares_token', return_value=[]), patch.object(w.brain, 'pedir_json') as fetch:
+            with self.assertRaises(ValueError):
+                w.quote(dict(e, chain='solana'))
+            fetch.assert_not_called()
+
+    def test_candles_drop_unfinished_and_invalid_bars(self):
+        payload = {'data': {'attributes': {'ohlcv_list': [
+            [960, 1, 2, .9, 1.2, 100], [1080, 1, 2, .9, 1.2, 200],
+            [900, 1, .5, .9, 1.2, 100], [0, 1, 2, .9, 1.2, 100]]}}}
+        result = w.candle_context(payload, 1120)
+        self.assertEqual(len(result['bars']), 1)
+        self.assertAlmostEqual(result['body_pct'], 20)
+
+    def test_positive_profit_reserve_and_equity(self):
+        s = state()
+        e, _ = w.normalize(alert(), 1120, 1000)
+        w.process(s, e, 1120, lambda _: (1., 'pool'))
+        sell, _ = w.normalize(alert(alertType='sell', eventId='sell'), 1120, 1000)
+        w.process(s, sell, 1120, lambda _: (2., 'pool'))
+        profit = 20*w.SELL_FACTOR/w.BUY_FACTOR - 10
+        self.assertAlmostEqual(s['reserve'], profit/2)
+        self.assertAlmostEqual(s['cash'], 100 + profit/2)
+        w.mark(s, 1120)
+        self.assertAlmostEqual(s['last_accounting_equity'], 100 + profit)
+
+    def test_quote_failure_records_reason_without_spending(self):
+        s = state()
+        e, _ = w.normalize(alert(), 1120, 1000)
+        def unavailable(_):
+            raise ValueError('GeckoTerminal: sin pool exacto')
+        w.process(s, e, 1120, unavailable)
+        self.assertIn('sin pool exacto', e['quote_error'])
+        self.assertEqual(s['cash'], 100)
+        self.assertFalse(s['positions'])
+
+    def test_peer_buy_is_observed_correlation_and_needs_same_contract(self):
+        peer = {'trader': 'unipcs', 'user_id': 'peer', 'events': [
+            {'side': 'buy', 'chain': 'robinhood', 'address': '0xABC', 'source_at': w.stamp(1060)}]}
+        e, _ = w.normalize(alert(), 1120, 1000)
+        from unittest.mock import mock_open
+        with patch('builtins.open', mock_open(read_data=json.dumps(peer))):
+            self.assertEqual(w.peer_buys(e, 1120), ['unipcs'])
+            self.assertEqual(w.peer_buys(dict(e, address='other'), 1120), [])
+            self.assertEqual(w.peer_buys(e, 1300), [])
+
     def test_stop_uses_current_quote_net_costs(self):
         s = state()
         e, _ = w.normalize(alert(), 1120, 1000)
         w.process(s, e, 1120, lambda _: (1., 'pool'))
         w.mark(s, 1180, lambda _: (.85, 'pool'))
         self.assertEqual(len(s['positions']), 0)
-        self.assertAlmostEqual(s['realized'], 10*.85*.97/1.03-10)
+        self.assertAlmostEqual(s['realized'], 10*.85*(.99*.98)/(1.01*1.02)-10)
 
 
 if __name__ == '__main__':
     unittest.main()
+

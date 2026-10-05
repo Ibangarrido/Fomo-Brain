@@ -1,4 +1,4 @@
-# WHALE DEMO r1 — experimento virtual prospectivo
+# WHALE DEMO r2 — experimento virtual prospectivo
 
 Perfiles seleccionados por el usuario: [FartmanSacks](https://fomo.family/profile/FartmanSacks)
 y [unipcs](https://fomo.family/profile/unipcs). Cada uno tiene su propia cartera
@@ -24,14 +24,24 @@ La atribución al perfil depende del proveedor: **no hay recibo de transacción
 ni wallet verificada**, y no se incorpora a la confluencia verificada del Brain.
 
 Se cotiza por contrato y cadena exactos en DEX Screener, usando el par de mayor
-liquidez entre los que tienen al menos 10000 USD. Sin mercado admisible se
+liquidez entre los que tienen al menos 10000 USD. Para Robinhood, cuando DEX no
+responde o no ofrece un mercado admisible, se consulta GeckoTerminal
+(`/networks/robinhood/tokens/{address}/pools`). Se verifica el contrato en la
+relación base/quote y se toma el precio de ese lado, no el de WETH. Se conserva
+proveedor y liquidez. Máximo 10 consultas/minuto por lector a GeckoTerminal
+(20 entre ambos). Si se agota el presupuesto se declara indisponible, sin
+insistir ni inventar precio. La conexión y cobertura efectiva de este respaldo
+aún se deben verificar en una run nueva. Sin mercado admisible se
 descarta, sin inventar precio. No usa los filtros de edad, capitalización o
 ranking de EARLY/IMPULSO: es un experimento distinto de seguimiento de señales.
 Soporta Robinhood, Solana, Ethereum, BSC y Base; otras cadenas se descartan.
 
 Compra al precio observado al recibir/procesar la alerta, no al precio de la
-ballena. Comisión 1% y deslizamiento 2% por lado; FX fijo USD/EUR 1:1, sin gas
-ni MEV. Una venta del perfil modela cierre completo de nuestra posición: **no
+ballena. Comisión 1% y deslizamiento 2% por lado, multiplicados igual que V10
+(compra 1.01*1.02, venta .99*.98); FX fijo USD/EUR 1:1, sin gas
+ni MEV. El 50% de cada beneficio realizado pasa a reserva y no se reinvierte;
+el patrimonio incluye esa reserva. Se conserva la fórmula anterior en
+posiciones antiguas, si las hubiera, y no se recalculan cierres anteriores. Una venta del perfil modela cierre completo de nuestra posición: **no
 sabemos si la ballena vendió todo o solo una parte**. Stop neto -15% y trailing
 -15% del máximo tras observar +30% neto, evaluados en lecturas de ~60 segundos.
 Los stops no garantizan ese precio. Sin cotización, permanece abierta, la
@@ -55,3 +65,26 @@ Pruebas sin red: `python -m unittest test_whale_paper.py test_fomo_v8.py`.
 No hay claves de wallet, firmas, órdenes reales ni endpoints de trading.
 Evaluar múltiples operaciones después de costes y retrasos; esta prueba no
 implica que seguir al número uno de un día mejore el resultado.
+
+
+## Contexto de entrada añadido en r2
+
+Las compras cotizadas por GeckoTerminal guardan hasta cinco velas de un minuto
+cerradas: OHLCV, cuerpo, mecha superior y edad. Se excluye la vela aún abierta;
+se marca stale si la última tiene más de 180 segundos. Un fallo de OHLCV se
+registra; no se convierte en un precio ni altera la compra. Estas velas son
+**contexto para estudiar**, todavía no un filtro nuevo ni prueba de ventaja.
+
+Se buscan compras del otro perfil del mismo contrato/cadena en una ventana de
+180 segundos. Se exige id de usuario distinto y se registra la coincidencia,
+incluso si una señal no pudo cotizarse. Ambas siguen siendo alertas de proveedor
+no verificadas on-chain: no demuestra comunicación, independencia de wallets,
+coordinación privada ni demanda genuina. No modifica las reglas de compra.
+
+Cada alerta imprime cadena, contrato, fuente y motivo concreto del descarte,
+además de conservarlos en el estado. El contador `eventos` es el historial
+retenido, no el número de operaciones de esa sesión.
+
+Fuentes: https://apiguide.geckoterminal.com/ y
+https://apiguide.geckoterminal.com/faq ; esquema de alertas:
+https://fomoapi.io/docs .
