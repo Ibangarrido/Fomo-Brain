@@ -34,6 +34,9 @@ jobs:
           search_artifacts: true
           if_no_artifact_found: ignore
 
+      - name: Verificar simulacion V8 sin red
+        run: python test_fomo_v8.py
+
       - name: Ejecutar FOMO Brain
         env:
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
