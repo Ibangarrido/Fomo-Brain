@@ -40,7 +40,7 @@ jobs:
 
       - name: Ejecutar FOMO Brain
         env:
-          BRAIN_CYCLES: "13"
+          BRAIN_CYCLES: "15"
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: python fomo_brain.py

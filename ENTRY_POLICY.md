@@ -1,11 +1,25 @@
-# V10: ajuste EARLY r2
+# V10: entradas EARLY r3 e IMPULSO r2
 
-Cambio experimental prospectivo tras las runs 128 y 129. Los resultados históricos no se recalculan ni las carteras se reinician. Las posiciones abiertas mantienen las salidas existentes; las nuevas entradas EARLY llevan entry_policy_version=early-r2. El patrimonio acumulado combina entradas de distintas versiones: no atribuir todo el resultado a r2.
+## Alcance
 
-EARLY mantiene edad del par de 2–60 minutos y cambio de precio 5m de 2–60%. Ahora exige al menos 20.000 USD de liquidez, 40 operaciones en 5m y 60% de compras por número de operaciones. La lectura previa del mismo par debe tener 0,5–5 minutos, momentum 5m también de 2–60%, precio entre lecturas +1–12%, liquidez al menos 95% de la previa y volumen 5m no decreciente. Antes aceptaba volumen de hasta 60% de la lectura anterior.
+Ajuste experimental prospectivo tras las runs 128–130. No se recalculan resultados ni se reinician carteras. Las posiciones abiertas conservan las salidas existentes. Cada entrada nueva lleva su version de reglas (early-r3 o impulse-r2), indicadores de la cotizacion fresca, precio de la señal, desviacion y la lectura previa exacta usada para confirmar. El patrimonio acumulado mezcla versiones: no atribuir todo el resultado a la ultima revision.
 
-IMPULSO conserva su política de impulso y su cartera independiente. Ambas carteras rechazan entradas cuando la cotización fresca difiere más del 5% (en cualquier dirección) del precio de la señal. Cada nueva posición guarda los indicadores de la cotización fresca, precio de señal, desviación y versión de entrada; los logs muestran esos indicadores principales.
+## Entradas
 
-No se suman carteras. Todo es simulación con comisión y deslizamiento estimados; no hay órdenes reales ni garantía de ejecución. El stop se evalúa en cada lectura, no limita pérdidas a 15% si el precio salta entre lecturas o runs. Los conteos de compras no prueban flujo monetario neto ni compradores únicos. Holders no intervienen porque no hay una fuente verificada conectada.
+Ambas carteras requieren compras >=60% por numero de operaciones y una lectura previa del mismo contrato, cadena y par de entre 30 y 90 segundos. Antes IMPULSO permitia 55% y la antiguedad de la lectura podia llegar a 5 minutos. Ambas rechazan cotizaciones que difieran mas del 5% del precio de la señal, en cualquier direccion.
 
-Validación: 18 tests, incluidos rechazos por volumen decreciente, rebote desde momentum negativo, salto entre lecturas y desviación de la cotización, más persistencia, separación de carteras, salidas y costes. Esto valida comportamiento del código; falta medir el rendimiento de las próximas entradas tras costes.
+EARLY conserva las reglas de r2: edad del par 2–60 minutos; liquidez >=20.000 USD; 40 operaciones en 5m; momentum 5m 2–60% en ambas lecturas; precio entre lecturas +1–12%; liquidez >=95% de la previa; volumen 5m no decreciente. La subida horaria es aviso, no bloqueo.
+
+IMPULSO no exige edad del par. Conserva 20 operaciones en 5m, liquidez >=10.000 USD, momentum 5m 2–60%, precio entre lecturas +1–20%, volumen 5m +10% minimo y liquidez >=95% de la previa.
+
+## Vigilancia
+
+El workflow pide 15 lecturas con intervalo objetivo de 60 segundos: aproximadamente 14 minutos del primer al ultimo punto. La ventana de sesion esta limitada a 900 segundos. Sustituye las 12 lecturas efectivas anteriores, que dejaban mas tiempo sin cotizar hasta la siguiente run. El cron y la concurrencia no cambian. Esto reduce huecos si las runs siguen llegando cada 15 minutos; no garantiza continuidad, ni que GitHub ejecute schedule. Los datos siguen siendo lecturas de la API, no ticks en tiempo real.
+
+## Evidencia y limites
+
+La entrada de ore en run 130 tenia 58,6% de compras. Gang reaparecio para entrar usando una referencia de aproximadamente dos minutos antes. Los nuevos filtros rechazan esos indicadores retrospectivos, pero no constituyen un backtest completo ni prueban rentabilidad futura.
+
+Validacion: 21 tests sin red; incluye limites 30/90 segundos en ambas carteras, reproduccion de los indicadores de esas dos entradas, almacenamiento de la lectura previa, 15 lecturas durante 14 minutos, limite de sesion, persistencia, separacion de carteras, salidas y costes.
+
+No se suman carteras. Todo es simulacion con comision y deslizamiento estimados; no se firman ni envian ordenes reales. Los stops se evaluan en cada lectura y una caida entre lecturas o runs puede superar el 15%. El numero de compras no demuestra flujo monetario neto ni compradores unicos. No hay fuente verificada de holders conectada.

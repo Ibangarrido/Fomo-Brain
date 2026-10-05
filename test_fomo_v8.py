@@ -182,7 +182,9 @@ class V10Tests(unittest.TestCase):
         self.assertEqual(accepted['cash'], 90)
         pos = accepted['positions'][0]
         self.assertEqual(float(pos['entry_snapshot']['price']), 1.01)
-        self.assertEqual(pos['entry_policy_version'], 'early-r2')
+        self.assertEqual(pos['entry_policy_version'], 'early-r3')
+        self.assertEqual(pos['entry_confirmation']['hora'], old['hora'])
+        self.assertEqual(pos['entry_confirmation']['price'], .95)
         self.assertAlmostEqual(pos['quote_drift_pct'], 1)
         self.assertEqual(float(pos['signal_price']), 1)
 
@@ -238,7 +240,58 @@ class V10Tests(unittest.TestCase):
             self.assertEqual(main.call_count, 2)
         self.assertEqual(b.JSON_CACHE, {})
         with self.assertRaises(ValueError):
-            b.run_session(14)
+            b.run_session(16)
+
+    def test_confirmation_is_30_to_90_seconds_for_both_wallets(self):
+        now = datetime.now(timezone.utc)
+        t = b.analizar_par(pair())
+        for seconds, accepted in [(29, False), (30, True), (90, True), (91, False), (120, False), (300, False)]:
+            old = dict(t, hora=(now-timedelta(seconds=seconds)).isoformat(),
+                       price=.95, vol5m=2000)
+            with patch.object(b, 'datetime') as clock, patch.object(b, 'cargar_memoria', return_value=[old]):
+                clock.now.return_value = now
+                clock.fromisoformat.side_effect = datetime.fromisoformat
+                for mode in ('early', 'impulse'):
+                    with self.subTest(seconds=seconds, mode=mode):
+                        reason = b.motivo_entrada(t, True, mode)
+                        self.assertEqual(reason is None, accepted)
+
+    def test_run130_entry_regressions_are_rejected_by_impulse_r2(self):
+        t = b.analizar_par(pair())
+        ore = dict(t, price=.0002593, liquidity=49114, trades5m=587,
+                   buyRatio5m=.586, vol5m=42520, change5m=22.05)
+        old = dict(ore, hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
+                   price=.0002414, vol5m=36584)
+        with patch.object(b, 'cargar_memoria', return_value=[old]):
+            self.assertEqual(b.motivo_entrada(ore, True, 'impulse'), 'ratio compras < 60%')
+        gang = dict(t, price=.00002518, liquidity=23206, trades5m=153,
+                    buyRatio5m=.601, vol5m=8765, change5m=18.17)
+        old = dict(gang, hora=(datetime.now(timezone.utc)-timedelta(minutes=2)).isoformat(),
+                   price=.00002110, vol5m=6394)
+        with patch.object(b, 'cargar_memoria', return_value=[old]):
+            self.assertIn('30-90 segundos', b.motivo_entrada(gang, True, 'impulse'))
+
+    def test_session_fifteen_reads_cover_fourteen_minutes(self):
+        elapsed = [0.0]
+        read_times = []
+        def read(**kwargs):
+            read_times.append(elapsed[0])
+            elapsed[0] += 3
+        def sleep(delay):
+            elapsed[0] += delay
+        with patch.object(b.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+             patch.object(b.time, 'sleep', side_effect=sleep), patch.object(b, 'main', side_effect=read):
+            b.run_session(15)
+        self.assertEqual(read_times, list(range(0, 841, 60)))
+        self.assertLess(elapsed[0], 900)
+        elapsed[0] = 0
+        def slow_read(**kwargs):
+            elapsed[0] += 901
+        with patch.object(b.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+             patch.object(b.time, 'sleep') as sleep_mock, patch.object(b, 'main', side_effect=slow_read) as main:
+            b.run_session(15)
+        self.assertEqual(main.call_count, 1)
+        sleep_mock.assert_not_called()
 
     def test_v9_fomo_confluence_is_bounded_and_verified(self):
         t = b.analizar_par(pair())

@@ -51,6 +51,9 @@ EVENT_MEMORY_FILE = "fomo_event_memory.json"
 V9_FILE = "fomo_shadow_v9.json"
 V10_FILE = "fomo_paper_v10.json"
 V10_IMPULSE_FILE = "fomo_paper_v10_impulse.json"
+SESSION_MAX_CYCLES = 15
+SESSION_WINDOW_SECONDS = 900
+MAX_CONFIRMATION_MINUTES = 1.5
 JSON_CACHE = {}
 REJECTIONS = []
 X_STATUS = "PENDIENTE"
@@ -795,11 +798,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "last_quote_at": now.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
-            "entry_policy_version": "early-r2" if entry_mode == "early" and confirm else entry_mode,
+            "entry_policy_version": ("early-r3" if entry_mode == "early" else "impulse-r2") if confirm else "base",
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
                 "buys5m", "sells5m", "change5m", "change1h", "ageMinutes")},
-            "signal_price": token.get("price"), "quote_drift_pct": drift})
+            "signal_price": token.get("price"), "quote_drift_pct": drift,
+            "entry_confirmation": ultima_lectura_par(fresh) if confirm else None})
         notes.append("ENTRADA VIRTUAL " + token["symbol"] + " | EUR "
                      + format(budget, ".2f")
                      + f" | precio={price} | liquidez={fresh['liquidity']:.0f}"
@@ -826,12 +830,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
     state["assumptions"]["strategy"] = "confirmacion V10" if confirm else "reglas base"
-    state["assumptions"]["entry_policy"] = "V10 early r2: edad del par 2-60m, momentum5m 2-60% en ambas lecturas, 40 trades, compras >=60%, liquidez >=20000 USD; confirmacion 0.5-5m, precio +1-12%, liquidez >=95%, volumen5m no decreciente; subida1h solo aviso" if confirm else "reglas base"
+    state["assumptions"]["entry_policy"] = "V10 early r3: edad del par 2-60m, momentum5m 2-60% en ambas lecturas, 40 trades, compras >=60%, liquidez >=20000 USD; confirmacion 0.5-1.5m, precio +1-12%, liquidez >=95%, volumen5m no decreciente; subida1h solo aviso" if confirm else "reglas base"
     state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
     state["assumptions"]["entry_mode"] = entry_mode
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "impulse":
-        state["assumptions"]["entry_policy"] = "V10 impulso: sin filtro de edad; lectura previa 0.5-5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-60%, compras >=55%, 20 trades"
+        state["assumptions"]["entry_policy"] = "V10 impulso r2: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-60%, compras >=60%, 20 trades"
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -872,13 +876,20 @@ def pares_token(chain, address):
     return [p for p in data if identidad_par(p, chain, address)]
 
 
+def ultima_lectura_par(token):
+    prev = [x for x in cargar_memoria()
+            if x.get("chain") == token["chain"] and x.get("address") == token["address"]
+            and x.get("pair") == token["pair"]]
+    return prev[-1] if prev else None
+
+
 def motivo_entrada(token, confirm=False, entry_mode="early"):
     if entry_mode not in ("early", "impulse"):
         raise ValueError("Modo de entrada desconocido")
     checks = [(numero(token["price"]) <= 0, "precio ausente"),
               (token["score"] < 5, "score < 5"),
               (token["liquidity"] < 10_000, "liquidez < 10000 USD"),
-              (token["buyRatio5m"] < (0.55 if confirm else 0.60), "ratio compras insuficiente"),
+              (token["buyRatio5m"] < 0.60, "ratio compras < 60%"),
               (token["trades5m"] < 20, "actividad 5m insuficiente"),
               (not confirm and token["change1h"] > 150, "subida 1h > 150%")]
     for failed, reason in checks:
@@ -897,18 +908,15 @@ def motivo_entrada(token, confirm=False, entry_mode="early"):
     if not 2 <= token["change5m"] <= 60:
         return "comparacion: momentum 5m fuera de 2-60%"
     now = datetime.now(timezone.utc)
-    prev = [x for x in cargar_memoria()
-            if x.get("chain") == token["chain"] and x.get("address") == token["address"]
-            and x.get("pair") == token["pair"]]
-    if not prev:
+    old = ultima_lectura_par(token)
+    if old is None:
         return "comparacion: falta lectura previa del mismo par"
-    old = prev[-1]
     try:
         minutes = (now - datetime.fromisoformat(old["hora"])).total_seconds() / 60
     except (ValueError, KeyError):
         return "comparacion: lectura previa invalida"
-    if not 0.5 <= minutes <= 5:
-        return "comparacion: lectura previa fuera de 0.5-5 min"
+    if not 0.5 <= minutes <= MAX_CONFIRMATION_MINUTES:
+        return "comparacion: lectura previa fuera de 30-90 segundos"
     if entry_mode == "impulse":
         price_growth = variacion(token["price"], old.get("price"))
         volume_growth = variacion(token["vol5m"], old.get("vol5m"))
@@ -1186,18 +1194,18 @@ def main(refresh_events=True):
 
 def run_session(cycles=1, interval_seconds=60):
     # Ventana acotada: no cambia el cron ni presupone continuidad entre runs.
-    if not 1 <= cycles <= 13 or interval_seconds < 60:
-        raise ValueError("Sesion: 1-13 lecturas e intervalo >=60s")
+    if not 1 <= cycles <= SESSION_MAX_CYCLES or interval_seconds < 60:
+        raise ValueError("Sesion: 1-15 lecturas e intervalo >=60s")
     started = time.monotonic()
     for index in range(cycles):
-        if index and time.monotonic() - started >= 720:
+        if index and time.monotonic() - started >= SESSION_WINDOW_SECONDS:
             break
         JSON_CACHE.clear()
         REJECTIONS.clear()
         print(f"V10 LECTURA {index + 1}/{cycles}", flush=True)
         main(refresh_events=index == 0)
         if index + 1 < cycles:
-            remaining = 720 - (time.monotonic() - started)
+            remaining = SESSION_WINDOW_SECONDS - (time.monotonic() - started)
             delay = max(0, started + (index + 1) * interval_seconds - time.monotonic())
             if remaining <= 0 or delay >= remaining:
                 break
