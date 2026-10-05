@@ -50,6 +50,7 @@ MEMORY_FILE = "fomo_memory.json"
 EVENT_MEMORY_FILE = "fomo_event_memory.json"
 V9_FILE = "fomo_shadow_v9.json"
 V10_FILE = "fomo_paper_v10.json"
+V10_IMPULSE_FILE = "fomo_paper_v10_impulse.json"
 JSON_CACHE = {}
 REJECTIONS = []
 X_STATUS = "PENDIENTE"
@@ -688,7 +689,7 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early"):
     now = datetime.now(timezone.utc)
     try:
         with open(paper_file) as handle:
@@ -769,7 +770,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             if fresh is None:
                 notes.append(f"DESCARTE {key} | par fresco no supera filtros")
                 continue
-            reason = motivo_entrada(fresh, confirm)
+            reason = motivo_entrada(fresh, confirm, entry_mode)
             if reason:
                 notes.append(f"DESCARTE {key} | {reason}")
                 continue
@@ -813,6 +814,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
     state["assumptions"]["strategy"] = "confirmacion V10" if confirm else "reglas base"
     state["assumptions"]["entry_policy"] = "V10 early: edad del par 2-60m, momentum5m 2-60%, 20 trades, compras >=55%, confirmacion 0.5-5m, precio creciente, liquidez >=95%, volumen5m >=60%; subida1h solo aviso" if confirm else "reglas base"
+    state["assumptions"]["entry_mode"] = entry_mode
+    state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
+    if entry_mode == "impulse":
+        state["assumptions"]["entry_policy"] = "V10 impulso: sin filtro de edad; lectura previa 0.5-5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-60%, compras >=55%, 20 trades"
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -853,7 +858,9 @@ def pares_token(chain, address):
     return [p for p in data if identidad_par(p, chain, address)]
 
 
-def motivo_entrada(token, confirm=False):
+def motivo_entrada(token, confirm=False, entry_mode="early"):
+    if entry_mode not in ("early", "impulse"):
+        raise ValueError("Modo de entrada desconocido")
     checks = [(numero(token["price"]) <= 0, "precio ausente"),
               (token["score"] < 5, "score < 5"),
               (token["liquidity"] < 10_000, "liquidez < 10000 USD"),
@@ -866,7 +873,7 @@ def motivo_entrada(token, confirm=False):
     if not confirm:
         return None
     age = token.get("ageMinutes")
-    if age is None or not 2 <= age <= 60:
+    if entry_mode == "early" and (age is None or not 2 <= age <= 60):
         return "comparacion: edad fuera de 2-60 min"
     if not 2 <= token["change5m"] <= 60:
         return "comparacion: momentum 5m fuera de 2-60%"
@@ -883,6 +890,16 @@ def motivo_entrada(token, confirm=False):
         return "comparacion: lectura previa invalida"
     if not 0.5 <= minutes <= 5:
         return "comparacion: lectura previa fuera de 0.5-5 min"
+    if entry_mode == "impulse":
+        price_growth = variacion(token["price"], old.get("price"))
+        volume_growth = variacion(token["vol5m"], old.get("vol5m"))
+        if price_growth is None or not 1 <= price_growth <= 20:
+            return "impulso: precio entre lecturas fuera de 1-20%"
+        if volume_growth is None or volume_growth < 10:
+            return "impulso: volumen5m no crece al menos 10%"
+        if token["liquidity"] < 0.95 * numero(old.get("liquidity")):
+            return "impulso: liquidez cae mas del 5%"
+        return None
     if (numero(token["price"]) <= numero(old.get("price"))
             or token["liquidity"] < 0.95 * numero(old.get("liquidity"))
             or token["vol5m"] < 0.60 * numero(old.get("vol5m"))):
@@ -1030,6 +1047,8 @@ def main(refresh_events=True):
 
     print("V10 EARLY: edad del PAR 2-60m; no equivale a edad del token ni a graduacion FOMO. Subida1h >150% es aviso.")
     simular_cartera(ranking, V10_FILE, "V10 EARLY", confirm=True)
+    print("V10 IMPULSO: cartera independiente; no sumar con EARLY. Holders SIN FUENTE VERIFICADA.")
+    simular_cartera(ranking, V10_IMPULSE_FILE, "V10 IMPULSO", confirm=True, entry_mode="impulse")
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1

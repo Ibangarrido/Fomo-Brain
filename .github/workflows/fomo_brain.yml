@@ -57,5 +57,6 @@ jobs:
             fomo_shadow_v8.json
             fomo_shadow_v9.json
             fomo_paper_v10.json
+            fomo_paper_v10_impulse.json
           if-no-files-found: ignore
           overwrite: true

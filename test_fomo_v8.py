@@ -165,6 +165,38 @@ class V10Tests(unittest.TestCase):
         with patch.object(b, 'cargar_memoria', return_value=[old]):
             self.assertIsNotNone(b.motivo_entrada(t, True))
 
+    def test_impulse_requires_growth_and_allows_old_pairs(self):
+        t = b.analizar_par(pair())
+        t['ageMinutes'] = 90 * 24 * 60
+        old = dict(t, hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
+                   price=.95, liquidity=19000, vol5m=2000)
+        with patch.object(b, 'cargar_memoria', return_value=[old]):
+            self.assertIsNotNone(b.motivo_entrada(t, True, 'early'))
+            self.assertIsNone(b.motivo_entrada(t, True, 'impulse'))
+            for field, value in [('price', .95), ('price', 1.2), ('vol5m', 2100),
+                                 ('liquidity', 17000), ('buyRatio5m', .54)]:
+                with self.subTest(field=field, value=value):
+                    self.assertIsNotNone(b.motivo_entrada(dict(t, **{field: value}), True, 'impulse'))
+        with patch.object(b, 'cargar_memoria', return_value=[]):
+            self.assertIsNotNone(b.motivo_entrada(t, True, 'impulse'))
+
+    def test_impulse_wallet_is_separate_and_persists(self):
+        t = b.analizar_par(pair())
+        old = dict(t, hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
+                   price=.95, liquidity=19000, vol5m=2000)
+        with open(b.MEMORY_FILE, 'w') as f:
+            json.dump([old], f)
+        with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
+            b.simular_cartera([t], b.V10_IMPULSE_FILE, 'IMPULSO', True, 'impulse')
+            b.simular_cartera([], b.V10_IMPULSE_FILE, 'IMPULSO', True, 'impulse')
+        with open(b.V10_IMPULSE_FILE) as f:
+            state = json.load(f)
+        self.assertEqual(state['cash'], 90)
+        self.assertEqual(len(state['positions']), 1)
+        self.assertEqual(len(state['observations']), 2)
+        self.assertFalse(os.path.exists(b.V10_FILE))
+        self.assertEqual(state['assumptions']['entry_mode'], 'impulse')
+
     def test_session_clears_cache_between_reads(self):
         b.JSON_CACHE['stale'] = {}
         with patch.object(b, 'main') as main, patch.object(b.time, 'sleep'), patch.object(b.time, 'monotonic', return_value=0):
