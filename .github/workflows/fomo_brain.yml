@@ -47,5 +47,6 @@ jobs:
             fomo_memory.json
             fomo_event_memory.json
             fomo_paper.json
+            fomo_shadow_v8.json
           if-no-files-found: ignore
           overwrite: true
