@@ -34,7 +34,7 @@ jobs:
           search_artifacts: true
           if_no_artifact_found: ignore
 
-      - name: Verificar simulacion V8 sin red
+      - name: Verificar simulacion V9 sin red
         run: python test_fomo_v8.py
 
       - name: Ejecutar FOMO Brain
@@ -51,5 +51,6 @@ jobs:
             fomo_event_memory.json
             fomo_paper.json
             fomo_shadow_v8.json
+            fomo_shadow_v9.json
           if-no-files-found: ignore
           overwrite: true
