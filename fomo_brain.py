@@ -51,6 +51,7 @@ EVENT_MEMORY_FILE = "fomo_event_memory.json"
 V9_FILE = "fomo_shadow_v9.json"
 V10_FILE = "fomo_paper_v10.json"
 V10_IMPULSE_FILE = "fomo_paper_v10_impulse.json"
+V10_R3_FILE = "fomo_paper_v10_r3.json"
 SESSION_MAX_CYCLES = 15
 SESSION_WINDOW_SECONDS = 900
 MAX_CONFIRMATION_MINUTES = 1.5
@@ -1249,6 +1250,12 @@ def main(refresh_events=True):
 
     print("V10 EARLY: edad del PAR 2-60m; no equivale a edad del token ni a graduacion FOMO. Subida1h >150% es aviso.")
     simular_cartera(ranking, V10_FILE, "V10 EARLY", confirm=True)
+    try:
+        from candle_lab import guard as candle_guard
+        simular_cartera(ranking, V10_R3_FILE, "V10-r3 EARLY + VELAS", confirm=True,
+                        entry_mode="early", entry_guard=candle_guard(True, "early"))
+    except Exception as exc:
+        print("V10-r3 ERROR: " + str(exc) + "; V10 historicas permanecen separadas")
     print("V10 IMPULSO: cartera independiente; no sumar con EARLY. Holders SIN FUENTE VERIFICADA.")
     simular_cartera(ranking, V10_IMPULSE_FILE, "V10 IMPULSO", confirm=True, entry_mode="impulse")
     if os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
@@ -1383,7 +1390,8 @@ def main(refresh_events=True):
 def refresh_open_positions():
     """Exit-only ticks: never discover candidates, bootstrap wallets or buy."""
     wallets = [(V10_FILE, "V10 EARLY", "early", .60, False),
-               (V10_IMPULSE_FILE, "V10 IMPULSO", "impulse", .60, False)]
+               (V10_IMPULSE_FILE, "V10 IMPULSO", "impulse", .60, False),
+               (V10_R3_FILE, "V10-r3 EARLY + VELAS", "early", .60, False)]
     for mode in ("early", "impulse"):
         if os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
             for arm in ("control", "velas"):
