@@ -33,3 +33,42 @@ La entrada de ore en run 130 tenia 58,6% de compras. Gang reaparecio para entrar
 Validacion: 25 tests sin red; incluye entrada confirmada fuera del TOP 10 en ambas carteras y limite de memoria de 10.000 lecturas; incluye limites 30/90 segundos en ambas carteras, reproduccion de los indicadores de esas dos entradas, almacenamiento de la lectura previa, 15 lecturas durante 14 minutos, limite de sesion, persistencia, separacion de carteras, salidas y costes.
 
 No se suman carteras. Todo es simulacion con comision y deslizamiento estimados; no se firman ni envian ordenes reales. Los stops se evaluan en cada lectura y una caida entre lecturas o runs puede superar el 15%. El numero de compras no demuestra flujo monetario neto ni compradores unicos. No hay fuente verificada de holders conectada.
+
+
+## Protección de capital V10 — capital-r1 (6 octubre 2026)
+
+Los filtros EARLY r4/IMPULSO r4 y sus costes se mantienen. Se añade un control
+independiente por cartera, antes de nuevas entradas:
+
+- Patrimonio completo (caja + reserva + posiciones cotizadas) <=75 EUR:
+  bloqueo persistente de nuevas compras hasta revisión explícita. Referencia:
+  100 EUR iniciales; pérdida total máxima configurada 25%. No se recalcula una
+  referencia más baja ni se desbloquea al cambiar de día/run. No promete que
+  una caída rápida no atraviese el umbral entre lecturas.
+- Tres posiciones completas consecutivas con resultado neto negativo,
+  cerradas dentro de los últimos 60 minutos: pausa hasta 60 minutos después
+  del último cierre. El vencimiento no se prolonga en cada lectura.
+- Se suman los resultados de parcial y cierre final por contrato/cadena/hora
+  de entrada: una posición globalmente ganadora no cuenta como pérdida por
+  vender su resto con pérdida. Un parcial solo no es una posición terminada.
+- El bloqueo no ejecuta liquidaciones forzadas ni suspende cotizaciones o
+  salidas; el stop y el trailing actuales siguen funcionando. Cotizaciones
+  incompletas no disparan el umbral usando un valor antiguo como si fuera actual.
+- Se persiste `risk_control` y se imprime `FRENO V10`, con razón y vencimiento
+  o necesidad de revisión. Carteras, capital, reserva e historial no se reinician.
+
+Las carteras existentes EARLY (~47.17 EUR) e IMPULSO (~49.91 EUR) ya están por
+debajo del umbral: la siguiente lectura válida con este código bloqueará sus
+compras. El radar y el experimento WHALE DEMO continúan por separado. Es un
+freno de pérdidas, no una mejora de rentabilidad demostrada ni un reinicio.
+
+Evidencia: runs exitosas 148–170. EARLY: 9 stops suman -23.57 EUR, peor -4.41.
+IMPULSO: 13 stops suman -27.26 EUR, peor -3.71; las ventas positivas compensan
+parte del total. La etiqueta STOP -15% es un disparador en una cotización,
+no una orden alojada en el mercado. Lecturas de ~60 s y colas/fallos entre
+runs pueden producir cierres peores; la baja liquidez también impide cotizar.
+No se garantiza recuperar pérdidas ni se simulan ventas al umbral histórico.
+
+Ejemplos verificables: Sirius EARLY -4.41 (run155), CWC IMPULSO -3.71 (run157),
+phubber ambas -2.43 y SI EARLY -2.32 (run169). No se modifica un umbral de entrada
+por un único token ni se atribuye el beneficio de NFTM al freno recién añadido.

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import urllib.parse
 import urllib.request
@@ -651,6 +651,49 @@ def relacion_evento_token(token, eventos):
 # Cartera de prueba: dinero virtual, sin wallets ni ordenes reales.
 PAPER_FEE = 0.01
 PAPER_SLIPPAGE = 0.02
+V10_MAX_TOTAL_LOSS_PCT = 25.0
+V10_LOSS_PAUSE_MINUTES = 60
+
+
+def freno_cartera_v10(state, now):
+    """Block NEW entries only. Never fabricate an exit or reset historical losses."""
+    control = state.setdefault("risk_control", {"version": "capital-r1"})
+    if control.get("halted_at"):
+        return control["halt_reason"]
+    if all(p.get("quote_status") == "OK" for p in state["positions"]):
+        equity = (state["cash"] + state["reserve"]
+                  + sum(p["mark_net"] for p in state["positions"]))
+        floor = 100.0 * (1 - V10_MAX_TOTAL_LOSS_PCT / 100)
+        if equity <= floor:
+            reason = (f"riesgo capital-r1: patrimonio EUR {equity:.2f} <= {floor:.2f};"
+                      " perdida total >=25%; nuevas entradas bloqueadas hasta revision")
+            control.update(halted_at=now.isoformat(), halt_reason=reason,
+                           equity_at_halt=equity, capital_reference=100.0)
+            return reason
+    # Aggregate partial + final legs of each POSITION, not each sale separately.
+    grouped = {}
+    for leg in state.get("closed", []):
+        if not all(k in leg for k in ("chain", "address", "opened_at", "closed_at", "profit", "exit_reason")):
+            continue
+        key = (leg["chain"], leg["address"], leg["opened_at"])
+        row = grouped.setdefault(key, {"profit": 0.0, "completed_at": None})
+        row["profit"] += leg["profit"]
+        if leg["exit_reason"] != "PARCIAL +30%":
+            row["completed_at"] = datetime.fromisoformat(leg["closed_at"])
+    completed = sorted((r for r in grouped.values() if r["completed_at"]),
+                       key=lambda r: r["completed_at"])
+    recent = completed[-3:]
+    if (len(recent) == 3 and all(r["profit"] < 0 for r in recent)
+            and now - timedelta(minutes=V10_LOSS_PAUSE_MINUTES) <= recent[0]["completed_at"] <= now
+            and recent[-1]["completed_at"] <= now):
+        until = recent[-1]["completed_at"] + timedelta(minutes=V10_LOSS_PAUSE_MINUTES)
+        control["pause_until"] = until.isoformat()
+    if control.get("pause_until"):
+        until = datetime.fromisoformat(control["pause_until"])
+        if now < until:
+            return ("riesgo capital-r1: tres posiciones completas perdedoras consecutivas; "
+                    f"entradas pausadas hasta {until.isoformat()}")
+    return None
 
 
 class CotizacionBajaLiquidez(ValueError):
@@ -789,10 +832,15 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     quotes_blocked = any(p["quote_status"] != "OK" for p in state["positions"])
     if quotes_blocked:
         notes.append("ENTRADAS PAUSADAS: hay posiciones sin cotizacion verificable")
+    risk_reason = freno_cartera_v10(state, now)
+    if risk_reason:
+        notes.append("FRENO V10: " + risk_reason)
     # Una sola entrada por token durante este experimento, sin reentradas.
     for token in ranking:
         key = token["chain"] + ":" + token["address"]
-        reason = ("caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
+        risk_reason = freno_cartera_v10(state, now)
+        reason = (risk_reason if risk_reason else
+                  "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
                   "token ya operado" if key in state["seen"] or key in closed_this_run else
                   "maximo 3 posiciones" if len(state["positions"]) >= 3 else
@@ -874,6 +922,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     state["assumptions"]["candidate_memory_scope"] = "todos los candidatos filtrados; TOP 10 solo para pantalla"
     state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
     state["assumptions"]["entry_mode"] = entry_mode
+    state["assumptions"]["risk_policy"] = "capital-r1: perdida total >=25% bloquea entradas hasta revision; 3 posiciones completas perdedoras en 60m pausan 60m desde ultimo cierre; salidas siguen activas"
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "impulse":
         state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"

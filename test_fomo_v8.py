@@ -36,6 +36,77 @@ class V10Tests(unittest.TestCase):
             pos = {'chain': 'solana', 'address': 'a', 'pair': 'old'}
             result = b.cotizar_posicion(pos)
             return pos, result
+    def test_capital_floor_latches_and_survives_recovery(self):
+        now = datetime.now(timezone.utc)
+        state = {'cash': 66., 'reserve': 8., 'positions': [], 'closed': []}
+        self.assertIn('25%', b.freno_cartera_v10(state, now))
+        state['cash'] = 100
+        self.assertIsNotNone(b.freno_cartera_v10(state, now + timedelta(hours=1)))
+        self.assertEqual(state['risk_control']['equity_at_halt'], 74)
+        other = {'cash': 100., 'reserve': 0., 'positions': [], 'closed': []}
+        self.assertIsNone(b.freno_cartera_v10(other, now))
+
+    def test_loss_pause_uses_completed_positions_and_expires(self):
+        now = datetime.now(timezone.utc)
+        def leg(index, profit=-2, reason='STOP -15%', minutes=10):
+            return {'chain': 'solana', 'address': str(index), 'opened_at': (now-timedelta(minutes=50)).isoformat(),
+                    'closed_at': (now-timedelta(minutes=minutes)).isoformat(), 'profit': profit, 'exit_reason': reason}
+        state = {'cash': 90., 'reserve': 0., 'positions': [],
+                 'closed': [leg(1, minutes=30), leg(2, minutes=20), leg(3, minutes=10)]}
+        self.assertIn('tres posiciones', b.freno_cartera_v10(state, now))
+        until = state['risk_control']['pause_until']
+        b.freno_cartera_v10(state, now + timedelta(minutes=5))
+        self.assertEqual(state['risk_control']['pause_until'], until)
+        self.assertIsNone(b.freno_cartera_v10(state, now + timedelta(minutes=51)))
+        # A profitable partial + losing final remains a winning POSITION.
+        state = {'cash': 90., 'reserve': 0., 'positions': [],
+                 'closed': [leg(1), leg(2), leg(3, profit=3, reason='PARCIAL +30%', minutes=15),
+                            leg(3, profit=-1, minutes=10)]}
+        self.assertIsNone(b.freno_cartera_v10(state, now))
+
+    def test_unknown_quotes_do_not_fabricate_capital_halt(self):
+        state = {'cash': 60., 'reserve': 0., 'closed': [],
+                 'positions': [{'quote_status': 'NO VERIFICABLE', 'mark_net': 10}]}
+        self.assertIsNone(b.freno_cartera_v10(state, datetime.now(timezone.utc)))
+        self.assertNotIn('halted_at', state['risk_control'])
+
+    def test_halted_wallet_still_sells_and_never_quotes_new_entry(self):
+        token = b.analizar_par(pair())
+        with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
+            b.simular_cartera([token], confirm=False)
+        with open(b.V10_FILE) as f:
+            state = json.load(f)
+        state['risk_control'] = {'version': 'capital-r1', 'halted_at': datetime.now(timezone.utc).isoformat(),
+                                 'halt_reason': 'capital bloqueado para revision'}
+        with open(b.V10_FILE, 'w') as f:
+            json.dump(state, f)
+        new_token = b.analizar_par(pair(address='second'))
+        with patch.object(b, 'cotizar_posicion', return_value=(.5, 20000, pair(price=.5))) as quoter:
+            b.simular_cartera([new_token], confirm=False)
+        quoter.assert_called_once()
+        with open(b.V10_FILE) as f:
+            after = json.load(f)
+        self.assertEqual(after['positions'], [])
+        self.assertEqual(len(after['closed']), 1)
+        self.assertLess(after['closed'][0]['profit'], 0)
+        self.assertEqual(after['seen'], state['seen'])
+        self.assertEqual(after['risk_control']['halted_at'], state['risk_control']['halted_at'])
+
+    def test_capital_floor_prevents_any_new_quote(self):
+        now = datetime.now(timezone.utc)
+        state = {'version': 1, 'started_at': now.isoformat(), 'cash': 47.17,
+                 'reserve': 0., 'positions': [], 'closed': [], 'seen': [], 'observations': []}
+        with open(b.V10_FILE, 'w') as f:
+            json.dump(state, f)
+        with patch.object(b, 'cotizar_posicion') as quoter:
+            b.simular_cartera([b.analizar_par(pair())])
+        quoter.assert_not_called()
+        with open(b.V10_FILE) as f:
+            after = json.load(f)
+        self.assertEqual(after['cash'], 47.17)
+        self.assertEqual(after['closed'], [])
+        self.assertTrue(after['risk_control']['halted_at'])
+
     def test_contract_identity_and_migration(self):
         bad = pair('impostor', 'fake', 1000000)
         wrongchain = pair('a', 'wrong', 2000000)
