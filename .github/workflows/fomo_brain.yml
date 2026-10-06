@@ -36,7 +36,9 @@ jobs:
           if_no_artifact_found: ignore
 
       - name: Verificar simulacion V10 sin red
-        run: python test_fomo_v8.py
+        run: |
+          python test_fomo_v8.py
+          python -m unittest -v test_quote_safety.py
 
       - name: Verificar laboratorio de velas sin red
         id: candle_tests
@@ -71,6 +73,7 @@ jobs:
           BRAIN_RATIO_LAB: ${{ steps.ratio_tests.outcome == 'success' && '1' || '0' }}
           BRAIN_PROTECT_LAB: ${{ steps.protect_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
           BRAIN_VOLUME_LAB: ${{ steps.volume_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
+          BRAIN_QUOTE_GUARD: "1"
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: |

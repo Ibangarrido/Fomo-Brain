@@ -1,0 +1,66 @@
+"""Read-only checks for virtual prices and Solana transfer fees."""
+import math
+import time
+import urllib.parse
+from datetime import datetime, timezone
+
+FEE_CACHE = {}
+NETWORKS = {"solana": "solana", "bsc": "bsc", "ethereum": "eth", "base": "base", "robinhood": "robinhood"}
+
+
+def extreme(price, previous):
+    return previous > 0 and (price / previous <= .20 or price / previous >= 5)
+
+
+def corroborate(pos, price, fetch):
+    network = NETWORKS.get(pos["chain"])
+    if not network:
+        raise ValueError("SIN COBERTURA: cadena de contraste no soportada")
+    url = "https://api.geckoterminal.com/api/v2/networks/" + network + "/pools/" + urllib.parse.quote(pos["pair"], safe="")
+    payload = fetch(url)
+    from candle_lab import validate_pool, same_address
+    validate_pool(payload, pos, network)
+    data = payload["data"]
+    base = data["relationships"]["base_token"]["data"]["id"]
+    if not same_address(base, network + "_" + pos["address"], pos["chain"]):
+        raise ValueError("contraste: token no es base del pool")
+    second = float(data["attributes"].get("base_token_price_usd"))
+    if not math.isfinite(second) or second <= 0:
+        raise ValueError("contraste: precio ausente o invalido")
+    evidence = {"version": "quote-r1", "primary_price": price, "secondary_price": second,
+                "secondary_source": "GeckoTerminal", "pool": pos["pair"],
+                "chain": pos["chain"], "address": pos["address"],
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "status": "COINCIDE" if abs(price / second - 1) <= .20 else "DISCREPANCIA"}
+    return evidence
+
+
+def entry_fees(token, fetch):
+    if token["chain"] != "solana":
+        return {"status": "SIN COBERTURA", "chain": token["chain"]}, None
+    address = token["address"]
+    cached = FEE_CACHE.get(address)
+    if cached and time.monotonic() - cached[0] < 300:
+        return cached[1], cached[2]
+    try:
+        url = "https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=" + urllib.parse.quote(address, safe="")
+        payload = fetch(url)
+        if payload.get("code") != 1:
+            raise ValueError("respuesta GoPlus no valida")
+        report = payload["result"][address]
+        rate = float(report["transfer_fee"]["current_fee_rate"]["fee_rate"])
+        mutable = report["transfer_fee_upgradable"]["status"]
+        if not math.isfinite(rate) or not 0 <= rate <= 1 or mutable not in ("0", "1"):
+            raise ValueError("comision o autoridad invalida")
+        evidence = {"status": "VERIFICADO", "source": "GoPlus", "address": address,
+                    "observed_at": datetime.now(timezone.utc).isoformat(),
+                    "transfer_fee_rate": rate, "transfer_fee_mutable": mutable == "1"}
+        reason = "comision de transferencia positiva o modificable; costes no modelados" if rate > 0 or mutable == "1" else None
+    except Exception as exc:
+        evidence = {"status": "SIN DATOS", "source": "GoPlus", "address": address, "reason": str(exc)}
+        reason = "comision Solana sin verificar"
+    if evidence["status"] == "VERIFICADO":
+        FEE_CACHE[address] = (time.monotonic(), evidence, reason)
+        if len(FEE_CACHE) > 256:
+            del FEE_CACHE[next(iter(FEE_CACHE))]
+    return evidence, reason

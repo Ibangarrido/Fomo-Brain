@@ -754,6 +754,27 @@ def cotizar_posicion(pos):
         pos["pair"] = pair["pairAddress"]
         pos["url"] = pair.get("url", "")
         print(f"CAMBIO PAR {pos['chain']}:{pos['address']} | {original_pair} -> {pos['pair']}")
+    pos["quote_source"] = "DEX Screener"
+    pos["quote_pair"] = pair["pairAddress"]
+    pos["quote_observed_at"] = datetime.now(timezone.utc).isoformat()
+    if os.getenv("BRAIN_QUOTE_GUARD", "0") == "1" and pos.get("quantity"):
+        from quote_safety import extreme, corroborate
+        previous = pos.get("last_verified_price")
+        if previous is None:
+            previous = pos.get("mark_net", 0) / pos["quantity"] / ((1 - PAPER_SLIPPAGE) * (1 - PAPER_FEE))
+        if extreme(price, previous):
+            try:
+                evidence = corroborate(pos, price, pedir_json)
+            except Exception as exc:
+                evidence = {"version": "quote-r1", "status": "SIN DATOS", "reason": str(exc), "primary_price": price}
+            pos["quote_crosscheck"] = evidence
+            if evidence["status"] != "COINCIDE":
+                pos["indicative_price"] = price
+                pos["indicative_liquidity"] = liquidity
+                pos["indicative_mark_net"] = pos["quantity"] * price * (1 - PAPER_SLIPPAGE) * (1 - PAPER_FEE)
+                pos["last_indicative_quote_at"] = datetime.now(timezone.utc).isoformat()
+                raise ValueError("COTIZACION EXTREMA EN REVISION: " + json.dumps(evidence, ensure_ascii=False))
+        pos["last_verified_price"] = price
     return price, liquidity, pair
 
 
@@ -774,6 +795,17 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         state = {"version": 1, "started_at": now.isoformat(),
                  "cash": 100.0, "reserve": 0.0, "positions": [],
                  "closed": [], "seen": [], "observations": []}
+    if os.getenv("BRAIN_QUOTE_GUARD", "0") == "1":
+        for sale in state.get("closed", []):
+            if (sale.get("chain") == "solana" and
+                sale.get("address") == "FeAWY9L9hr82TvTuEyi328V9FP7GxVuGLx7xNg6kzWVa" and
+                sale.get("exit_price") == 2.887e-7):
+                sale.setdefault("quote_review", {
+                    "status": "EN REVISION", "version": "quote-r1",
+                    "reason": "precio de cierre discrepa de OHLCV independiente; no corregir contabilidad",
+                    "source": "GeckoTerminal", "minute_start_utc": "2026-10-06T18:55:00+00:00",
+                    "historical_low_usd": .0005799666150227353,
+                    "historical_close_usd": .0005800645649876336})
     if state.get("version") != 1:
         raise ValueError("Version de cartera virtual no compatible")
     if ratio_lab:
@@ -924,6 +956,13 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         except Exception as exc:
             notes.append("ENTRADA OMITIDA " + key + ": " + str(exc))
             continue
+        fee_evidence = None
+        if os.getenv("BRAIN_QUOTE_GUARD", "0") == "1":
+            from quote_safety import entry_fees
+            fee_evidence, fee_reason = entry_fees(fresh, pedir_json)
+            if fee_reason:
+                notes.append(f"DESCARTE {key} | quote-r1: {fee_reason} | " + json.dumps(fee_evidence, ensure_ascii=False))
+                continue
         budget = entry_budget
         quantity = budget / (price * cost)
         state["cash"] -= budget
@@ -938,6 +977,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
             "entry_policy_version": ("early-r4" if entry_mode == "early" else "impulse-r4") if confirm else "base",
+            "entry_fee_evidence": fee_evidence,
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
                 "buys5m", "sells5m", "change5m", "change1h", "ageMinutes")},

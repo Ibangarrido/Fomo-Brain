@@ -3,6 +3,8 @@ name: Candle Lab validation
 on:
   push:
     paths:
+      - "quote_safety.py"
+      - "test_quote_safety.py"
       - "volume_lab.py"
       - "test_volume_lab.py"
       - "protection_lab.py"
@@ -33,6 +35,7 @@ jobs:
       - name: Verificar V10 y ballenas sin red
         run: |
           python test_fomo_v8.py
+          python -m unittest -v test_quote_safety.py
           python test_whale_paper.py
       - name: Verificar laboratorio aislado sin red
         run: python -m unittest -v test_candle_lab.py
