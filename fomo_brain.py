@@ -752,7 +752,7 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early"):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None):
     now = datetime.now(timezone.utc)
     try:
         with open(paper_file) as handle:
@@ -860,6 +860,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 notes.append(f"DESCARTE {key} | cotizacion se aleja >5% de la señal")
                 continue
             reason = motivo_entrada(fresh, confirm, entry_mode)
+            if not reason and entry_guard is not None:
+                reason = entry_guard(fresh)
             if reason:
                 notes.append(f"DESCARTE {key} | {reason}")
                 continue
@@ -884,7 +886,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
                 "buys5m", "sells5m", "change5m", "change1h", "ageMinutes")},
             "signal_price": token.get("price"), "quote_drift_pct": drift,
-            "entry_confirmation": ultima_lectura_par(fresh) if confirm else None})
+            "entry_confirmation": ultima_lectura_par(fresh) if confirm else None,
+            "entry_candle_context": fresh.get("candle_context"),
+            "entry_experiment": label if entry_guard is not None else None,
+            "entry_policy_suffix": fresh.get("entry_policy_suffix")})
         notes.append("ENTRADA VIRTUAL " + token["symbol"] + " | EUR "
                      + format(budget, ".2f")
                      + f" | precio={price} | liquidez={fresh['liquidity']:.0f}"
@@ -923,6 +928,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
     state["assumptions"]["entry_mode"] = entry_mode
     state["assumptions"]["risk_policy"] = "capital-r1: perdida total >=25% bloquea entradas hasta revision; 3 posiciones completas perdedoras en 60m pausan 60m desde ultimo cierre; salidas siguen activas"
+    state["assumptions"]["experiment"] = label if entry_guard is not None else None
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "impulse":
         state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"
@@ -1180,6 +1186,12 @@ def main(refresh_events=True):
     simular_cartera(ranking, V10_FILE, "V10 EARLY", confirm=True)
     print("V10 IMPULSO: cartera independiente; no sumar con EARLY. Holders SIN FUENTE VERIFICADA.")
     simular_cartera(ranking, V10_IMPULSE_FILE, "V10 IMPULSO", confirm=True, entry_mode="impulse")
+    if os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
+        try:
+            from candle_lab import run as run_candle_lab
+            run_candle_lab(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB VELAS ERROR: " + str(exc) + "; V10 historicas permanecen separadas")
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1

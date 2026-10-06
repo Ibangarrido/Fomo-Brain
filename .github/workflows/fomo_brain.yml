@@ -38,6 +38,11 @@ jobs:
       - name: Verificar simulacion V10 sin red
         run: python test_fomo_v8.py
 
+      - name: Verificar laboratorio de velas sin red
+        id: candle_tests
+        continue-on-error: true
+        run: python -m unittest -v test_candle_lab.py
+
       - name: Verificar prueba de seguimiento virtual
         run: python test_whale_paper.py
 
@@ -47,6 +52,7 @@ jobs:
       - name: Ejecutar FOMO Brain
         env:
           BRAIN_CYCLES: "15"
+          BRAIN_CANDLE_LAB: ${{ steps.candle_tests.outcome == 'success' && '1' || '0' }}
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: |
@@ -72,5 +78,10 @@ jobs:
             fomo_paper_v10_impulse.json
             fomo_paper_whale.json
             fomo_paper_whale_unipcs.json
+            fomo_lab_candle_audit_r1.json
+            fomo_lab_early_control_r1.json
+            fomo_lab_early_velas_r1.json
+            fomo_lab_impulse_control_r1.json
+            fomo_lab_impulse_velas_r1.json
           if-no-files-found: ignore
           overwrite: true
