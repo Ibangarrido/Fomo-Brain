@@ -34,6 +34,21 @@ class CandleLabTests(unittest.TestCase):
         self.assertEqual(result["recent_volume_mean_usd"], 155)
         self.assertEqual(result["previous_volume_mean_usd"], 100)
 
+    def test_cached_pass_expires_on_new_minute(self):
+        token = {"chain": "solana", "pair": "Pool", "address": "Token"}
+        pool = {"data": {"id": "solana_Pool", "attributes": {"address": "Pool"},
+                         "relationships": {"base_token": {"data": {"id": "solana_Token"}}}}}
+        calls = []
+        def fetch(url):
+            calls.append(url)
+            return payload(rising_rows()) if "/ohlcv/" in url else pool
+        self.assertEqual(lab.context(token, fetcher=fetch, now=905)["status"], "PASA")
+        lab.context(token, fetcher=fetch, now=910)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(lab.context(token, fetcher=fetch, now=1000)["status"], "SIN DATOS")
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(lab.CYCLE_CACHE), 1)
+
     def test_unclosed_bar_is_excluded(self):
         rows = rising_rows() + [[900, 1, 2, .5, 1.5, 999999]]
         self.assertEqual(lab.evaluate_rows(payload(rows), 905)["bars"], rising_rows())

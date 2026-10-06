@@ -92,7 +92,13 @@ def context(token, fetcher=request_json, now=None):
     if not network:
         return {"status": "SIN DATOS", "reason": "cadena OHLCV no soportada"}
     now = datetime.now(timezone.utc).timestamp() if now is None else now
-    key = (token["chain"], token["address"], token["pair"])
+    # A new minute may have a newly closed candle. Never reuse last minute's
+    # verdict, even when V10-r3 runs before the other candle laboratories.
+    minute = int(now // 60)
+    for cached_key in list(CYCLE_CACHE):
+        if len(cached_key) != 4 or cached_key[-1] != minute:
+            del CYCLE_CACHE[cached_key]
+    key = (token["chain"], token["address"], token["pair"], minute)
     if key in CYCLE_CACHE:
         return CYCLE_CACHE[key]
     try:

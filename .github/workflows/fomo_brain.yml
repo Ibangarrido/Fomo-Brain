@@ -56,6 +56,11 @@ jobs:
       - name: Verificar prueba de seguimiento virtual
         run: python test_whale_paper.py
 
+      - name: Verificar comparacion de volumen sin red
+        id: volume_tests
+        continue-on-error: true
+        run: python -m unittest -v test_volume_lab.py
+
       - name: Instalar lector publico de alertas
         run: python -m pip install websocket-client==1.8.0
 
@@ -65,6 +70,7 @@ jobs:
           BRAIN_CANDLE_LAB: ${{ steps.candle_tests.outcome == 'success' && '1' || '0' }}
           BRAIN_RATIO_LAB: ${{ steps.ratio_tests.outcome == 'success' && '1' || '0' }}
           BRAIN_PROTECT_LAB: ${{ steps.protect_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
+          BRAIN_VOLUME_LAB: ${{ steps.volume_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: |
@@ -88,6 +94,7 @@ jobs:
             fomo_shadow_v9.json
             fomo_paper_v10.json
             fomo_paper_v10_impulse.json
+            fomo_paper_v10_r3.json
             fomo_paper_whale.json
             fomo_paper_whale_unipcs.json
             fomo_lab_candle_audit_r1.json
@@ -104,5 +111,8 @@ jobs:
             fomo_lab_protect_early_protect_r1.json
             fomo_lab_protect_impulse_control_r1.json
             fomo_lab_protect_impulse_protect_r1.json
+            fomo_lab_volume_fork_r1.json
+            fomo_lab_volume_impulse_control_r1.json
+            fomo_lab_volume_impulse_volume_r1.json
           if-no-files-found: ignore
           overwrite: true

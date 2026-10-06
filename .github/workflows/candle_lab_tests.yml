@@ -3,6 +3,8 @@ name: Candle Lab validation
 on:
   push:
     paths:
+      - "volume_lab.py"
+      - "test_volume_lab.py"
       - "protection_lab.py"
       - "test_protection_lab.py"
       - "ratio_lab.py"
@@ -40,3 +42,6 @@ jobs:
 
       - name: Verificar proteccion prospectiva sin red
         run: python -m unittest -v test_protection_lab.py
+
+      - name: Verificar volumen prospectivo sin red
+        run: python -m unittest -v test_volume_lab.py

@@ -1276,6 +1276,12 @@ def main(refresh_events=True):
             run_protection_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB PROTECCION ERROR: " + str(exc) + "; otros laboratorios siguen activos")
+    if os.getenv("BRAIN_VOLUME_LAB", "0") == "1":
+        try:
+            from volume_lab import run as run_volume_lab
+            run_volume_lab(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB VOLUMEN ERROR: " + str(exc) + "; carteras anteriores siguen separadas")
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
@@ -1406,6 +1412,10 @@ def refresh_open_positions():
                 wallets.append((f"fomo_lab_protect_{mode}_{arm}_r1.json",
                                 f"LAB PROTECT {mode.upper()} {arm.upper()} r1", mode, .60, arm == "protect"))
     JSON_CACHE.clear()  # Fresh quotes shared across wallets within this tick only.
+    if os.getenv("BRAIN_VOLUME_LAB", "0") == "1":
+        for arm in ("control", "volume"):
+            wallets.append((f"fomo_lab_volume_impulse_{arm}_r1.json",
+                            f"LAB VOLUME IMPULSE {arm.upper()} r1", "impulse", .60, False))
     for path, label, mode, ratio, protect in wallets:
         try:
             with open(path) as handle:
