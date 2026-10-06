@@ -1,0 +1,32 @@
+name: Candle Lab validation
+
+on:
+  push:
+    paths:
+      - "candle_lab.py"
+      - "test_candle_lab.py"
+      - "fomo_brain.py"
+      - "test_fomo_v8.py"
+      - "whale_paper.py"
+      - "test_whale_paper.py"
+      - ".github/workflows/candle_lab_tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verificar V10 y ballenas sin red
+        run: |
+          python test_fomo_v8.py
+          python test_whale_paper.py
+      - name: Verificar laboratorio aislado sin red
+        run: python -m unittest -v test_candle_lab.py
