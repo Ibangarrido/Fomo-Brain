@@ -752,7 +752,12 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60):
+    if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
+        raise ValueError("Umbral de compras invalido")
+    ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
+    if min_buy_ratio != 0.60 and not ratio_lab:
+        raise ValueError("Umbral alternativo reservado al laboratorio ratio")
     now = datetime.now(timezone.utc)
     try:
         with open(paper_file) as handle:
@@ -763,6 +768,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                  "closed": [], "seen": [], "observations": []}
     if state.get("version") != 1:
         raise ValueError("Version de cartera virtual no compatible")
+    if ratio_lab:
+        expected = {"mode": entry_mode, "min_buy_ratio": min_buy_ratio, "version": "ratio-r1"}
+        if state.get("ratio_experiment", expected) != expected:
+            raise ValueError("Cartera ratio incompatible; no mezclar umbrales")
+        state["ratio_experiment"] = expected
     notes = []
     closed_this_run = set()
     cost = (1 + PAPER_SLIPPAGE) * (1 + PAPER_FEE)
@@ -859,7 +869,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             if confirm and (drift is None or abs(drift) > 5):
                 notes.append(f"DESCARTE {key} | cotizacion se aleja >5% de la señal")
                 continue
-            reason = motivo_entrada(fresh, confirm, entry_mode)
+            reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio)
             if not reason and entry_guard is not None:
                 reason = entry_guard(fresh)
             if reason:
@@ -888,7 +898,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "signal_price": token.get("price"), "quote_drift_pct": drift,
             "entry_confirmation": ultima_lectura_par(fresh) if confirm else None,
             "entry_candle_context": fresh.get("candle_context"),
-            "entry_experiment": label if entry_guard is not None else None,
+            "entry_experiment": label if entry_guard is not None or ratio_lab else None,
+            "entry_min_buy_ratio": min_buy_ratio,
             "entry_policy_suffix": fresh.get("entry_policy_suffix")})
         notes.append("ENTRADA VIRTUAL " + token["symbol"] + " | EUR "
                      + format(budget, ".2f")
@@ -928,10 +939,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
     state["assumptions"]["entry_mode"] = entry_mode
     state["assumptions"]["risk_policy"] = "capital-r1: perdida total >=25% bloquea entradas hasta revision; 3 posiciones completas perdedoras en 60m pausan 60m desde ultimo cierre; salidas siguen activas"
-    state["assumptions"]["experiment"] = label if entry_guard is not None else None
+    state["assumptions"]["experiment"] = label if entry_guard is not None or ratio_lab else None
+    state["assumptions"]["min_buy_ratio_5m"] = min_buy_ratio
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "impulse":
         state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"
+    state["assumptions"]["entry_policy"] = state["assumptions"]["entry_policy"].replace("compras >=60%", f"compras >={min_buy_ratio:.0%}")
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -981,13 +994,15 @@ def ultima_lectura_par(token):
     return prev[-1] if prev else None
 
 
-def motivo_entrada(token, confirm=False, entry_mode="early"):
+def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60):
+    if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
+        raise ValueError("Umbral de compras invalido")
     if entry_mode not in ("early", "impulse"):
         raise ValueError("Modo de entrada desconocido")
     checks = [(numero(token["price"]) <= 0, "precio ausente"),
               (token["score"] < 5, "score < 5"),
               (token["liquidity"] < 10_000, "liquidez < 10000 USD"),
-              (token["buyRatio5m"] < 0.60, "ratio compras < 60%"),
+              (token["buyRatio5m"] < min_buy_ratio, f"ratio compras < {min_buy_ratio:.0%}"),
               (token["trades5m"] < 20, "actividad 5m insuficiente"),
               (not confirm and token["change1h"] > 150, "subida 1h > 150%")]
     for failed, reason in checks:
@@ -998,8 +1013,8 @@ def motivo_entrada(token, confirm=False, entry_mode="early"):
     if entry_mode == "early":
         if token["liquidity"] < 20_000:
             return "early r2: liquidez < 20000 USD"
-        if token["trades5m"] < 40 or token["buyRatio5m"] < 0.60:
-            return "early r2: requiere 40 trades y compras >=60%"
+        if token["trades5m"] < 40 or token["buyRatio5m"] < min_buy_ratio:
+            return f"early r2: requiere 40 trades y compras >={min_buy_ratio:.0%}"
     age = token.get("ageMinutes")
     if entry_mode == "early" and (age is None or not 2 <= age <= 60):
         return "comparacion: edad fuera de 2-60 min"
@@ -1192,6 +1207,12 @@ def main(refresh_events=True):
             run_candle_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB VELAS ERROR: " + str(exc) + "; V10 historicas permanecen separadas")
+    if os.getenv("BRAIN_RATIO_LAB", "0") == "1":
+        try:
+            from ratio_lab import run as run_ratio_lab
+            run_ratio_lab(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB RATIO ERROR: " + str(exc) + "; historiales separados")
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
