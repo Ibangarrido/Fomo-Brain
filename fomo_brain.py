@@ -1018,7 +1018,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
               f"estado={pos['quote_status']} | ultima_cotizacion={pos['last_quote_at']}")
     print(f"Cotizaciones no verificables={stale}; conservan ultimo valor, NO son liquidez")
     print("Costes supuestos POR LADO: comision 1%, deslizamiento 2%; FX fijo 1:1")
-    print("Stops evaluados en cada lectura; intervalo objetivo 60s dentro de la run, con huecos entre runs. No garantizados.")
+    print("Stops: objetivo 15s para posiciones abiertas entre radares de 60s; peticiones lentas y huecos entre runs pueden retrasarlos. No garantizados.")
 
 
 def identidad_par(pair, chain, address):
@@ -1380,6 +1380,39 @@ def main(refresh_events=True):
     )
 
 
+def refresh_open_positions():
+    """Exit-only ticks: never discover candidates, bootstrap wallets or buy."""
+    wallets = [(V10_FILE, "V10 EARLY", "early", .60, False),
+               (V10_IMPULSE_FILE, "V10 IMPULSO", "impulse", .60, False)]
+    for mode in ("early", "impulse"):
+        if os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
+            for arm in ("control", "velas"):
+                wallets.append((f"fomo_lab_{mode}_{arm}_r1.json",
+                                f"LAB {mode.upper()} {arm.upper()} r1", mode, .60, False))
+        if os.getenv("BRAIN_RATIO_LAB", "0") == "1":
+            for ratio in (60, 52):
+                wallets.append((f"fomo_lab_ratio_{mode}_{ratio}_r1.json",
+                                f"LAB RATIO {mode.upper()} {ratio}% r1", mode, ratio / 100, False))
+        if os.getenv("BRAIN_PROTECT_LAB", "0") == "1":
+            for arm in ("control", "protect"):
+                wallets.append((f"fomo_lab_protect_{mode}_{arm}_r1.json",
+                                f"LAB PROTECT {mode.upper()} {arm.upper()} r1", mode, .60, arm == "protect"))
+    JSON_CACHE.clear()  # Fresh quotes shared across wallets within this tick only.
+    for path, label, mode, ratio, protect in wallets:
+        try:
+            with open(path) as handle:
+                state = json.load(handle)
+            if not state.get("positions"):
+                continue
+            print(f"V10 SALIDAS 15s | {label}", flush=True)
+            simular_cartera([], path, label, confirm=True, entry_mode=mode,
+                            min_buy_ratio=ratio, profit_protection=protect)
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            print(f"V10 SALIDAS ERROR {label}: {exc}", flush=True)
+
+
 def run_session(cycles=1, interval_seconds=60):
     # Ventana acotada: no cambia el cron ni presupone continuidad entre runs.
     if not 1 <= cycles <= SESSION_MAX_CYCLES or interval_seconds < 60:
@@ -1397,7 +1430,21 @@ def run_session(cycles=1, interval_seconds=60):
             delay = max(0, started + (index + 1) * interval_seconds - time.monotonic())
             if remaining <= 0 or delay >= remaining:
                 break
-            time.sleep(delay)
+            deadline = started + (index + 1) * interval_seconds
+            tick = started + index * interval_seconds + 15
+            while tick < deadline:
+                if time.monotonic() < tick:
+                    time.sleep(tick - time.monotonic())
+                if time.monotonic() >= min(deadline, started + SESSION_WINDOW_SECONDS):
+                    break
+                refresh_open_positions()
+                # Skip missed ticks; never issue a burst to catch up.
+                tick += 15
+                while tick <= time.monotonic():
+                    tick += 15
+            delay = max(0, deadline - time.monotonic())
+            if delay:
+                time.sleep(delay)
 
 
 if __name__ == "__main__":
