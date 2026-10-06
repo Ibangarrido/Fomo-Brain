@@ -60,7 +60,7 @@ class RatioLabTests(unittest.TestCase):
                 with open(f"fomo_lab_ratio_{mode}_{threshold}_r1.json") as f:
                     state = json.load(f)
                 self.assertEqual(len(state["positions"]), int(threshold == 52))
-                self.assertEqual(state["cash"], 90 if threshold == 52 else 100)
+                self.assertEqual(state["cash"], 95 if threshold == 52 else 100)
                 self.assertEqual(len(state["observations"]), 2)
                 self.assertEqual(state["ratio_experiment"]["min_buy_ratio"], threshold/100)
                 self.assertEqual(state["assumptions"]["min_buy_ratio_5m"], threshold/100)
@@ -69,7 +69,7 @@ class RatioLabTests(unittest.TestCase):
                     pos = state["positions"][0]
                     self.assertEqual(pos["entry_snapshot"]["buyRatio5m"], .53)
                     self.assertEqual(pos["entry_min_buy_ratio"], .52)
-                    self.assertAlmostEqual(pos["mark_net"], 10*.99*.98/(1.01*1.02))
+                    self.assertAlmostEqual(pos["mark_net"], 5*.99*.98/(1.01*1.02))
         for filename, content in originals.items():
             with open(filename) as f:
                 self.assertEqual(f.read(), content)

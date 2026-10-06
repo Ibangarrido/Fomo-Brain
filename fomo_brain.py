@@ -653,11 +653,15 @@ PAPER_FEE = 0.01
 PAPER_SLIPPAGE = 0.02
 V10_MAX_TOTAL_LOSS_PCT = 25.0
 V10_LOSS_PAUSE_MINUTES = 60
+V10_LOSS_PAUSE_COUNT = 2
+V10_ENTRY_BUDGET_EUR = 5.0
+V10_RISK_VERSION = "capital-r2"
 
 
 def freno_cartera_v10(state, now):
     """Block NEW entries only. Never fabricate an exit or reset historical losses."""
-    control = state.setdefault("risk_control", {"version": "capital-r1"})
+    control = state.setdefault("risk_control", {"version": V10_RISK_VERSION})
+    control["version"] = V10_RISK_VERSION
     if control.get("halted_at"):
         return control["halt_reason"]
     if all(p.get("quote_status") == "OK" for p in state["positions"]):
@@ -682,8 +686,8 @@ def freno_cartera_v10(state, now):
             row["completed_at"] = datetime.fromisoformat(leg["closed_at"])
     completed = sorted((r for r in grouped.values() if r["completed_at"]),
                        key=lambda r: r["completed_at"])
-    recent = completed[-3:]
-    if (len(recent) == 3 and all(r["profit"] < 0 for r in recent)
+    recent = completed[-V10_LOSS_PAUSE_COUNT:]
+    if (len(recent) == V10_LOSS_PAUSE_COUNT and all(r["profit"] < 0 for r in recent)
             and now - timedelta(minutes=V10_LOSS_PAUSE_MINUTES) <= recent[0]["completed_at"] <= now
             and recent[-1]["completed_at"] <= now):
         until = recent[-1]["completed_at"] + timedelta(minutes=V10_LOSS_PAUSE_MINUTES)
@@ -691,7 +695,7 @@ def freno_cartera_v10(state, now):
     if control.get("pause_until"):
         until = datetime.fromisoformat(control["pause_until"])
         if now < until:
-            return ("riesgo capital-r1: tres posiciones completas perdedoras consecutivas; "
+            return ("riesgo capital-r2: dos posiciones completas perdedoras consecutivas; "
                     f"entradas pausadas hasta {until.isoformat()}")
     return None
 
@@ -773,7 +777,20 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         if state.get("ratio_experiment", expected) != expected:
             raise ValueError("Cartera ratio incompatible; no mezclar umbrales")
         state["ratio_experiment"] = expected
-    notes = []
+    # Record the transition without erasing cash, reserves, positions or losses.
+    epochs = state.setdefault("risk_policy_history", [])
+    if not epochs or epochs[-1]["version"] != V10_RISK_VERSION:
+        epochs.append({"version": V10_RISK_VERSION, "effective_at": now.isoformat(),
+                       "cash": state["cash"], "reserve": state["reserve"],
+                       "realized_pnl": sum(x["profit"] for x in state["closed"]),
+                       "open": len(state["positions"]),
+                       "entry_budget_eur": V10_ENTRY_BUDGET_EUR,
+                       "loss_pause_count": V10_LOSS_PAUSE_COUNT})
+    notes = ["RIESGO capital-r2: nuevas entradas <=5 EUR; pausa tras dos posiciones"
+             " perdedoras consecutivas en 60m; stops estimados entre lecturas"]
+    entry_budget = min(V10_ENTRY_BUDGET_EUR, MAX_EXPOSURE_EUR)
+    if not math.isfinite(entry_budget) or entry_budget <= 0:
+        raise ValueError("Presupuesto virtual invalido")
     closed_this_run = set()
     cost = (1 + PAPER_SLIPPAGE) * (1 + PAPER_FEE)
     proceeds_factor = (1 - PAPER_SLIPPAGE) * (1 - PAPER_FEE)
@@ -782,11 +799,16 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         for field in ("indicative_price", "indicative_liquidity", "indicative_mark_net",
                       "indicative_pnl_pct", "last_indicative_quote_at"):
             pos.pop(field, None)
+        previous_quote_at = pos.get("last_quote_at")
         try:
             price, liquidity, _ = cotizar_posicion(pos)
             pos["mark_net"] = pos["quantity"] * price * proceeds_factor
             pos["last_quote_at"] = now.isoformat()
             pos["quote_status"] = "OK"
+            try:
+                pos["quote_gap_seconds"] = max(0, (now - datetime.fromisoformat(previous_quote_at)).total_seconds())
+            except (TypeError, ValueError):
+                pos["quote_gap_seconds"] = None
         except CotizacionBajaLiquidez as exc:
             # Informar del precio actual sin convertir una salida no verificable en efectivo.
             pos["quote_status"] = "NO VERIFICABLE"
@@ -805,6 +827,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             notes.append(pos["symbol"] + ": " + str(exc))
             continue
         pnl_pct = (pos["mark_net"] / pos["budget"] - 1) * 100
+        pos["last_pnl_net_pct"] = pnl_pct
+        pos["peak_pnl_net_pct"] = max(pos.get("peak_pnl_net_pct", pnl_pct), pnl_pct)
         age = (now - datetime.fromisoformat(pos["opened_at"])).total_seconds() / 3600
         pos["peak_price"] = max(pos.get("peak_price", price), price)
         drawdown = (price / pos["peak_price"] - 1) * 100
@@ -827,7 +851,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                                         profit=profit, reserved=reserved,
                                         exit_reason=reason, sold_fraction=fraction,
                                         allocated_cost=allocated_cost,
-                                        sold_quantity=pos["quantity"] * fraction))
+                                        sold_quantity=pos["quantity"] * fraction,
+                                        exit_risk_policy_version=V10_RISK_VERSION,
+                                        stop_overshoot_pct=max(0, -15 - pnl_pct) if reason == "STOP -15%" else None))
             if partial:
                 pos["quantity"] *= 0.5
                 pos["budget"] *= 0.5
@@ -837,8 +863,13 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             else:
                 state["positions"].remove(pos)
                 closed_this_run.add(pos["chain"] + ":" + pos["address"])
-            notes.append("SALIDA VIRTUAL " + pos["symbol"] + " | " + reason
-                         + " | resultado EUR " + format(profit, ".2f"))
+            note = ("SALIDA VIRTUAL " + pos["symbol"] + " | " + reason
+                    + " | resultado EUR " + format(profit, ".2f"))
+            if reason == "STOP -15%":
+                note += (f" | neto={pnl_pct:+.2f}% | pico_neto_observado={pos['peak_pnl_net_pct']:+.2f}%"
+                         f" | hueco_cotizacion_s={pos.get('quote_gap_seconds')}"
+                         f" | exceso_stop_pp={max(0, -15-pnl_pct):.2f}")
+            notes.append(note)
     quotes_blocked = any(p["quote_status"] != "OK" for p in state["positions"])
     if quotes_blocked:
         notes.append("ENTRADAS PAUSADAS: hay posiciones sin cotizacion verificable")
@@ -854,7 +885,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                   "cartera sin valoracion completa" if quotes_blocked else
                   "token ya operado" if key in state["seen"] or key in closed_this_run else
                   "maximo 3 posiciones" if len(state["positions"]) >= 3 else
-                  "efectivo < 10 EUR" if state["cash"] < 10 else None)
+                  f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
             notes.append(f"DESCARTE {key} | {reason}")
             continue
@@ -878,7 +909,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         except Exception as exc:
             notes.append("ENTRADA OMITIDA " + key + ": " + str(exc))
             continue
-        budget = min(10.0, MAX_EXPOSURE_EUR)
+        budget = entry_budget
         quantity = budget / (price * cost)
         state["cash"] -= budget
         state["seen"].append(key)
@@ -899,6 +930,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "entry_confirmation": ultima_lectura_par(fresh) if confirm else None,
             "entry_candle_context": fresh.get("candle_context"),
             "entry_experiment": label if entry_guard is not None or ratio_lab else None,
+            "entry_risk_policy_version": V10_RISK_VERSION,
             "entry_min_buy_ratio": min_buy_ratio,
             "entry_policy_suffix": fresh.get("entry_policy_suffix")})
         notes.append("ENTRADA VIRTUAL " + token["symbol"] + " | EUR "
@@ -919,7 +951,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             p["mark_net"] if p["quote_status"] == "OK" else p["indicative_mark_net"]
             for p in state["positions"])
     state["observations"].append({
-        "at": now.isoformat(), "cash": state["cash"],
+        "at": now.isoformat(), "risk_policy_version": V10_RISK_VERSION, "cash": state["cash"],
         "reserve": state["reserve"], "estimated_equity": equity,
         "open": len(state["positions"]), "closed": len(state["closed"]),
         "unverified_quotes": stale, "valuation_complete": stale == 0,
@@ -927,7 +959,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "indicative_only_equity": indicative_only_equity})
     state["observations"] = state["observations"][-3000:]
     state["assumptions"] = {
-        "initial_eur": 100, "max_trade_eur": 10, "max_positions": 3,
+        "initial_eur": 100, "max_trade_eur": 10, "new_entry_budget_eur": entry_budget,
+        "risk_policy_version": V10_RISK_VERSION, "max_positions": 3,
         "fee_per_side": PAPER_FEE, "slippage_per_side": PAPER_SLIPPAGE,
         "stop_net_pct": -15, "partial_target_net_pct": 30,
         "partial_fraction": 0.5, "trailing_peak_pct": -15, "max_hours": 24,
@@ -938,7 +971,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     state["assumptions"]["candidate_memory_scope"] = "todos los candidatos filtrados; TOP 10 solo para pantalla"
     state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
     state["assumptions"]["entry_mode"] = entry_mode
-    state["assumptions"]["risk_policy"] = "capital-r1: perdida total >=25% bloquea entradas hasta revision; 3 posiciones completas perdedoras en 60m pausan 60m desde ultimo cierre; salidas siguen activas"
+    state["assumptions"]["risk_policy"] = "capital-r2: nuevas entradas <=5 EUR; perdida total >=25% bloquea entradas hasta revision; 2 posiciones completas perdedoras en 60m pausan 60m desde ultimo cierre; salidas siguen activas"
     state["assumptions"]["experiment"] = label if entry_guard is not None or ratio_lab else None
     state["assumptions"]["min_buy_ratio_5m"] = min_buy_ratio
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"

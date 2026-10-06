@@ -134,10 +134,10 @@ class CandleLabTests(unittest.TestCase):
                         path = "fomo_lab_" + mode + "_" + arm + "_r1.json"
                         with open(path) as handle:
                             state = json.load(handle)
-                        self.assertEqual(state["cash"], 90)
+                        self.assertEqual(state["cash"], 95)
                         self.assertEqual(len(state["positions"]), 1)
                         self.assertEqual(len(state["observations"]), 2)
-                        self.assertAlmostEqual(state["positions"][0]["mark_net"], 10 * .99 * .98 / (1.01 * 1.02))
+                        self.assertAlmostEqual(state["positions"][0]["mark_net"], 5 * .99 * .98 / (1.01 * 1.02))
                         self.assertEqual(state["positions"][0]["entry_candle_context"]["status"], "PASA")
                 for path, content in originals.items():
                     with open(path) as handle:

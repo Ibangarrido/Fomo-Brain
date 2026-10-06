@@ -52,8 +52,8 @@ class V10Tests(unittest.TestCase):
             return {'chain': 'solana', 'address': str(index), 'opened_at': (now-timedelta(minutes=50)).isoformat(),
                     'closed_at': (now-timedelta(minutes=minutes)).isoformat(), 'profit': profit, 'exit_reason': reason}
         state = {'cash': 90., 'reserve': 0., 'positions': [],
-                 'closed': [leg(1, minutes=30), leg(2, minutes=20), leg(3, minutes=10)]}
-        self.assertIn('tres posiciones', b.freno_cartera_v10(state, now))
+                 'closed': [leg(2, minutes=20), leg(3, minutes=10)]}
+        self.assertIn('dos posiciones', b.freno_cartera_v10(state, now))
         until = state['risk_control']['pause_until']
         b.freno_cartera_v10(state, now + timedelta(minutes=5))
         self.assertEqual(state['risk_control']['pause_until'], until)
@@ -63,6 +63,68 @@ class V10Tests(unittest.TestCase):
                  'closed': [leg(1), leg(2), leg(3, profit=3, reason='PARCIAL +30%', minutes=15),
                             leg(3, profit=-1, minutes=10)]}
         self.assertIsNone(b.freno_cartera_v10(state, now))
+
+
+    def test_risk_r2_one_loss_does_not_pause_and_partials_do_not_count_twice(self):
+        now = datetime.now(timezone.utc)
+        base = {'chain': 'solana', 'address': 'a', 'opened_at': now.isoformat(),
+                'closed_at': now.isoformat(), 'profit': -1, 'exit_reason': 'STOP -15%'}
+        state = {'cash': 90., 'reserve': 0., 'positions': [], 'closed': [base]}
+        self.assertIsNone(b.freno_cartera_v10(state, now))
+        state['closed'].insert(0, dict(base, profit=.2, exit_reason='PARCIAL +30%'))
+        self.assertIsNone(b.freno_cartera_v10(state, now))
+        state['closed'].append(dict(base, address='b'))
+        self.assertIn('dos posiciones', b.freno_cartera_v10(state, now))
+
+    def test_risk_r2_preserves_legacy_size_and_records_actual_stop_overshoot(self):
+        token = b.analizar_par(pair())
+        with patch.object(b, 'cotizar_posicion', return_value=(1, 20000, pair())):
+            b.simular_cartera([token], confirm=False)
+        with open(b.V10_FILE) as f:
+            state = json.load(f)
+        pos = state['positions'][0]
+        pos['budget'] *= 2
+        pos['quantity'] *= 2
+        pos['mark_net'] *= 2
+        pos.pop('entry_risk_policy_version')
+        pos['last_quote_at'] = (datetime.now(timezone.utc)-timedelta(seconds=120)).isoformat()
+        state['cash'] = 90
+        state.pop('risk_policy_history')
+        with open(b.V10_FILE, 'w') as f:
+            json.dump(state, f)
+        with patch.object(b, 'cotizar_posicion', return_value=(.7, 20000, pair(price=.7))):
+            b.simular_cartera([])
+        with open(b.V10_FILE) as f:
+            after = json.load(f)
+        closed = after['closed'][0]
+        self.assertEqual(closed['allocated_cost'], 10)
+        self.assertNotIn('entry_risk_policy_version', closed)
+        self.assertEqual(closed['exit_risk_policy_version'], 'capital-r2')
+        self.assertGreater(closed['quote_gap_seconds'], 119)
+        self.assertAlmostEqual(closed['profit'], 10 * .7 * .99 * .98 / (1.01 * 1.02) - 10)
+        self.assertAlmostEqual(closed['stop_overshoot_pct'], -15-closed['last_pnl_net_pct'])
+        self.assertAlmostEqual(after['cash']+after['reserve'], 100+closed['profit'])
+        self.assertEqual(after['risk_policy_history'][0]['cash'], 90)
+        with contextlib.redirect_stdout(io.StringIO()):
+            b.simular_cartera([])
+        with open(b.V10_FILE) as f:
+            self.assertEqual(len(json.load(f)['risk_policy_history']), 1)
+
+    def test_risk_r2_new_position_costs_and_three_position_cap(self):
+        tokens = [b.analizar_par(pair(address=str(i), pool=str(i))) for i in range(4)]
+        def quote(token):
+            return 1, 20000, pair(address=token['address'], pool=token['pair'])
+        with patch.object(b, 'cotizar_posicion', side_effect=quote):
+            b.simular_cartera(tokens, confirm=False)
+        with open(b.V10_FILE) as f:
+            state = json.load(f)
+        self.assertEqual(state['cash'], 85)
+        self.assertEqual(len(state['positions']), 3)
+        for pos in state['positions']:
+            self.assertEqual(pos['budget'], 5)
+            self.assertEqual(pos['entry_risk_policy_version'], 'capital-r2')
+            self.assertAlmostEqual(pos['mark_net'], 5*.99*.98/(1.01*1.02))
+        self.assertEqual(state['observations'][-1]['risk_policy_version'], 'capital-r2')
 
     def test_unknown_quotes_do_not_fabricate_capital_halt(self):
         state = {'cash': 60., 'reserve': 0., 'closed': [],
@@ -131,7 +193,7 @@ class V10Tests(unittest.TestCase):
         with open(b.V10_FILE) as handle:
             low = json.load(handle)
         pos = low['positions'][0]
-        self.assertEqual(low['cash'], 90)
+        self.assertEqual(low['cash'], 95)
         self.assertEqual(low['reserve'], 0)
         self.assertEqual(low['closed'], [])
         self.assertEqual(len(low['seen']), 1)
@@ -141,8 +203,8 @@ class V10Tests(unittest.TestCase):
         self.assertEqual(pos['indicative_price'], .5)
         self.assertLess(pos['indicative_pnl_pct'], -15)
         self.assertAlmostEqual(low['observations'][-1]['indicative_only_equity'],
-                               90 + pos['indicative_mark_net'])
-        self.assertEqual(low['observations'][-1]['verified_component'], 90)
+                               95 + pos['indicative_mark_net'])
+        self.assertEqual(low['observations'][-1]['verified_component'], 95)
         self.assertFalse(low['observations'][-1]['valuation_complete'])
         # Un error posterior no puede presentar el precio indicativo anterior como actual.
         with patch.object(b, 'cotizar_posicion', side_effect=ValueError('sin precio')):
@@ -198,12 +260,12 @@ class V10Tests(unittest.TestCase):
             b.simular_cartera([t], confirm=False)
         with open(b.V10_FILE) as f:
             s = json.load(f)
-        self.assertEqual(s['cash'], 90)
+        self.assertEqual(s['cash'], 95)
         with patch.object(b, 'cotizar_posicion', side_effect=ValueError('sin liquidez')):
             b.simular_cartera([b.analizar_par(pair('second'))], confirm=False)
         with open(b.V10_FILE) as f:
             stale = json.load(f)
-        self.assertEqual(stale['cash'], 90)
+        self.assertEqual(stale['cash'], 95)
         self.assertEqual(stale['closed'], [])
         self.assertFalse(stale['observations'][-1]['valuation_complete'])
         with patch.object(b, 'cotizar_posicion', return_value=(.5, 20000, pair(price=.5))):
@@ -234,7 +296,7 @@ class V10Tests(unittest.TestCase):
             s = json.load(f)
         self.assertEqual(len(s['positions']), 1)
         self.assertTrue(s['positions'][0]['partial_taken'])
-        self.assertEqual(s['positions'][0]['budget'], 5)
+        self.assertEqual(s['positions'][0]['budget'], 2.5)
         self.assertEqual(s['closed'][0]['exit_reason'], 'PARCIAL +30%')
         self.assertAlmostEqual(s['reserve'], s['closed'][0]['profit'] * .5)
         with patch.object(b, 'cotizar_posicion', return_value=(1.2, 20000, pair(price=1.2))):
@@ -260,7 +322,7 @@ class V10Tests(unittest.TestCase):
             b.simular_cartera([t])
         with open(b.V10_FILE) as f:
             state = json.load(f)
-        self.assertEqual(state['cash'], 90)
+        self.assertEqual(state['cash'], 95)
         self.assertEqual(state['assumptions']['strategy'], 'confirmacion V10')
 
     def test_learning_entry_limits(self):
@@ -301,12 +363,12 @@ class V10Tests(unittest.TestCase):
                 rejected = json.load(f)
             self.assertEqual(rejected['cash'], 100)
             self.assertEqual(rejected['positions'], [])
-            self.assertIn('cotizacion se aleja', rejected['last_run_notes'][0])
+            self.assertTrue(any('cotizacion se aleja' in note for note in rejected['last_run_notes']))
             with patch.object(b, 'cotizar_posicion', return_value=(1.01, 20000, pair(price=1.01))):
                 b.simular_cartera([t])
         with open(b.V10_FILE) as f:
             accepted = json.load(f)
-        self.assertEqual(accepted['cash'], 90)
+        self.assertEqual(accepted['cash'], 95)
         pos = accepted['positions'][0]
         self.assertEqual(float(pos['entry_snapshot']['price']), 1.01)
         self.assertEqual(pos['entry_policy_version'], 'early-r4')
@@ -368,7 +430,7 @@ class V10Tests(unittest.TestCase):
             b.simular_cartera([], b.V10_IMPULSE_FILE, 'IMPULSO', True, 'impulse')
         with open(b.V10_IMPULSE_FILE) as f:
             state = json.load(f)
-        self.assertEqual(state['cash'], 90)
+        self.assertEqual(state['cash'], 95)
         self.assertEqual(len(state['positions']), 1)
         self.assertEqual(len(state['observations']), 2)
         self.assertFalse(os.path.exists(b.V10_FILE))
@@ -451,7 +513,7 @@ class V10Tests(unittest.TestCase):
                 b.simular_cartera([fresh], filename, mode, True, mode)
                 with open(filename) as handle:
                     state = json.load(handle)
-                self.assertEqual(state['cash'], 90)
+                self.assertEqual(state['cash'], 95)
                 self.assertEqual(state['positions'][0]['address'], 'a11')
                 self.assertEqual(state['positions'][0]['entry_confirmation']['pair'], 'p11')
                 self.assertIn('todos los candidatos', state['assumptions']['candidate_memory_scope'])
