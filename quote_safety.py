@@ -48,14 +48,33 @@ def entry_fees(token, fetch):
         if payload.get("code") != 1:
             raise ValueError("respuesta GoPlus no valida")
         report = payload["result"][address]
-        rate = float(report["transfer_fee"]["current_fee_rate"]["fee_rate"])
         mutable = report["transfer_fee_upgradable"]["status"]
+        fee = report["transfer_fee"]
+        absence = None
+        if fee == {} and mutable == "0":
+            # Empty GoPlus configuration is not itself proof of zero fees.
+            # Require an exact-mint second report with an explicit absent extension.
+            absence = corroborate_absent_fee(address, fetch)
+            rate = 0.0
+        else:
+            rate = float(fee["current_fee_rate"]["fee_rate"])
+        scheduled = fee.get("scheduled_fee_rate", [])
+        if not isinstance(scheduled, list):
+            raise ValueError("comisiones programadas invalidas")
+        future_fee = False
+        for item in scheduled:
+            future_rate = float(item["fee_rate"])
+            if not math.isfinite(future_rate) or future_rate < 0:
+                raise ValueError("comision programada invalida")
+            future_fee = future_fee or future_rate > 0
         if not math.isfinite(rate) or not 0 <= rate <= 1 or mutable not in ("0", "1"):
             raise ValueError("comision o autoridad invalida")
         evidence = {"status": "VERIFICADO", "source": "GoPlus", "address": address,
                     "observed_at": datetime.now(timezone.utc).isoformat(),
-                    "transfer_fee_rate": rate, "transfer_fee_mutable": mutable == "1"}
-        reason = "comision de transferencia positiva o modificable; costes no modelados" if rate > 0 or mutable == "1" else None
+                    "transfer_fee_rate": rate, "transfer_fee_mutable": mutable == "1",
+                    "version": "fee-r2", "absence_crosscheck": absence,
+                    "scheduled_positive_fee": future_fee}
+        reason = "comision de transferencia positiva o modificable; costes no modelados" if rate > 0 or mutable == "1" or future_fee else None
     except Exception as exc:
         evidence = {"status": "SIN DATOS", "source": "GoPlus", "address": address, "reason": str(exc)}
         reason = "comision Solana sin verificar"
@@ -64,3 +83,20 @@ def entry_fees(token, fetch):
         if len(FEE_CACHE) > 256:
             del FEE_CACHE[next(iter(FEE_CACHE))]
     return evidence, reason
+
+
+def corroborate_absent_fee(address, fetch):
+    url = "https://api.rugcheck.xyz/v1/tokens/" + urllib.parse.quote(address, safe="") + "/report"
+    report = fetch(url)
+    if report.get("mint") != address or report.get("token", {}).get("isInitialized") is not True:
+        raise ValueError("contraste comision: contrato o mint invalido")
+    program = report.get("tokenProgram")
+    if program == "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb":
+        extensions = report.get("token_extensions")
+        if not isinstance(extensions, dict) or "transferFeeConfig" not in extensions or extensions["transferFeeConfig"] is not None:
+            raise ValueError("contraste comision: extension ausente no confirmada")
+    elif program != "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+        raise ValueError("contraste comision: programa no reconocido")
+    return {"source": "RugCheck", "address": address, "token_program": program,
+            "status": "SIN EXTENSION DE COMISION",
+            "observed_at": datetime.now(timezone.utc).isoformat()}

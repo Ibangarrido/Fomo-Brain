@@ -35,6 +35,44 @@ class SafetyTests(unittest.TestCase):
         q.FEE_CACHE.clear()
         e,r=q.entry_fees(t,lambda _:self.fee_payload());self.assertIsNone(r)
         self.assertEqual(e['transfer_fee_rate'],0)
+    def absent_fee_payload(self):
+        p=self.fee_payload();p['result']['Token']['transfer_fee']={};return p
+    def absence_report(self):
+        return {'mint':'Token','tokenProgram':'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+                'token':{'isInitialized':True},'token_extensions':{'transferFeeConfig':None}}
+    def test_empty_fee_requires_exact_independent_absence(self):
+        calls=[]
+        def fetch(url):
+            calls.append(url)
+            return self.absence_report() if 'rugcheck' in url else self.absent_fee_payload()
+        e,r=q.entry_fees({'chain':'solana','address':'Token'},fetch)
+        self.assertIsNone(r);self.assertEqual(e['absence_crosscheck']['source'],'RugCheck')
+        q.entry_fees({'chain':'solana','address':'Token'},fetch)
+        self.assertEqual(len(calls),2)
+    def test_empty_fee_missing_wrong_mint_or_present_extension_blocks(self):
+        for report in [{},dict(self.absence_report(),mint='Other'),
+                       dict(self.absence_report(),token_extensions={}),
+                       dict(self.absence_report(),token_extensions={'transferFeeConfig':{'fee':0}}),
+                       dict(self.absence_report(),tokenProgram='Unknown')]:
+            q.FEE_CACHE.clear()
+            e,r=q.entry_fees({'chain':'solana','address':'Token'},
+                            lambda url: report if 'rugcheck' in url else self.absent_fee_payload())
+            self.assertIsNotNone(r);self.assertEqual(e['status'],'SIN DATOS')
+    def test_missing_fee_key_remains_unknown(self):
+        p=self.fee_payload();del p['result']['Token']['transfer_fee']
+        e,r=q.entry_fees({'chain':'solana','address':'Token'},lambda _:p)
+        self.assertIsNotNone(r);self.assertEqual(e['status'],'SIN DATOS')
+    def test_scheduled_positive_fee_blocks_even_if_current_zero(self):
+        p=self.fee_payload();p['result']['Token']['transfer_fee']['scheduled_fee_rate']=[{'fee_rate':'.01'}]
+        e,r=q.entry_fees({'chain':'solana','address':'Token'},lambda _:p)
+        self.assertIsNotNone(r);self.assertTrue(e['scheduled_positive_fee'])
+    def test_independent_failure_remains_unknown(self):
+        def fetch(url):
+            if 'rugcheck' in url:raise TimeoutError('timeout')
+            return self.absent_fee_payload()
+        e,r=q.entry_fees({'chain':'solana','address':'Token'},fetch)
+        self.assertIsNotNone(r);self.assertNotIn('Token',q.FEE_CACHE)
+
     def test_other_chain_is_not_certified(self):
         e,r=q.entry_fees({'chain':'bsc'},lambda _:self.fail('network'))
         self.assertEqual(e['status'],'SIN COBERTURA')
