@@ -436,6 +436,21 @@ class V10Tests(unittest.TestCase):
         self.assertFalse(os.path.exists(b.V10_FILE))
         self.assertEqual(state['assumptions']['entry_mode'], 'impulse')
 
+    def test_discovery_exit_priority_and_session_cleanup(self):
+        b.EXIT_SERVICE_AT = 100
+        try:
+            with patch.object(b.time, 'monotonic', return_value=101), patch.object(b, 'refresh_open_positions') as exits:
+                b.service_discovery_exits()
+                b.service_discovery_exits()
+                self.assertEqual(exits.call_count, 1)
+                self.assertEqual(b.EXIT_SERVICE_AT, 116)
+        finally:
+            b.EXIT_SERVICE_AT = None
+        with patch.object(b, 'main', side_effect=RuntimeError('radar')), patch.object(b.time, 'monotonic', return_value=0):
+            with self.assertRaises(RuntimeError):
+                b.run_session(1)
+        self.assertIsNone(b.EXIT_SERVICE_AT)
+
     def test_session_clears_cache_between_reads(self):
         b.JSON_CACHE['stale'] = {}
         with patch.object(b, 'main') as main, patch.object(b.time, 'sleep'), patch.object(b.time, 'monotonic', return_value=0):
@@ -557,3 +572,4 @@ class V10Tests(unittest.TestCase):
 if __name__ == '__main__':
     with contextlib.redirect_stdout(io.StringIO()):
         unittest.main()
+

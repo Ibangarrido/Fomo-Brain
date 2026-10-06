@@ -5,6 +5,7 @@ import math
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 
 NETWORKS = {"solana": "solana", "bsc": "bsc", "ethereum": "eth",
             "base": "base", "robinhood": "robinhood"}
@@ -12,6 +13,13 @@ MAX_REQUESTS_PER_MINUTE = 6
 REQUEST_TIMES = []
 CYCLE_CACHE = {}
 CYCLE_DECISIONS = []
+POOL_CACHE = {}
+BACKOFF_UNTIL = 0.0
+
+
+def begin_cycle():
+    # Preserve same-minute quotes across every arm, including V10-r3.
+    CYCLE_DECISIONS.clear()
 
 
 def same_address(a, b, chain):
@@ -19,14 +27,26 @@ def same_address(a, b, chain):
 
 
 def request_json(url):
+    global BACKOFF_UNTIL
     now = time.monotonic()
+    if now < BACKOFF_UNTIL:
+        raise ValueError("OHLCV en espera tras HTTP 429; SIN DATOS")
     REQUEST_TIMES[:] = [t for t in REQUEST_TIMES if now - t < 60]
     if len(REQUEST_TIMES) >= MAX_REQUESTS_PER_MINUTE:
         raise ValueError("presupuesto OHLCV agotado; cobertura limitada")
     REQUEST_TIMES.append(now)
     req = urllib.request.Request(url, headers={"User-Agent": "FOMO-Brain/Candle-Lab-r1"})
-    with urllib.request.urlopen(req, timeout=5) as response:
-        return json.loads(response.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            try:
+                delay = float(exc.headers.get("Retry-After", "60"))
+            except (ValueError, TypeError, AttributeError):
+                delay = 60
+            BACKOFF_UNTIL = time.monotonic() + max(60, delay)
+        raise
 
 
 def validate_pool(payload, token, network):
@@ -104,7 +124,17 @@ def context(token, fetcher=request_json, now=None):
     try:
         root = "https://api.geckoterminal.com/api/v2/networks/" + network + "/pools/"
         pool_url = root + urllib.parse.quote(token["pair"], safe="")
-        validate_pool(fetcher(pool_url), token, network)
+        pool_key = (network, token["pair"], token["address"])
+        # Immutable pool identity may be reused; price candles never inherit this TTL.
+        identity = POOL_CACHE.get(pool_key)
+        if identity is None or not 0 <= now - identity[0] < 3600:
+            pool_payload = fetcher(pool_url)
+            validate_pool(pool_payload, token, network)
+            POOL_CACHE[pool_key] = (now, pool_payload)
+            if len(POOL_CACHE) > 256:
+                del POOL_CACHE[next(iter(POOL_CACHE))]
+        else:
+            validate_pool(identity[1], token, network)
         params = urllib.parse.urlencode({"aggregate": 1, "limit": 8, "currency": "usd",
                                          "token": token["address"]})
         result = evaluate_rows(fetcher(pool_url + "/ohlcv/minute?" + params), now)
@@ -116,11 +146,11 @@ def context(token, fetcher=request_json, now=None):
     return result
 
 
-def guard(filtered, mode=None):
+def guard(filtered, mode=None, label=None):
     def check(token):
         result = context(token)
         CYCLE_DECISIONS.append({"at": datetime.now(timezone.utc).isoformat(),
-                                "mode": mode, "filtered": filtered,
+                                "mode": mode, "filtered": filtered, "portfolio": label,
                                 "chain": token["chain"] if "chain" in token else None,
                                 "address": token.get("address"), "context": result})
         token["candle_context"] = result
@@ -135,8 +165,6 @@ def guard(filtered, mode=None):
 
 
 def run(ranking, simulator):
-    CYCLE_CACHE.clear()
-    CYCLE_DECISIONS.clear()
     print("LAB VELAS r1: cuatro carteras ficticias separadas de 100 EUR; NO sumar ni atribuir a V10 historicas.")
     # Control may buy without OHLCV; filtered arm rejects missing data.
     # Coverage is recorded to distinguish a price filter from an API limitation.
@@ -145,7 +173,7 @@ def run(ranking, simulator):
             arm = "velas" if filtered else "control"
             simulator(ranking, "fomo_lab_" + mode + "_" + arm + "_r1.json",
                       "LAB " + mode.upper() + " " + arm.upper() + " r1",
-                      confirm=True, entry_mode=mode, entry_guard=guard(filtered, mode))
+                      confirm=True, entry_mode=mode, entry_guard=guard(filtered, mode, "LAB " + mode.upper() + " " + arm.upper() + " r1"))
 
     try:
         with open("fomo_lab_candle_audit_r1.json") as handle:

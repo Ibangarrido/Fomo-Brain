@@ -27,6 +27,9 @@ class CandleLabTests(unittest.TestCase):
     def setUp(self):
         lab.CYCLE_CACHE.clear()
         lab.REQUEST_TIMES.clear()
+        lab.POOL_CACHE.clear()
+        lab.BACKOFF_UNTIL = 0.0
+        lab.begin_cycle()
 
     def test_closed_continuity_and_independent_volume(self):
         result = lab.evaluate_rows(payload(list(reversed(rising_rows()))), 905)
@@ -46,8 +49,45 @@ class CandleLabTests(unittest.TestCase):
         lab.context(token, fetcher=fetch, now=910)
         self.assertEqual(len(calls), 2)
         self.assertEqual(lab.context(token, fetcher=fetch, now=1000)["status"], "SIN DATOS")
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 3)
         self.assertEqual(len(lab.CYCLE_CACHE), 1)
+
+    def test_cycle_keeps_r3_audit_and_shared_quotes(self):
+        token = {"chain": "solana", "pair": "Pool", "address": "Token"}
+        pool = {"data": {"id": "solana_Pool", "attributes": {"address": "Pool"},
+                         "relationships": {"base_token": {"data": {"id": "solana_Token"}}}}}
+        calls = []
+        def fetch(url):
+            calls.append(url)
+            return payload(rising_rows()) if "/ohlcv/" in url else pool
+        lab.context(token, fetch, 905)
+        lab.CYCLE_DECISIONS.append({"portfolio": "V10-r3", "context": {"status": "PASA"}})
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
+            cwd = os.getcwd()
+            try:
+                os.chdir(temp)
+                lab.run([], lambda *args, **kwargs: None)
+                with open("fomo_lab_candle_audit_r1.json") as handle:
+                    self.assertEqual(json.load(handle)[0]["portfolio"], "V10-r3")
+            finally:
+                os.chdir(cwd)
+        lab.context(token, fetch, 910)
+        self.assertEqual(len(calls), 2)
+        lab.context(token, fetch, 965)
+        self.assertEqual(len(calls), 3)  # New candles; identity reused.
+        lab.begin_cycle()
+        self.assertEqual(lab.CYCLE_DECISIONS, [])
+
+    def test_429_backoff_skips_network(self):
+        import urllib.error
+        error = urllib.error.HTTPError("url", 429, "limit", {"Retry-After": "120"}, None)
+        with patch.object(lab.time, "monotonic", return_value=100), patch.object(lab.urllib.request, "urlopen", side_effect=error) as network:
+            with self.assertRaises(urllib.error.HTTPError):
+                lab.request_json("https://example.invalid")
+            with self.assertRaisesRegex(ValueError, "espera"):
+                lab.request_json("https://example.invalid")
+        self.assertEqual(network.call_count, 1)
+        self.assertEqual(lab.BACKOFF_UNTIL, 220)
 
     def test_unclosed_bar_is_excluded(self):
         rows = rising_rows() + [[900, 1, 2, .5, 1.5, 999999]]

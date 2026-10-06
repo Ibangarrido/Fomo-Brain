@@ -1110,6 +1110,18 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60)
     return None
 
 
+EXIT_SERVICE_AT = None
+
+
+def service_discovery_exits():
+    """Cooperative exit priority at safe discovery boundaries; no concurrent writers."""
+    global EXIT_SERVICE_AT
+    if EXIT_SERVICE_AT is None or time.monotonic() < EXIT_SERVICE_AT:
+        return
+    refresh_open_positions()
+    EXIT_SERVICE_AT = time.monotonic() + 15
+
+
 def descubrir_pares():
     pairs = {}
     sources = {}
@@ -1122,6 +1134,7 @@ def descubrir_pares():
         sources.setdefault(key, set()).add(source)
 
     for term in SEARCHES:
+        service_discovery_exits()
         try:
             data = pedir_json("https://api.dexscreener.com/latest/dex/search/?q="
                               + urllib.parse.quote(term))
@@ -1133,6 +1146,7 @@ def descubrir_pares():
     # Perfiles no equivalen a todos los lanzamientos ni a una recomendacion.
     requested = dict.fromkeys(STUDY_TOKENS)
     for endpoint in ("token-profiles/latest/v1", "token-profiles/recent-updates/v1"):
+        service_discovery_exits()
         try:
             profiles = pedir_json("https://api.dexscreener.com/" + endpoint)
             if not isinstance(profiles, list):
@@ -1152,6 +1166,7 @@ def descubrir_pares():
         except (ValueError, KeyError):
             pass
     for chain, address in requested:
+        service_discovery_exits()
         try:
             found = pares_token(chain, address)
             for pair in found:
@@ -1172,6 +1187,9 @@ def descubrir_pares():
 
 
 def main(refresh_events=True):
+    from candle_lab import begin_cycle
+    begin_cycle()
+    service_discovery_exits()
     ahora = datetime.now(timezone.utc)
 
     print("🧠 FOMO Brain v10 - DEX + FOMO TRADER RADAR + PAPER")
@@ -1201,6 +1219,7 @@ def main(refresh_events=True):
 
     pairs, sources = descubrir_pares()
     for pool_key, pair in pairs.items():
+        service_discovery_exits()
         resultado = analizar_par(pair)
         if resultado is None:
             continue
@@ -1248,12 +1267,13 @@ def main(refresh_events=True):
         f"{len(ranking)}"
     )
 
+    service_discovery_exits()
     print("V10 EARLY: edad del PAR 2-60m; no equivale a edad del token ni a graduacion FOMO. Subida1h >150% es aviso.")
     simular_cartera(ranking, V10_FILE, "V10 EARLY", confirm=True)
     try:
         from candle_lab import guard as candle_guard
         simular_cartera(ranking, V10_R3_FILE, "V10-r3 EARLY + VELAS", confirm=True,
-                        entry_mode="early", entry_guard=candle_guard(True, "early"))
+                        entry_mode="early", entry_guard=candle_guard(True, "early", "V10-r3 EARLY + VELAS"))
     except Exception as exc:
         print("V10-r3 ERROR: " + str(exc) + "; V10 historicas permanecen separadas")
     print("V10 IMPULSO: cartera independiente; no sumar con EARLY. Holders SIN FUENTE VERIFICADA.")
@@ -1432,37 +1452,42 @@ def refresh_open_positions():
 
 
 def run_session(cycles=1, interval_seconds=60):
+    global EXIT_SERVICE_AT
     # Ventana acotada: no cambia el cron ni presupone continuidad entre runs.
     if not 1 <= cycles <= SESSION_MAX_CYCLES or interval_seconds < 60:
         raise ValueError("Sesion: 1-15 lecturas e intervalo >=60s")
     started = time.monotonic()
-    for index in range(cycles):
-        if index and time.monotonic() - started >= SESSION_WINDOW_SECONDS:
-            break
-        JSON_CACHE.clear()
-        REJECTIONS.clear()
-        print(f"V10 LECTURA {index + 1}/{cycles}", flush=True)
-        main(refresh_events=index == 0)
-        if index + 1 < cycles:
-            remaining = SESSION_WINDOW_SECONDS - (time.monotonic() - started)
-            delay = max(0, started + (index + 1) * interval_seconds - time.monotonic())
-            if remaining <= 0 or delay >= remaining:
+    EXIT_SERVICE_AT = started
+    try:
+        for index in range(cycles):
+            if index and time.monotonic() - started >= SESSION_WINDOW_SECONDS:
                 break
-            deadline = started + (index + 1) * interval_seconds
-            tick = started + index * interval_seconds + 15
-            while tick < deadline:
-                if time.monotonic() < tick:
-                    time.sleep(tick - time.monotonic())
-                if time.monotonic() >= min(deadline, started + SESSION_WINDOW_SECONDS):
+            JSON_CACHE.clear()
+            REJECTIONS.clear()
+            print(f"V10 LECTURA {index + 1}/{cycles}", flush=True)
+            main(refresh_events=index == 0)
+            if index + 1 < cycles:
+                remaining = SESSION_WINDOW_SECONDS - (time.monotonic() - started)
+                delay = max(0, started + (index + 1) * interval_seconds - time.monotonic())
+                if remaining <= 0 or delay >= remaining:
                     break
-                refresh_open_positions()
-                # Skip missed ticks; never issue a burst to catch up.
-                tick += 15
-                while tick <= time.monotonic():
+                deadline = started + (index + 1) * interval_seconds
+                tick = started + index * interval_seconds + 15
+                while tick < deadline:
+                    if time.monotonic() < tick:
+                        time.sleep(tick - time.monotonic())
+                    if time.monotonic() >= min(deadline, started + SESSION_WINDOW_SECONDS):
+                        break
+                    refresh_open_positions()
+                    # Skip missed ticks; never issue a burst to catch up.
                     tick += 15
-            delay = max(0, deadline - time.monotonic())
-            if delay:
-                time.sleep(delay)
+                    while tick <= time.monotonic():
+                        tick += 15
+                delay = max(0, deadline - time.monotonic())
+                if delay:
+                    time.sleep(delay)
+    finally:
+        EXIT_SERVICE_AT = None
 
 
 if __name__ == "__main__":
