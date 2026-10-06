@@ -3,6 +3,8 @@ name: Candle Lab validation
 on:
   push:
     paths:
+      - "protection_lab.py"
+      - "test_protection_lab.py"
       - "ratio_lab.py"
       - "test_ratio_lab.py"
       - "candle_lab.py"
@@ -35,3 +37,6 @@ jobs:
 
       - name: Verificar comparacion de umbrales sin red
         run: python -m unittest -v test_ratio_lab.py
+
+      - name: Verificar proteccion prospectiva sin red
+        run: python -m unittest -v test_protection_lab.py

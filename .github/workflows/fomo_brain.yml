@@ -48,6 +48,11 @@ jobs:
         continue-on-error: true
         run: python -m unittest -v test_ratio_lab.py
 
+      - name: Verificar proteccion de beneficios sin red
+        id: protect_tests
+        continue-on-error: true
+        run: python -m unittest -v test_protection_lab.py
+
       - name: Verificar prueba de seguimiento virtual
         run: python test_whale_paper.py
 
@@ -59,6 +64,7 @@ jobs:
           BRAIN_CYCLES: "15"
           BRAIN_CANDLE_LAB: ${{ steps.candle_tests.outcome == 'success' && '1' || '0' }}
           BRAIN_RATIO_LAB: ${{ steps.ratio_tests.outcome == 'success' && '1' || '0' }}
+          BRAIN_PROTECT_LAB: ${{ steps.protect_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: |
@@ -93,5 +99,10 @@ jobs:
             fomo_lab_ratio_early_52_r1.json
             fomo_lab_ratio_impulse_60_r1.json
             fomo_lab_ratio_impulse_52_r1.json
+            fomo_lab_protect_fork_r1.json
+            fomo_lab_protect_early_control_r1.json
+            fomo_lab_protect_early_protect_r1.json
+            fomo_lab_protect_impulse_control_r1.json
+            fomo_lab_protect_impulse_protect_r1.json
           if-no-files-found: ignore
           overwrite: true

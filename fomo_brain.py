@@ -756,12 +756,15 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False):
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
     ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
     if min_buy_ratio != 0.60 and not ratio_lab:
         raise ValueError("Umbral alternativo reservado al laboratorio ratio")
+    protect_lab = os.path.basename(paper_file).startswith("fomo_lab_protect_")
+    if type(profit_protection) is not bool or (profit_protection and not protect_lab):
+        raise ValueError("Proteccion reservada al laboratorio aislado")
     now = datetime.now(timezone.utc)
     try:
         with open(paper_file) as handle:
@@ -786,6 +789,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                        "open": len(state["positions"]),
                        "entry_budget_eur": V10_ENTRY_BUDGET_EUR,
                        "loss_pause_count": V10_LOSS_PAUSE_COUNT})
+    if protect_lab:
+        expected_protection = {"version": "protect-r1", "mode": entry_mode,
+                               "enabled": profit_protection}
+        if state.get("protection_experiment") != expected_protection:
+            raise ValueError("Cartera de proteccion incompatible; no mezclar brazos")
     notes = ["RIESGO capital-r2: nuevas entradas <=5 EUR; pausa tras dos posiciones"
              " perdedoras consecutivas en 60m; stops estimados entre lecturas"]
     entry_budget = min(V10_ENTRY_BUDGET_EUR, MAX_EXPOSURE_EUR)
@@ -832,7 +840,13 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         age = (now - datetime.fromisoformat(pos["opened_at"])).total_seconds() / 3600
         pos["peak_price"] = max(pos.get("peak_price", price), price)
         drawdown = (price / pos["peak_price"] - 1) * 100
+        # Only a verified observation after activation can arm protection.
+        if profit_protection and pnl_pct >= 12 and not pos.get("profit_protection_armed"):
+            pos["profit_protection_armed"] = True
+            pos["profit_protection_armed_at"] = now.isoformat()
+            notes.append(f"PROTECCION ARMADA {pos['symbol']} | neto={pnl_pct:+.2f}%")
         reason = ("STOP -15%" if pnl_pct <= -15 else
+                  "PROTECCION +12% -> +2%" if profit_protection and pos.get("profit_protection_armed") and pnl_pct <= 2 else
                   "TRAILING -15%" if pos.get("partial_taken") and drawdown <= -15 else
                   "TIEMPO 24h" if age >= 24 else None)
         partial = not reason and not pos.get("partial_taken") and pnl_pct >= 30
@@ -929,7 +943,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "signal_price": token.get("price"), "quote_drift_pct": drift,
             "entry_confirmation": ultima_lectura_par(fresh) if confirm else None,
             "entry_candle_context": fresh.get("candle_context"),
-            "entry_experiment": label if entry_guard is not None or ratio_lab else None,
+            "entry_experiment": label if entry_guard is not None or ratio_lab or protect_lab else None,
+            "entry_protection_policy": "protect-r1" if profit_protection else None,
             "entry_risk_policy_version": V10_RISK_VERSION,
             "entry_min_buy_ratio": min_buy_ratio,
             "entry_policy_suffix": fresh.get("entry_policy_suffix")})
@@ -978,6 +993,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if entry_mode == "impulse":
         state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"
     state["assumptions"]["entry_policy"] = state["assumptions"]["entry_policy"].replace("compras >=60%", f"compras >={min_buy_ratio:.0%}")
+    state["assumptions"]["profit_protection"] = {"enabled": profit_protection, "arm_net_pct": 12, "exit_net_pct": 2,
+                                                "fills": "Precio observado, no garantiza +2%"}
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -1246,6 +1263,12 @@ def main(refresh_events=True):
             run_ratio_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB RATIO ERROR: " + str(exc) + "; historiales separados")
+    if os.getenv("BRAIN_PROTECT_LAB", "0") == "1":
+        try:
+            from protection_lab import run as run_protection_lab
+            run_protection_lab(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB PROTECCION ERROR: " + str(exc) + "; otros laboratorios siguen activos")
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
