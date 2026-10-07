@@ -778,6 +778,16 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
+def invalidate_entry_quote(token):
+    """Discard only this token's cached market responses before final entry checks."""
+    chain = urllib.parse.quote(token["chain"], safe="")
+    address = urllib.parse.quote(token["address"], safe="")
+    pool = urllib.parse.quote(token["pair"], safe="")
+    for url in (f"https://api.dexscreener.com/latest/dex/pairs/{chain}/{pool}",
+                f"https://api.dexscreener.com/token-pairs/v1/{chain}/{address}"):
+        JSON_CACHE.pop(url, None)
+
+
 def record_unverified_quote(pos, error, now):
     """Keep historical marks separate from current, executable valuations."""
     pos["quote_status"] = "NO VERIFICABLE"
@@ -971,11 +981,38 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             notes.append("ENTRADA OMITIDA " + key + ": " + str(exc))
             continue
         fee_evidence = None
+        final_quote_evidence = None
+        entry_at = now
         if os.getenv("BRAIN_QUOTE_GUARD", "0") == "1":
             from quote_safety import entry_fees
             fee_evidence, fee_reason = entry_fees(fresh, pedir_json)
             if fee_reason:
                 notes.append(f"DESCARTE {key} | quote-r1: {fee_reason} | " + json.dumps(fee_evidence, ensure_ascii=False))
+                continue
+            # Security requests can take seconds. Do not fill at the pre-check price.
+            try:
+                invalidate_entry_quote(token)
+                price, entry_liquidity, fresh_pair = cotizar_posicion(token)
+                fresh = analizar_par(fresh_pair)
+                if fresh is None:
+                    raise ValueError("par final no supera filtros")
+                drift = variacion(price, token.get("price"))
+                if confirm and (drift is None or abs(drift) > 5):
+                    raise ValueError("precio final se aleja >5% de la señal")
+                reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio)
+                if not reason and entry_guard is not None:
+                    reason = entry_guard(fresh)
+                if reason:
+                    raise ValueError(reason)
+                entry_at = datetime.now(timezone.utc)
+                reason = freno_cartera_v10(state, entry_at)
+                if reason:
+                    raise ValueError(reason)
+                final_quote_evidence = {"version": "entry-quote-r1", "after_security_checks": True,
+                                        "observed_at": entry_at.isoformat(), "price": price,
+                                        "pair": fresh_pair["pairAddress"], "drift_pct": drift}
+            except Exception as exc:
+                notes.append(f"ENTRADA OMITIDA {key} | precio final tras seguridad: {exc}")
                 continue
         budget = entry_budget
         quantity = budget / (price * cost)
@@ -984,14 +1021,14 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         state["positions"].append({
             "symbol": token["symbol"], "address": token["address"],
             "chain": token["chain"], "pair": token["pair"],
-            "opened_at": now.isoformat(), "entry_price": price,
+            "opened_at": entry_at.isoformat(), "entry_price": price,
             "budget": budget, "quantity": quantity,
             "mark_net": quantity * price * proceeds_factor,
-            "last_quote_at": now.isoformat(), "quote_status": "OK",
+            "last_quote_at": entry_at.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
             "entry_policy_version": ("early-r4" if entry_mode == "early" else "impulse-r4") if confirm else "base",
-            "entry_fee_evidence": fee_evidence,
+            "entry_fee_evidence": fee_evidence, "entry_final_quote": final_quote_evidence,
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
                 "buys5m", "sells5m", "change5m", "change1h", "ageMinutes")},
@@ -1021,7 +1058,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             p["mark_net"] if p["quote_status"] == "OK" else p["indicative_mark_net"]
             for p in state["positions"])
     state["observations"].append({
-        "at": now.isoformat(), "risk_policy_version": V10_RISK_VERSION, "cash": state["cash"],
+        "at": datetime.now(timezone.utc).isoformat(), "risk_policy_version": V10_RISK_VERSION, "cash": state["cash"],
         "reserve": state["reserve"], "estimated_equity": equity if stale == 0 else None,
         "accounting_equity": equity, "valuation_version": "valuation-r2",
         "open": len(state["positions"]), "closed": len(state["closed"]),

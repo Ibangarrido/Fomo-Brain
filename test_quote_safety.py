@@ -80,6 +80,37 @@ class SafetyTests(unittest.TestCase):
         t={'chain':'solana','address':'Token'};calls=[]
         def fetch(url):calls.append(url);return self.fee_payload()
         q.entry_fees(t,fetch);q.entry_fees(t,fetch);self.assertEqual(len(calls),1)
+    def test_invalidate_final_entry_quote_preserves_security_cache(self):
+        market='https://api.dexscreener.com/latest/dex/pairs/solana/p'
+        fallback='https://api.dexscreener.com/token-pairs/v1/solana/a'
+        b.JSON_CACHE.update({market:1,fallback:2,'security':3})
+        b.invalidate_entry_quote({'chain':'solana','pair':'p','address':'a'})
+        self.assertNotIn(market,b.JSON_CACHE);self.assertNotIn(fallback,b.JSON_CACHE)
+        self.assertEqual(b.JSON_CACHE['security'],3);b.JSON_CACHE.clear()
+    def final_entry_case(self, final_price, confirm=False):
+        cwd=os.getcwd()
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                os.chdir(temp)
+                token=b.analizar_par(pair())
+                with patch.dict(os.environ,{'BRAIN_QUOTE_GUARD':'1'}), \
+                     patch.object(b,'cotizar_posicion',side_effect=[(1,20000,pair()),(final_price,20000,pair(price=final_price))]), \
+                     patch.object(b,'motivo_entrada',return_value=None), \
+                     patch.object(q,'entry_fees',return_value=({'status':'VERIFICADO'},None)), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    b.simular_cartera([token],confirm=confirm)
+                with open(b.V10_FILE) as h:return json.load(h)
+            finally:os.chdir(cwd)
+    def test_entry_uses_post_security_price_and_audit(self):
+        state=self.final_entry_case(1.03)
+        self.assertAlmostEqual(state['positions'][0]['entry_price'],1.03)
+        self.assertTrue(state['positions'][0]['entry_final_quote']['after_security_checks'])
+        self.assertAlmostEqual(state['positions'][0]['quantity'],5/(1.03*1.02*1.01))
+    def test_final_price_drift_blocks_without_spending(self):
+        state=self.final_entry_case(1.10,confirm=True)
+        self.assertEqual(state['cash'],100);self.assertEqual(state['positions'],[])
+        self.assertTrue(any('precio final se aleja' in n for n in state['last_run_notes']))
+
     def test_confirmed_crash_remains_executable(self):
         pos=b.analizar_par(pair())
         pos.update(quantity=1,mark_net=.99*.98,last_verified_price=1)
