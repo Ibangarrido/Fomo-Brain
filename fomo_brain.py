@@ -1546,7 +1546,12 @@ def run_session(cycles=1, interval_seconds=60):
         raise ValueError("Sesion: 1-15 lecturas e intervalo >=60s")
     started = time.monotonic()
     EXIT_SERVICE_AT = started
+    route_shadow = None
     try:
+        if os.getenv("BRAIN_ROUTE_SHADOW", "1") == "1":
+            from route_shadow import RouteShadow
+            route_shadow = RouteShadow(duration=SESSION_WINDOW_SECONDS)
+            route_shadow.start()
         if os.getenv("BRAIN_EXIT_WATCHDOG", "0") == "1":
             EXIT_WATCHDOG = ExitWatchdog(refresh_open_positions, interval=3,
                                          duration=SESSION_WINDOW_SECONDS)
@@ -1585,6 +1590,8 @@ def run_session(cycles=1, interval_seconds=60):
         if EXIT_WATCHDOG is not None:
             EXIT_WATCHDOG.stop()
             EXIT_WATCHDOG = None
+        if route_shadow is not None:
+            route_shadow.stop()
         EXIT_SERVICE_AT = None
 
 
