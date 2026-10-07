@@ -1,4 +1,4 @@
-# Route shadow r1
+# Route shadow r2
 
 Read-only parallel observation, enabled by default in `run_session`. Set
 `BRAIN_ROUTE_SHADOW=0` to disable. No protected workflows changed.
@@ -14,7 +14,13 @@ The thread is joined before session completion. There is no coverage between run
 Raydium mint metadata identifies decimals for the exact contract. Quantity is
 floored to integer base units and quoted through GET `/compute/swap-base-in`
 to Solana USDC. Response identity, input amount, route, output and threshold are
-validated. No transaction building, wallet, signing or POST endpoints are used.
+validated. No transaction building, wallet, signing or transaction submission is used.
+In r2, absent/invalid Raydium metadata falls back to the exact mint's read-only
+Solana mainnet RPC `getTokenSupply` at confirmed commitment (HTTP POST, 5s timeout).
+The response id, RPC status, slot, amount and decimals are validated. Records include
+metadata source, RPC context slot and primary metadata error. This slot dates the
+mint metadata, not the later route quote. Missing/invalid RPC data fails closed.
+Raydium quotes themselves remain GET-only; there is no key or paid service.
 Raydium coverage is not Jupiter's full routing coverage: no quote does not prove
 that a token cannot be sold anywhere.
 
@@ -34,3 +40,6 @@ Primary API reference: Raydium SDK v2 demo `src/api/swap.ts` and SDK
 `src/api/api.ts` (`getTokenInfo`). Offline tests run with the existing
 `test_exit_watchdog.py` suite, including malformed identity, quantity bounds,
 provider failure, unchanged wallet bytes and non-blocking snapshots.
+Additional r2 tests reproduce missing mint metadata, exercise exact-mint RPC fallback,
+reject RPC errors/invalid decimals, and verify the only RPC method is getTokenSupply.
+Reference: https://solana.com/docs/rpc/http/gettokensupply

@@ -1,4 +1,4 @@
-"""Quantity-specific GET quotes only. Never writes wallets or builds transactions."""
+"""Read-only quantity quotes and mint metadata. Never builds transactions."""
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 import glob
@@ -11,7 +11,7 @@ import urllib.request
 from exit_watchdog import wallet_lock
 
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-VERSION = "route-shadow-r1"
+VERSION = "route-shadow-r2"
 
 
 def get_json(url):
@@ -19,6 +19,43 @@ def get_json(url):
     request = urllib.request.Request(url, headers={"User-Agent": "FOMO-Brain/route-shadow-r1"})
     with urllib.request.urlopen(request, timeout=5) as response:
         return json.loads(response.read().decode())
+
+
+def token_supply(mint):
+    """Read-only RPC method, not transaction submission; exact validated mint."""
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply",
+               "params": [mint, {"commitment": "confirmed"}]}
+    request = urllib.request.Request("https://api.mainnet-beta.solana.com",
+        data=json.dumps(payload).encode(), method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": "FOMO-Brain/route-shadow-r2"})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return json.loads(response.read().decode())
+
+
+def mint_decimals(mint, fetch, supply_reader):
+    try:
+        metadata = fetch("https://api-v3.raydium.io/mint/ids?" + urllib.parse.urlencode({"mints": mint}))
+        matches = [m for m in metadata.get("data") or []
+                   if isinstance(m, dict) and m.get("address") == mint]
+        if metadata.get("success") is not True or len(matches) != 1:
+            raise ValueError("Exact mint metadata unavailable")
+        decimals = matches[0].get("decimals")
+        raw_quantity(1, decimals)
+        return decimals, {"source": "Raydium mint API", "context_slot": None}
+    except Exception as exc:
+        primary_error = type(exc).__name__ + ": " + str(exc)[:160]
+    response = supply_reader(mint)
+    result = response.get("result") or {}
+    value = result.get("value") or {}
+    slot = (result.get("context") or {}).get("slot")
+    if (response.get("jsonrpc") != "2.0" or response.get("id") != 1 or response.get("error")
+            or type(slot) is not int or slot <= 0
+            or not isinstance(value.get("amount"), str) or not value["amount"].isdigit()):
+        raise ValueError("Invalid getTokenSupply response; primary=" + primary_error)
+    decimals = value.get("decimals")
+    raw_quantity(1, decimals)
+    return decimals, {"source": "Solana RPC getTokenSupply confirmed", "context_slot": slot,
+                      "primary_metadata_error": primary_error}
 
 
 def raw_quantity(quantity, decimals):
@@ -33,18 +70,14 @@ def raw_quantity(quantity, decimals):
     return amount
 
 
-def quote(position, fetch=get_json):
+def quote(position, fetch=get_json, supply_reader=token_supply):
     if position.get("chain") != "solana":
         raise ValueError("Solana only")
     mint = position["address"]
     if not isinstance(mint, str) or not 32 <= len(mint) <= 44 or any(
             c not in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for c in mint):
         raise ValueError("Invalid mint")
-    metadata = fetch("https://api-v3.raydium.io/mint/ids?" + urllib.parse.urlencode({"mints": mint}))
-    matches = [m for m in metadata.get("data") or [] if isinstance(m, dict) and m.get("address") == mint]
-    if metadata.get("success") is not True or len(matches) != 1:
-        raise ValueError("Exact mint metadata unavailable")
-    decimals = matches[0].get("decimals")
+    decimals, metadata_evidence = mint_decimals(mint, fetch, supply_reader)
     amount = raw_quantity(position["quantity"], decimals)
     query = urllib.parse.urlencode({"inputMint": mint, "outputMint": USDC,
                                    "amount": str(amount), "slippageBps": "200", "txVersion": "V0"})
@@ -63,7 +96,8 @@ def quote(position, fetch=get_json):
         raise ValueError("Invalid quote output")
     # USDC has six decimals. Report token units, never equate USDC to EUR.
     return {"status": "QUOTE_ONLY", "provider": "Raydium Trade API",
-            "mint_decimals": decimals, "input_amount_raw": str(amount),
+            "mint_decimals": decimals, "mint_metadata": metadata_evidence,
+            "input_amount_raw": str(amount),
             "output_mint": USDC, "expected_out_usdc": output / 1_000_000,
             "threshold_usdc": threshold / 1_000_000, "slippage_bps": 200,
             "price_impact_pct": data.get("priceImpactPct"), "route_plan": data["routePlan"],
@@ -104,16 +138,17 @@ def snapshots():
 
 
 class RouteShadow:
-    def __init__(self, duration=900, interval=60, fetch=get_json, read=snapshots):
+    def __init__(self, duration=900, interval=60, fetch=get_json, read=snapshots, supply_reader=token_supply):
         self.duration, self.interval = duration, interval
         self.fetch, self.read = fetch, read
+        self.supply_reader = supply_reader
         self.stop_event = threading.Event()
         self.cursor = 0
         self.thread = threading.Thread(target=self.run, name="paper-route-shadow")
 
     def start(self):
         self.thread.start()
-        print("ROUTE SHADOW r1 INICIO | Solana | GET only | max4 cantidades/60s | logs only | sin cambios de saldo", flush=True)
+        print("ROUTE SHADOW r2 INICIO | Solana | read-only GET quotes + RPC mint fallback | max4 cantidades/60s | logs only | sin cambios de saldo", flush=True)
 
     def stop(self):
         self.stop_event.set()
@@ -133,7 +168,7 @@ class RouteShadow:
             evidence = {"version": VERSION, "snapshot_at": datetime.now(timezone.utc).isoformat(), **item}
             started = time.monotonic()
             try:
-                evidence.update(quote(item, self.fetch))
+                evidence.update(quote(item, self.fetch, self.supply_reader))
             except Exception as exc:
                 evidence.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240],
                                 execution_verified=False)

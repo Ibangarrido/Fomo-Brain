@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import fomo_brain as brain
 from exit_watchdog import ExitWatchdog, ThreadCache, wallet_lock, wallet_transaction
-from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC
+from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC, mint_decimals, token_supply
 
 
 class RouteShadowTests(unittest.TestCase):
@@ -56,11 +56,43 @@ class RouteShadowTests(unittest.TestCase):
         item = {"chain": "solana", "address": self.mint, "quantity": 1.23456789,
                 "wallets": [{"path": "test-wallet", "paper_mark_net": 3}]}
         before = json.dumps(item, sort_keys=True)
-        watcher = RouteShadow(read=lambda: [item], fetch=lambda url: (_ for _ in ()).throw(TimeoutError()))
+        watcher = RouteShadow(read=lambda: [item], fetch=lambda url: (_ for _ in ()).throw(TimeoutError()),
+                              supply_reader=lambda mint: (_ for _ in ()).throw(TimeoutError()))
         with contextlib.redirect_stdout(io.StringIO()) as output:
             watcher.tick()
         self.assertIn("UNAVAILABLE", output.getvalue())
         self.assertEqual(json.dumps(item, sort_keys=True), before)
+
+    def test_missing_metadata_uses_exact_mint_rpc(self):
+        requested = []
+        def supply(mint):
+            requested.append(mint)
+            return {"jsonrpc": "2.0", "id": 1, "result": {
+                "context": {"slot": 123}, "value": {"amount": "1000000000", "decimals": 6}}}
+        fetch_quote = self.fetcher(self.response(), [])
+        def fetch(url):
+            return {"success": True, "data": [None]} if "/mint/ids?" in url else fetch_quote(url)
+        result = quote({"chain": "solana", "address": self.mint, "quantity": 1.23456789}, fetch, supply)
+        self.assertEqual(requested, [self.mint])
+        self.assertEqual(result["mint_metadata"]["context_slot"], 123)
+        self.assertEqual(result["input_amount_raw"], "1234567")
+
+    def test_rpc_error_or_bad_decimals_fail_closed(self):
+        for response in ({"jsonrpc": "2.0", "id": 1, "error": {"code": -32602}},
+                         {"jsonrpc": "2.0", "id": 1, "result": {"context": {"slot": 123},
+                          "value": {"amount": "100", "decimals": None}}}):
+            with self.assertRaises(ValueError):
+                mint_decimals(self.mint, lambda url: {"data": []}, lambda mint: response)
+
+    def test_rpc_request_is_supply_read_not_transaction(self):
+        with patch("route_shadow.urllib.request.urlopen") as opener:
+            opener.return_value.__enter__.return_value.read.return_value = b'{"id":1}'
+            token_supply(self.mint)
+        request = opener.call_args.args[0]
+        body = json.loads(request.data)
+        self.assertEqual(body["method"], "getTokenSupply")
+        self.assertEqual(body["params"][0], self.mint)
+        self.assertEqual(opener.call_args.kwargs["timeout"], 5)
 
     def test_snapshot_skips_busy_wallet_and_never_writes(self):
         with tempfile.TemporaryDirectory() as directory:
