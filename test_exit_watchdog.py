@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import fomo_brain as brain
 from exit_watchdog import ExitWatchdog, ThreadCache, wallet_lock, wallet_transaction
-from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC, mint_decimals, token_supply
+from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC, mint_decimals, token_supply, jupiter_quote
 
 
 class RouteShadowTests(unittest.TestCase):
@@ -93,6 +93,64 @@ class RouteShadowTests(unittest.TestCase):
         self.assertEqual(trace["output_mint"], USDC)
         self.assertGreaterEqual(trace["quote_request_seconds"], 0)
         self.assertNotIn("expected_out_usdc", trace)
+
+    def jupiter_response(self):
+        return {"inputMint": self.mint, "outputMint": USDC, "inAmount": "1234567",
+                "outAmount": "900000", "otherAmountThreshold": "882000", "swapMode": "ExactIn",
+                "router": "metis", "transaction": None, "slippageBps": 200}
+
+    def test_jupiter_get_quote_has_no_wallet_or_execution_parameters(self):
+        urls = []
+        def fetch(url):
+            urls.append(url)
+            return self.jupiter_response()
+        result = jupiter_quote(self.mint, "1234567", fetch)
+        self.assertEqual(result["expected_out_usdc"], .9)
+        self.assertFalse(result["execution_verified"])
+        self.assertIn("/swap/v2/order?", urls[0])
+        for forbidden in ("taker", "wallet", "execute", "build", "api-key"):
+            self.assertNotIn(forbidden, urls[0])
+
+    def test_jupiter_rejects_identity_transaction_errors_and_outputs(self):
+        for field, value in (("inputMint", USDC), ("outputMint", self.mint), ("inAmount", "7"),
+                             ("transaction", "unexpected transaction"), ("taker", "wallet"),
+                             ("errorCode", 1), ("error", "No route"), ("outAmount", "NaN"),
+                             ("otherAmountThreshold", "900001"), ("router", "unknown")):
+            data = self.jupiter_response()
+            data[field] = value
+            with self.assertRaises(ValueError):
+                jupiter_quote(self.mint, "1234567", lambda url: data)
+
+    def test_jupiter_can_quote_when_raydium_has_no_route_without_wallet_changes(self):
+        item = {"chain": "solana", "address": self.mint, "quantity": 1.23456789}
+        before = json.dumps(item)
+        def fetch(url):
+            if "api.jup.ag" in url:
+                return self.jupiter_response()
+            return self.fetcher({"success": False, "msg": "ROUTE_NOT_FOUND"}, [])(url)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            RouteShadow(read=lambda: [item], fetch=fetch).tick()
+        records = output.getvalue().splitlines()
+        self.assertIn('"status": "UNAVAILABLE"', next(x for x in records if x.startswith("ROUTE SHADOW {")))
+        self.assertIn('"status": "QUOTE_ONLY"', next(x for x in records if x.startswith("JUPITER SHADOW {")))
+        self.assertEqual(json.dumps(item), before)
+
+    def test_jupiter_disable_skips_provider(self):
+        urls = []
+        with patch.dict(os.environ, {"BRAIN_JUPITER_SHADOW": "0"}), contextlib.redirect_stdout(io.StringIO()):
+            RouteShadow(read=lambda: [{"chain": "solana", "address": self.mint, "quantity": 1.23456789}],
+                        fetch=self.fetcher(self.response(), urls)).tick()
+        self.assertFalse(any("api.jup.ag" in url for url in urls))
+
+    def test_jupiter_spacing_is_interruptible_and_at_least_three_seconds(self):
+        item = {"chain": "solana", "address": self.mint, "quantity": 1.23456789}
+        watcher = RouteShadow(read=lambda: [item, item], fetch=self.fetcher(self.response(), []))
+        waits = []
+        with patch("route_shadow.time.monotonic", return_value=100), \
+                patch.object(watcher.stop_event, "wait", side_effect=lambda seconds: waits.append(seconds) or False), \
+                contextlib.redirect_stdout(io.StringIO()):
+            watcher.tick()
+        self.assertEqual(waits, [0, 3])
 
     def test_missing_metadata_uses_exact_mint_rpc(self):
         requested = []

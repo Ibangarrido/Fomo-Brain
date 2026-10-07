@@ -51,3 +51,28 @@ ROUTE_NOT_FOUND erased all this diagnostic evidence. Failed records never includ
 an expected output or imply executable liquidity. No new network requests, trading
 decisions, thresholds or wallet writes are introduced. Offline regressions cover
 RPC success followed by missing route, and a timeout after validated metadata.
+
+## Jupiter comparison r1
+
+`BRAIN_JUPITER_SHADOW=1` (default; 0 disables) adds keyless GET
+`https://api.jup.ag/swap/v2/order` after each selected Raydium observation with
+validated mint/quantity, including missing Raydium routes. Reuses exact raw
+quantity/metadata; no additional mint RPC. Same independent shadow thread, max4
+quantities/pass, 60s wait after pass, Jupiter requests spaced at least3s with
+interruptible waits, HTTP timeout5s. No taker, wallet, API key, build or execute
+parameter/endpoint. Errors such as authentication required or rate limits remain
+UNAVAILABLE; no retries, no paid service. Missing validated quantity is SKIPPED.
+
+JUPITER SHADOW logs are separate from Raydium and paper wallets. Validate exact
+input/output mints, raw input amount, ExactIn, recognized router, no transaction
+or taker, positive integer output and valid threshold. Never log raw responses.
+USDC outputs do not alter EUR equity, rules, balances, reserves or risk limits.
+Provider-default slippage is recorded, not forced to match Raydium200bps; amounts
+are observations at different instants, not simultaneous fills. A quote is not
+execution; fees, data age and keyless coverage remain unverified in production.
+
+Docs checked7Oct2026: portal plans document keyless0.5RPS, while endpoint reference
+still labels x-api-key required. Live workspace probe timed out, so only GitHub
+session logs can establish keyless availability. Offline tests cannot prove it.
+https://developers.jup.ag/docs/portal/plans
+https://developers.jup.ag/docs/api-reference/swap/order

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 import glob
 import json
+import os
 import threading
 import time
 import urllib.parse
@@ -151,6 +152,40 @@ def snapshots():
     return list(grouped.values())
 
 
+def jupiter_quote(mint, amount, fetch=get_json):
+    """Keyless GET-only price check. No taker, transaction building or execution."""
+    if (not isinstance(mint, str) or not 32 <= len(mint) <= 44 or any(
+            c not in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for c in mint)
+            or not isinstance(amount, str) or not amount.isascii() or not amount.isdigit()
+            or not 0 < int(amount) < 2 ** 64):
+        raise ValueError("Invalid Jupiter mint/amount")
+    query = urllib.parse.urlencode({"inputMint": mint, "outputMint": USDC, "amount": amount})
+    started = time.monotonic()
+    data = fetch("https://api.jup.ag/swap/v2/order?" + query)
+    if data.get("error") or data.get("errorCode") or data.get("errorMessage"):
+        raise ValueError("Jupiter provider error: " + str(data.get("error") or data.get("errorMessage") or data.get("errorCode"))[:160])
+    if (data.get("inputMint") != mint or data.get("outputMint") != USDC
+            or data.get("inAmount") != amount or data.get("swapMode") != "ExactIn"
+            or data.get("transaction") is not None or data.get("taker")
+            or data.get("router") not in {"metis", "jupiterz", "dflow", "okx"}):
+        raise ValueError("Jupiter quote identity/amount/router or quote-only mismatch")
+    output, threshold = data.get("outAmount"), data.get("otherAmountThreshold")
+    if (not isinstance(output, str) or not output.isascii() or not output.isdigit()
+            or not 0 < int(output) < 2 ** 64
+            or not isinstance(threshold, str) or not threshold.isascii() or not threshold.isdigit()
+            or not 0 <= int(threshold) <= int(output)):
+        raise ValueError("Invalid Jupiter output/threshold")
+    return {"status": "QUOTE_ONLY", "provider": "Jupiter Swap V2 keyless",
+            "input_amount_raw": amount, "output_mint": USDC,
+            "expected_out_usdc": int(output) / 1_000_000,
+            "threshold_usdc": int(threshold) / 1_000_000,
+            "router": data["router"], "slippage_bps": data.get("slippageBps"),
+            "quote_request_seconds": time.monotonic() - started,
+            "received_at": datetime.now(timezone.utc).isoformat(),
+            "market_data_age_seconds": None, "network_costs_included": False,
+            "execution_verified": False}
+
+
 class RouteShadow:
     def __init__(self, duration=900, interval=60, fetch=get_json, read=snapshots, supply_reader=token_supply):
         self.duration, self.interval = duration, interval
@@ -158,11 +193,15 @@ class RouteShadow:
         self.supply_reader = supply_reader
         self.stop_event = threading.Event()
         self.cursor = 0
+        self.jupiter_enabled = os.getenv("BRAIN_JUPITER_SHADOW", "1") == "1"
+        self.next_jupiter_request = 0
         self.thread = threading.Thread(target=self.run, name="paper-route-shadow")
 
     def start(self):
         self.thread.start()
         print("ROUTE SHADOW r3 INICIO | Solana | read-only GET quotes + RPC mint fallback | staged failure evidence | max4 cantidades/60s | logs only | sin cambios de saldo", flush=True)
+        if self.jupiter_enabled:
+            print("JUPITER SHADOW r1 INICIO | keyless GET quote-only | sin taker | separacion minima 3s | sin cambios de saldo", flush=True)
 
     def stop(self):
         self.stop_event.set()
@@ -190,6 +229,25 @@ class RouteShadow:
                                 execution_verified=False)
             evidence["total_request_seconds"] = time.monotonic() - started
             print("ROUTE SHADOW " + json.dumps(evidence, ensure_ascii=False, allow_nan=False), flush=True)
+            if self.jupiter_enabled:
+                comparison = {"version": "jupiter-shadow-r1", "snapshot_at": evidence["snapshot_at"],
+                              **item, "execution_verified": False}
+                if "input_amount_raw" not in diagnostics:
+                    comparison.update(status="SKIPPED", error="Validated mint quantity unavailable")
+                else:
+                    wait = max(0, self.next_jupiter_request - time.monotonic())
+                    if self.stop_event.wait(wait):
+                        break
+                    self.next_jupiter_request = time.monotonic() + 3
+                    comparison.update(mint_metadata=diagnostics["mint_metadata"],
+                                      input_amount_raw=diagnostics["input_amount_raw"], output_mint=USDC)
+                    requested = time.monotonic()
+                    try:
+                        comparison.update(jupiter_quote(item["address"], diagnostics["input_amount_raw"], self.fetch))
+                    except Exception as exc:
+                        comparison.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240])
+                    comparison["total_request_seconds"] = time.monotonic() - requested
+                print("JUPITER SHADOW " + json.dumps(comparison, ensure_ascii=False, allow_nan=False), flush=True)
         self.cursor = (self.cursor + count) % len(items)
 
     def run(self):
