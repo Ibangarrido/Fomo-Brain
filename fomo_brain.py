@@ -778,6 +778,17 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
+def record_unverified_quote(pos, error, now):
+    """Keep historical marks separate from current, executable valuations."""
+    pos["quote_status"] = "NO VERIFICABLE"
+    pos["quote_error"] = str(error)
+    pos["last_quote_attempt_at"] = now.isoformat()
+    try:
+        pos["quote_age_seconds"] = max(0, (now - datetime.fromisoformat(pos["last_quote_at"])).total_seconds())
+    except (KeyError, TypeError, ValueError):
+        pos["quote_age_seconds"] = None
+
+
 def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False):
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
@@ -846,13 +857,16 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             pos["mark_net"] = pos["quantity"] * price * proceeds_factor
             pos["last_quote_at"] = now.isoformat()
             pos["quote_status"] = "OK"
+            pos.pop("quote_error", None)
+            pos["last_quote_attempt_at"] = now.isoformat()
+            pos["quote_age_seconds"] = 0.0
             try:
                 pos["quote_gap_seconds"] = max(0, (now - datetime.fromisoformat(previous_quote_at)).total_seconds())
             except (TypeError, ValueError):
                 pos["quote_gap_seconds"] = None
         except CotizacionBajaLiquidez as exc:
             # Informar del precio actual sin convertir una salida no verificable en efectivo.
-            pos["quote_status"] = "NO VERIFICABLE"
+            record_unverified_quote(pos, exc, now)
             pos["indicative_price"] = exc.price
             pos["indicative_liquidity"] = exc.liquidity
             pos["indicative_mark_net"] = pos["quantity"] * exc.price * proceeds_factor
@@ -864,7 +878,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                          " | NO ES EFECTIVO NI VENTA EJECUTABLE")
             continue
         except Exception as exc:
-            pos["quote_status"] = "NO VERIFICABLE"
+            record_unverified_quote(pos, exc, now)
             notes.append(pos["symbol"] + ": " + str(exc))
             continue
         pnl_pct = (pos["mark_net"] / pos["budget"] - 1) * 100
@@ -1008,7 +1022,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             for p in state["positions"])
     state["observations"].append({
         "at": now.isoformat(), "risk_policy_version": V10_RISK_VERSION, "cash": state["cash"],
-        "reserve": state["reserve"], "estimated_equity": equity,
+        "reserve": state["reserve"], "estimated_equity": equity if stale == 0 else None,
+        "accounting_equity": equity, "valuation_version": "valuation-r2",
         "open": len(state["positions"]), "closed": len(state["closed"]),
         "unverified_quotes": stale, "valuation_complete": stale == 0,
         "verified_component": known_value, "realized_pnl": realized,

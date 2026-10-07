@@ -206,6 +206,12 @@ class V10Tests(unittest.TestCase):
                                95 + pos['indicative_mark_net'])
         self.assertEqual(low['observations'][-1]['verified_component'], 95)
         self.assertFalse(low['observations'][-1]['valuation_complete'])
+        self.assertIsNone(low['observations'][-1]['estimated_equity'])
+        self.assertAlmostEqual(low['observations'][-1]['accounting_equity'],
+                               95 + before['positions'][0]['mark_net'])
+        self.assertIn('Liquidez insuficiente', pos['quote_error'])
+        self.assertGreaterEqual(pos['quote_age_seconds'], 0)
+        self.assertIn('last_quote_attempt_at', pos)
         # Un error posterior no puede presentar el precio indicativo anterior como actual.
         with patch.object(b, 'cotizar_posicion', side_effect=ValueError('sin precio')):
             b.simular_cartera([])
@@ -214,6 +220,8 @@ class V10Tests(unittest.TestCase):
         self.assertNotIn('indicative_price', missing['positions'][0])
         self.assertIsNone(missing['observations'][-1]['indicative_only_equity'])
         self.assertEqual(missing['closed'], [])
+        self.assertIsNone(missing['observations'][-1]['estimated_equity'])
+        self.assertEqual(missing['positions'][0]['quote_error'], 'sin precio')
         # Solo al recuperar una cotizacion admitida se procesa la salida virtual.
         with patch.object(b, 'cotizar_posicion', return_value=(.5, 20000, pair(price=.5))):
             b.simular_cartera([])
@@ -222,6 +230,10 @@ class V10Tests(unittest.TestCase):
         self.assertEqual(recovered['positions'], [])
         self.assertEqual(recovered['closed'][0]['exit_reason'], 'STOP -15%')
         self.assertNotIn('indicative_price', recovered['closed'][0])
+        self.assertNotIn('quote_error', recovered['closed'][0])
+        self.assertIsNotNone(recovered['observations'][-1]['estimated_equity'])
+        self.assertEqual(recovered['observations'][-1]['estimated_equity'],
+                         recovered['observations'][-1]['accounting_equity'])
 
     def test_indicative_price_survives_fallback_outage_and_checks_identity(self):
         pos = {'chain': 'solana', 'address': 'a', 'pair': 'p'}
