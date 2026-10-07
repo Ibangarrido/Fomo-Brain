@@ -11,7 +11,7 @@ import urllib.request
 from exit_watchdog import wallet_lock
 
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-VERSION = "route-shadow-r2"
+VERSION = "route-shadow-r3"
 
 
 def get_json(url):
@@ -70,21 +70,34 @@ def raw_quantity(quantity, decimals):
     return amount
 
 
-def quote(position, fetch=get_json, supply_reader=token_supply):
+def quote(position, fetch=get_json, supply_reader=token_supply, diagnostics=None):
+    # Preserve completed read stages even when a later provider request fails.
+    trace = diagnostics if diagnostics is not None else {}
+    trace.update(failure_stage="identity", execution_verified=False)
     if position.get("chain") != "solana":
         raise ValueError("Solana only")
     mint = position["address"]
     if not isinstance(mint, str) or not 32 <= len(mint) <= 44 or any(
             c not in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for c in mint):
         raise ValueError("Invalid mint")
+    trace["failure_stage"] = "mint_metadata"
     decimals, metadata_evidence = mint_decimals(mint, fetch, supply_reader)
+    trace.update(mint_decimals=decimals, mint_metadata=metadata_evidence,
+                 failure_stage="quantity")
     amount = raw_quantity(position["quantity"], decimals)
+    trace.update(input_amount_raw=str(amount), output_mint=USDC,
+                 slippage_bps=200, failure_stage="route_request")
     query = urllib.parse.urlencode({"inputMint": mint, "outputMint": USDC,
                                    "amount": str(amount), "slippageBps": "200", "txVersion": "V0"})
     started = time.monotonic()
-    result = fetch("https://transaction-v1.raydium.io/compute/swap-base-in?" + query)
+    try:
+        result = fetch("https://transaction-v1.raydium.io/compute/swap-base-in?" + query)
+    finally:
+        trace["quote_request_seconds"] = time.monotonic() - started
+    trace["failure_stage"] = "route_validation"
     data = result.get("data") or {}
     if result.get("success") is not True:
+        trace["provider_message"] = str(result.get("msg", "unknown"))[:160]
         raise ValueError("Provider quote unavailable: " + str(result.get("msg", "unknown"))[:160])
     if (data.get("inputMint") != mint or data.get("outputMint") != USDC
             or str(data.get("inputAmount")) != str(amount) or data.get("swapType") != "BaseIn"
@@ -94,6 +107,7 @@ def quote(position, fetch=get_json, supply_reader=token_supply):
     threshold = int(data["otherAmountThreshold"])
     if output <= 0 or not 0 <= threshold <= output:
         raise ValueError("Invalid quote output")
+    trace["failure_stage"] = None
     # USDC has six decimals. Report token units, never equate USDC to EUR.
     return {"status": "QUOTE_ONLY", "provider": "Raydium Trade API",
             "mint_decimals": decimals, "mint_metadata": metadata_evidence,
@@ -148,7 +162,7 @@ class RouteShadow:
 
     def start(self):
         self.thread.start()
-        print("ROUTE SHADOW r2 INICIO | Solana | read-only GET quotes + RPC mint fallback | max4 cantidades/60s | logs only | sin cambios de saldo", flush=True)
+        print("ROUTE SHADOW r3 INICIO | Solana | read-only GET quotes + RPC mint fallback | staged failure evidence | max4 cantidades/60s | logs only | sin cambios de saldo", flush=True)
 
     def stop(self):
         self.stop_event.set()
@@ -167,9 +181,11 @@ class RouteShadow:
             item = items[(self.cursor + offset) % len(items)]
             evidence = {"version": VERSION, "snapshot_at": datetime.now(timezone.utc).isoformat(), **item}
             started = time.monotonic()
+            diagnostics = {}
             try:
-                evidence.update(quote(item, self.fetch, self.supply_reader))
+                evidence.update(quote(item, self.fetch, self.supply_reader, diagnostics))
             except Exception as exc:
+                evidence.update(diagnostics)
                 evidence.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240],
                                 execution_verified=False)
             evidence["total_request_seconds"] = time.monotonic() - started

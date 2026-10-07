@@ -1,4 +1,4 @@
-# Route shadow r2
+# Route shadow r3
 
 Read-only parallel observation, enabled by default in `run_session`. Set
 `BRAIN_ROUTE_SHADOW=0` to disable. No protected workflows changed.
@@ -43,3 +43,11 @@ provider failure, unchanged wallet bytes and non-blocking snapshots.
 Additional r2 tests reproduce missing mint metadata, exercise exact-mint RPC fallback,
 reject RPC errors/invalid decimals, and verify the only RPC method is getTokenSupply.
 Reference: https://solana.com/docs/rpc/http/gettokensupply
+
+r3 preserves completed metadata/quantity stages on failed route requests. UNAVAILABLE
+records include failure_stage, exact raw amount/output mint, metadata source/slot,
+provider message and route-request elapsed time when reached. Previously a later
+ROUTE_NOT_FOUND erased all this diagnostic evidence. Failed records never include
+an expected output or imply executable liquidity. No new network requests, trading
+decisions, thresholds or wallet writes are introduced. Offline regressions cover
+RPC success followed by missing route, and a timeout after validated metadata.

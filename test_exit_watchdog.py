@@ -63,6 +63,37 @@ class RouteShadowTests(unittest.TestCase):
         self.assertIn("UNAVAILABLE", output.getvalue())
         self.assertEqual(json.dumps(item, sort_keys=True), before)
 
+    def test_missing_route_preserves_rpc_and_quantity_evidence(self):
+        def fetch(url):
+            return {"data": []} if "/mint/ids?" in url else {"success": False, "msg": "ROUTE_NOT_FOUND"}
+        supply = lambda mint: {"jsonrpc": "2.0", "id": 1, "result": {
+            "context": {"slot": 123}, "value": {"amount": "1000000", "decimals": 6}}}
+        item = {"chain": "solana", "address": self.mint, "quantity": 1.23456789}
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            RouteShadow(read=lambda: [item], fetch=fetch, supply_reader=supply).tick()
+        record = json.loads(next(line[len("ROUTE SHADOW "):] for line in output.getvalue().splitlines()
+                                 if line.startswith("ROUTE SHADOW {")))
+        self.assertEqual(record["status"], "UNAVAILABLE")
+        self.assertEqual(record["failure_stage"], "route_validation")
+        self.assertEqual(record["mint_metadata"]["context_slot"], 123)
+        self.assertEqual(record["input_amount_raw"], "1234567")
+        self.assertEqual(record["provider_message"], "ROUTE_NOT_FOUND")
+        self.assertFalse(record["execution_verified"])
+        self.assertNotIn("expected_out_usdc", record)
+
+    def test_route_timeout_preserves_elapsed_and_request_identity(self):
+        trace = {}
+        def fetch(url):
+            if "/mint/ids?" in url:
+                return {"success": True, "data": [{"address": self.mint, "decimals": 6}]}
+            raise TimeoutError("provider timeout")
+        with self.assertRaises(TimeoutError):
+            quote({"chain": "solana", "address": self.mint, "quantity": 1}, fetch, diagnostics=trace)
+        self.assertEqual(trace["failure_stage"], "route_request")
+        self.assertEqual(trace["output_mint"], USDC)
+        self.assertGreaterEqual(trace["quote_request_seconds"], 0)
+        self.assertNotIn("expected_out_usdc", trace)
+
     def test_missing_metadata_uses_exact_mint_rpc(self):
         requested = []
         def supply(mint):
