@@ -8,10 +8,84 @@ import unittest
 from unittest.mock import patch
 import fomo_brain as brain
 from exit_watchdog import ExitWatchdog, ThreadCache, wallet_lock, wallet_transaction
-from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC, mint_decimals, token_supply, jupiter_quote
+from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC, mint_decimals, token_supply, jupiter_quote, get_json, ProviderHTTPError, position_valuations
 
 
 class RouteShadowTests(unittest.TestCase):
+    def test_http_error_preserves_bounded_public_fields_only(self):
+        from urllib.error import HTTPError
+        body = io.BytesIO(json.dumps({"errorCode": "TOKEN_NOT_TRADABLE",
+            "errorMessage": "No route\n" + "x" * 400, "transaction": "SECRET",
+            "headers": {"authorization": "SECRET"}, "error": {"nested": "SECRET"}}).encode())
+        error = HTTPError("https://example.invalid/?secret=SECRET", 400, "Bad request", {}, body)
+        with patch("route_shadow.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(ProviderHTTPError) as raised:
+                get_json("https://example.invalid")
+        exc = raised.exception
+        self.assertEqual(exc.http_status, 400)
+        self.assertEqual(exc.provider_error["errorCode"], "TOKEN_NOT_TRADABLE")
+        self.assertLessEqual(len(exc.provider_error["errorMessage"]), 240)
+        self.assertNotIn("\n", exc.provider_error["errorMessage"])
+        self.assertNotIn("SECRET", str(exc) + json.dumps(exc.provider_error))
+        self.assertTrue(body.closed)
+
+    def test_http_error_non_json_and_oversize_do_not_leak_or_retry(self):
+        from urllib.error import HTTPError
+        for payload in (b"<html>SECRET</html>", b'{"errorMessage":"' + b"x" * 5000 + b'"}'):
+            body = io.BytesIO(payload)
+            error = HTTPError("https://example.invalid", 429, "Limit", {}, body)
+            with patch("route_shadow.urllib.request.urlopen", side_effect=error) as opener:
+                with self.assertRaises(ProviderHTTPError) as raised:
+                    get_json("https://example.invalid")
+            self.assertEqual(raised.exception.provider_error, {})
+            opener.assert_called_once()
+            self.assertTrue(body.closed)
+
+    def test_position_valuation_separates_wallets_units_and_unknown_costs(self):
+        item = {"chain": "solana", "address": self.mint, "quantity": 1.23456789,
+                "wallets": [{"path": "early.json", "opened_at": "entry1", "dex_mark_at": "old"},
+                            {"path": "impulse.json", "opened_at": "entry2"}]}
+        observation = {"status": "QUOTE_ONLY", "snapshot_at": "snapshot", "received_at": "receipt",
+                       "input_amount_raw": "1234567", "expected_out_usdc": .9, "threshold_usdc": .882}
+        before = json.dumps(item)
+        marks = position_valuations(item, observation)
+        self.assertEqual([m["wallet"] for m in marks], ["early.json", "impulse.json"])
+        self.assertEqual(marks[0]["quoted_value_usdc"], .9)
+        self.assertEqual(marks[0]["paper_mark_at"], "old")
+        self.assertEqual(marks[0]["quote_received_at"], "receipt")
+        for mark in marks:
+            self.assertIsNone(mark["net_liquidation_value_usdc"])
+            self.assertIsNone(mark["network_cost_usdc"])
+            self.assertIsNone(mark["market_data_age_seconds"])
+            self.assertFalse(mark["fx_applied"])
+            self.assertFalse(mark["execution_verified"])
+        self.assertEqual(json.dumps(item), before)
+
+    def test_unavailable_position_mark_never_reuses_old_output(self):
+        item = {"chain": "solana", "address": self.mint, "quantity": 1,
+                "wallets": [{"path": "early.json"}]}
+        marks = position_valuations(item, {"status": "UNAVAILABLE", "snapshot_at": "snapshot",
+                                          "expected_out_usdc": 999, "threshold_usdc": 999})
+        self.assertIsNone(marks[0]["quoted_value_usdc"])
+        self.assertIsNone(marks[0]["quoted_threshold_usdc"])
+
+    def test_jupiter_http_diagnostics_reach_log_without_wallet_changes(self):
+        item = {"chain": "solana", "address": self.mint, "quantity": 1.23456789,
+                "wallets": [{"path": "early.json", "paper_mark_net": 123}]}
+        before = json.dumps(item)
+        def fetch(url):
+            if "api.jup.ag" in url:
+                raise ProviderHTTPError(400, {"errorCode": "TOKEN_NOT_TRADABLE"})
+            return self.fetcher(self.response(), [])(url)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            RouteShadow(read=lambda: [item], fetch=fetch).tick()
+        record = json.loads(next(x[len("JUPITER SHADOW "):] for x in output.getvalue().splitlines()
+                                 if x.startswith("JUPITER SHADOW {")))
+        self.assertEqual(record["http_status"], 400)
+        self.assertEqual(record["provider_error"]["errorCode"], "TOKEN_NOT_TRADABLE")
+        self.assertIsNone(record["position_valuations"][0]["quoted_value_usdc"])
+        self.assertEqual(json.dumps(item), before)
+
     mint = "HciAVS1urBtboqhLe59HWiMeeN2McEd6y8h4HGkrpump"
 
     def response(self):

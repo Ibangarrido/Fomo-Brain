@@ -76,3 +76,25 @@ still labels x-api-key required. Live workspace probe timed out, so only GitHub
 session logs can establish keyless availability. Offline tests cannot prove it.
 https://developers.jup.ag/docs/portal/plans
 https://developers.jup.ag/docs/api-reference/swap/order
+
+## Jupiter diagnostics and position marks r2
+
+Run336 (37657634712, 7Oct2026) had19 valid Jupiter quotes and26 HTTP400
+responses whose bodies were discarded. The cause of those400s was therefore
+unknown. The shared GET reader now reads at most4097 error bytes and parses only
+complete JSON bodies of at most4096 bytes. Logs retain HTTP status and bounded
+scalar error/errorCode/errorMessage/msg fields only; no raw body, headers,
+transaction, nested error object or request URL. Non-JSON/oversize bodies retain
+status alone. No retries or additional API requests are introduced.
+
+JUPITER SHADOW r2 records include position_valuations, one independent snapshot
+mark per wallet/contract/entry/quantity. Gross quoted USDC and provider threshold
+are recorded only for a validated current response; failed/skipped quotes have
+null values and never carry forward an old mark. Snapshot time, receipt time and
+existing paper quote status/time remain separate. Net liquidation value, network
+cost, realized slippage and market data age are unknown (null), not zero. No FX is
+applied. A provider threshold is not a guaranteed fill. These are logs only, not
+new portfolios or equity; do not add wallets/providers or treat marks as cash.
+Tests reproduce HTTP400 propagation, bounded/non-JSON errors, wallet isolation,
+unknown cost fields and rejection of stale outputs. They do not prove live
+provider error codes or actual execution. Live validation needs a subsequent run.

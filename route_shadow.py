@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 
 from exit_watchdog import wallet_lock
 
@@ -15,11 +16,62 @@ USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 VERSION = "route-shadow-r3"
 
 
+class ProviderHTTPError(ValueError):
+    """Bounded public provider diagnostics; never retain the response or URL."""
+    def __init__(self, status, details):
+        super().__init__(f"Provider HTTP {status}")
+        self.http_status = status
+        self.provider_error = details
+
+
+def http_diagnostics(exc):
+    if isinstance(exc, ProviderHTTPError):
+        return {"http_status": exc.http_status, "provider_error": exc.provider_error}
+    return {}
+
+
 def get_json(url):
     # Separate client/cache from entry and exit watchers; bounded GETs only.
     request = urllib.request.Request(url, headers={"User-Agent": "FOMO-Brain/route-shadow-r1"})
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.loads(response.read().decode())
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        details = {}
+        try:
+            body = exc.read(4097)
+            data = json.loads(body.decode()) if len(body) <= 4096 else None
+            if isinstance(data, dict):
+                for key in ("error", "errorCode", "errorMessage", "msg"):
+                    value = data.get(key)
+                    if isinstance(value, str):
+                        details[key] = "".join(c for c in value[:240] if c.isprintable())
+                    elif type(value) is int:
+                        details[key] = str(value)[:40]
+        except (OSError, ValueError, UnicodeError):
+            pass
+        finally:
+            exc.close()
+        raise ProviderHTTPError(exc.code, details) from None
+
+
+def position_valuations(item, observation):
+    """Independent quote marks per snapshot position, never portfolio equity."""
+    available = observation.get("status") == "QUOTE_ONLY"
+    return [{"wallet": wallet["path"], "chain": item["chain"],
+             "address": item["address"], "opened_at": wallet.get("opened_at"),
+             "quantity": item["quantity"], "input_amount_raw": observation.get("input_amount_raw"),
+             "snapshot_at": observation["snapshot_at"],
+             "quote_received_at": observation.get("received_at"),
+             "status": "QUOTE_ONLY" if available else "UNAVAILABLE",
+             "quoted_value_usdc": observation.get("expected_out_usdc") if available else None,
+             "quoted_threshold_usdc": observation.get("threshold_usdc") if available else None,
+             "net_liquidation_value_usdc": None, "market_data_age_seconds": None,
+             "network_cost_usdc": None, "realized_slippage_usdc": None,
+             "fx_applied": False, "execution_verified": False,
+             "paper_mark_at": wallet.get("dex_mark_at"),
+             "paper_quote_status": wallet.get("dex_quote_status")}
+            for wallet in item.get("wallets", [])]
 
 
 def token_supply(mint):
@@ -201,7 +253,7 @@ class RouteShadow:
         self.thread.start()
         print("ROUTE SHADOW r3 INICIO | Solana | read-only GET quotes + RPC mint fallback | staged failure evidence | max4 cantidades/60s | logs only | sin cambios de saldo", flush=True)
         if self.jupiter_enabled:
-            print("JUPITER SHADOW r1 INICIO | keyless GET quote-only | sin taker | separacion minima 3s | sin cambios de saldo", flush=True)
+            print("JUPITER SHADOW r2 INICIO | keyless GET quote-only | HTTP diagnostics | marcas por posicion USDC | sin taker | separacion minima 3s | sin cambios de saldo", flush=True)
 
     def stop(self):
         self.stop_event.set()
@@ -225,12 +277,13 @@ class RouteShadow:
                 evidence.update(quote(item, self.fetch, self.supply_reader, diagnostics))
             except Exception as exc:
                 evidence.update(diagnostics)
+                evidence.update(http_diagnostics(exc))
                 evidence.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240],
                                 execution_verified=False)
             evidence["total_request_seconds"] = time.monotonic() - started
             print("ROUTE SHADOW " + json.dumps(evidence, ensure_ascii=False, allow_nan=False), flush=True)
             if self.jupiter_enabled:
-                comparison = {"version": "jupiter-shadow-r1", "snapshot_at": evidence["snapshot_at"],
+                comparison = {"version": "jupiter-shadow-r2", "snapshot_at": evidence["snapshot_at"],
                               **item, "execution_verified": False}
                 if "input_amount_raw" not in diagnostics:
                     comparison.update(status="SKIPPED", error="Validated mint quantity unavailable")
@@ -245,8 +298,10 @@ class RouteShadow:
                     try:
                         comparison.update(jupiter_quote(item["address"], diagnostics["input_amount_raw"], self.fetch))
                     except Exception as exc:
+                        comparison.update(http_diagnostics(exc))
                         comparison.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240])
                     comparison["total_request_seconds"] = time.monotonic() - requested
+                comparison["position_valuations"] = position_valuations(item, comparison)
                 print("JUPITER SHADOW " + json.dumps(comparison, ensure_ascii=False, allow_nan=False), flush=True)
         self.cursor = (self.cursor + count) % len(items)
 
