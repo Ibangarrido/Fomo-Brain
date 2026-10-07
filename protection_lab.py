@@ -3,6 +3,7 @@ import copy
 import json
 import os
 from datetime import datetime, timezone
+from exit_watchdog import wallet_fork
 
 MODES = ("early", "impulse")
 ARMS = ("control", "protect")
@@ -12,6 +13,8 @@ def filename(mode, arm):
     return f"fomo_lab_protect_{mode}_{arm}_r1.json"
 
 
+@wallet_fork([f"fomo_lab_ratio_{mode}_60_r1.json" for mode in MODES]
+             + [filename(mode, arm) for mode in MODES for arm in ARMS])
 def bootstrap():
     paths = [filename(mode, arm) for mode in MODES for arm in ARMS]
     present = [os.path.exists(path) for path in paths]

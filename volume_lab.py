@@ -4,6 +4,7 @@ import json
 import math
 import os
 from datetime import datetime, timezone
+from exit_watchdog import wallet_fork
 
 MIN_VOLUME_5M = 5000.0
 SOURCE = "fomo_lab_ratio_impulse_60_r1.json"
@@ -15,6 +16,7 @@ def filename(arm):
     return f"fomo_lab_volume_impulse_{arm}_r1.json"
 
 
+@wallet_fork([SOURCE] + [filename(arm) for arm in ARMS])
 def bootstrap():
     present = [os.path.exists(filename(arm)) for arm in ARMS]
     if all(present):

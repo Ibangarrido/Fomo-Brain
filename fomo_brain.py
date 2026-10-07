@@ -5,6 +5,7 @@ import urllib.request
 import os
 import math
 import time
+from exit_watchdog import ThreadCache, wallet_transaction, wallet_lock, ExitWatchdog, MarketRateLimiter
 
 # FOMO Brain v9 - DEX + FOMO Trader Radar + simulacion comparativa
 # V9 sigue siendo PAPER ONLY: no firma, no compra y no mueve fondos.
@@ -55,7 +56,9 @@ V10_R3_FILE = "fomo_paper_v10_r3.json"
 SESSION_MAX_CYCLES = 15
 SESSION_WINDOW_SECONDS = 900
 MAX_CONFIRMATION_MINUTES = 1.5
-JSON_CACHE = {}
+JSON_CACHE = ThreadCache()
+EXIT_WATCHDOG = None
+MARKET_RATE_LIMITER = MarketRateLimiter(0.25)  # <=240 requests/minute/host in watchdog sessions.
 REJECTIONS = []
 X_STATUS = "PENDIENTE"
 STUDY_TOKENS = [
@@ -78,6 +81,8 @@ def pedir_json(url):
         url,
         headers={"User-Agent": "FOMO-Brain/8.0"}
     )
+    if EXIT_WATCHDOG is not None:
+        MARKET_RATE_LIMITER.wait(url)
     with urllib.request.urlopen(req, timeout=15) as response:
         data = json.loads(response.read().decode())
     JSON_CACHE[url] = data
@@ -799,6 +804,7 @@ def record_unverified_quote(pos, error, now):
         pos["quote_age_seconds"] = None
 
 
+@wallet_transaction
 def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False):
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
@@ -862,8 +868,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                       "indicative_pnl_pct", "last_indicative_quote_at"):
             pos.pop(field, None)
         previous_quote_at = pos.get("last_quote_at")
+        quote_requested_at = datetime.now(timezone.utc)
         try:
             price, liquidity, _ = cotizar_posicion(pos)
+            now = datetime.now(timezone.utc)  # Timestamp reception, not start of the wallet scan.
+            pos["quote_request_seconds"] = max(0, (now - quote_requested_at).total_seconds())
             pos["mark_net"] = pos["quantity"] * price * proceeds_factor
             pos["last_quote_at"] = now.isoformat()
             pos["quote_status"] = "OK"
@@ -876,6 +885,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 pos["quote_gap_seconds"] = None
         except CotizacionBajaLiquidez as exc:
             # Informar del precio actual sin convertir una salida no verificable en efectivo.
+            now = datetime.now(timezone.utc)
             record_unverified_quote(pos, exc, now)
             pos["indicative_price"] = exc.price
             pos["indicative_liquidity"] = exc.liquidity
@@ -888,6 +898,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                          " | NO ES EFECTIVO NI VENTA EJECUTABLE")
             continue
         except Exception as exc:
+            now = datetime.now(timezone.utc)
             record_unverified_quote(pos, exc, now)
             notes.append(pos["symbol"] + ": " + str(exc))
             continue
@@ -1075,6 +1086,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "fills": "Estimados en cada lectura, no garantizados. Sin gas ni MEV.",
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
     state["assumptions"]["strategy"] = "confirmacion V10" if confirm else "reglas base"
+    state["assumptions"]["exit_monitor"] = {
+        "version": "watchdog-r1" if EXIT_WATCHDOG is not None else "cooperative-15s",
+        "target_seconds": 3 if EXIT_WATCHDOG is not None else 15,
+        "guaranteed": False, "quotes": "indicative market data; not a swap execution",
+        "limits": "same-wallet transactions, rate limits, network latency and gaps between runs"}
     state["assumptions"]["entry_policy"] = "V10 early r4: edad del par 2-60m, momentum5m 2-60% en ambas lecturas, 40 trades, compras >=60%, liquidez >=20000 USD; confirmacion 0.5-1.5m, precio +1-12%, liquidez >=95%, volumen5m no decreciente; subida1h solo aviso" if confirm else "reglas base"
     state["assumptions"]["candidate_memory_scope"] = "todos los candidatos filtrados; TOP 10 solo para pantalla"
     state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
@@ -1111,7 +1127,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
               f"estado={pos['quote_status']} | ultima_cotizacion={pos['last_quote_at']}")
     print(f"Cotizaciones no verificables={stale}; conservan ultimo valor, NO son liquidez")
     print("Costes supuestos POR LADO: comision 1%, deslizamiento 2%; FX fijo 1:1")
-    print("Stops: objetivo 15s para posiciones abiertas entre radares de 60s; peticiones lentas y huecos entre runs pueden retrasarlos. No garantizados.")
+    print("Stops: " + str(state["assumptions"]["exit_monitor"]) + "; NO garantizados")
 
 
 def identidad_par(pair, chain, address):
@@ -1208,6 +1224,8 @@ EXIT_SERVICE_AT = None
 def service_discovery_exits():
     """Cooperative exit priority at safe discovery boundaries; no concurrent writers."""
     global EXIT_SERVICE_AT
+    if EXIT_WATCHDOG is not None:
+        return  # Independent worker owns exit-only passes during discovery.
     if EXIT_SERVICE_AT is None or time.monotonic() < EXIT_SERVICE_AT:
         return
     refresh_open_positions()
@@ -1505,7 +1523,7 @@ def main(refresh_events=True):
     )
 
 
-def refresh_open_positions():
+def refresh_open_positions(stop_event=None):
     """Exit-only ticks: never discover candidates, bootstrap wallets or buy."""
     wallets = [(V10_FILE, "V10 EARLY", "early", .60, False),
                (V10_IMPULSE_FILE, "V10 IMPULSO", "impulse", .60, False),
@@ -1529,28 +1547,41 @@ def refresh_open_positions():
             wallets.append((f"fomo_lab_volume_impulse_{arm}_r1.json",
                             f"LAB VOLUME IMPULSE {arm.upper()} r1", "impulse", .60, False))
     for path, label, mode, ratio, protect in wallets:
+        if stop_event is not None and stop_event.is_set():
+            break
+        lock = wallet_lock(path)
+        if not lock.acquire(blocking=False):
+            print(f"WATCHDOG POSPUESTO {label}: transaccion de la misma cartera activa", flush=True)
+            continue
         try:
             with open(path) as handle:
                 state = json.load(handle)
             if not state.get("positions"):
                 continue
-            print(f"V10 SALIDAS 15s | {label}", flush=True)
+            print(f"V10 SALIDAS {'WATCHDOG 3s objetivo' if EXIT_WATCHDOG is not None else '15s'} | {label}", flush=True)
             simular_cartera([], path, label, confirm=True, entry_mode=mode,
                             min_buy_ratio=ratio, profit_protection=protect)
         except FileNotFoundError:
             continue
         except Exception as exc:
             print(f"V10 SALIDAS ERROR {label}: {exc}", flush=True)
+        finally:
+            lock.release()
 
 
 def run_session(cycles=1, interval_seconds=60):
-    global EXIT_SERVICE_AT
+    global EXIT_SERVICE_AT, EXIT_WATCHDOG
     # Ventana acotada: no cambia el cron ni presupone continuidad entre runs.
     if not 1 <= cycles <= SESSION_MAX_CYCLES or interval_seconds < 60:
         raise ValueError("Sesion: 1-15 lecturas e intervalo >=60s")
     started = time.monotonic()
     EXIT_SERVICE_AT = started
     try:
+        if os.getenv("BRAIN_EXIT_WATCHDOG", "0") == "1":
+            EXIT_WATCHDOG = ExitWatchdog(refresh_open_positions, interval=3,
+                                         duration=SESSION_WINDOW_SECONDS)
+            EXIT_WATCHDOG.start()
+            print("WATCHDOG r1 INICIO | objetivo 3s | solo salidas virtuales | sin continuidad entre runs", flush=True)
         for index in range(cycles):
             if index and time.monotonic() - started >= SESSION_WINDOW_SECONDS:
                 break
@@ -1558,6 +1589,8 @@ def run_session(cycles=1, interval_seconds=60):
             REJECTIONS.clear()
             print(f"V10 LECTURA {index + 1}/{cycles}", flush=True)
             main(refresh_events=index == 0)
+            if EXIT_WATCHDOG is not None and EXIT_WATCHDOG.error is not None:
+                raise RuntimeError("Vigilante de salidas fallo") from EXIT_WATCHDOG.error
             if index + 1 < cycles:
                 remaining = SESSION_WINDOW_SECONDS - (time.monotonic() - started)
                 delay = max(0, started + (index + 1) * interval_seconds - time.monotonic())
@@ -1565,7 +1598,7 @@ def run_session(cycles=1, interval_seconds=60):
                     break
                 deadline = started + (index + 1) * interval_seconds
                 tick = started + index * interval_seconds + 15
-                while tick < deadline:
+                while EXIT_WATCHDOG is None and tick < deadline:
                     if time.monotonic() < tick:
                         time.sleep(tick - time.monotonic())
                     if time.monotonic() >= min(deadline, started + SESSION_WINDOW_SECONDS):
@@ -1579,6 +1612,9 @@ def run_session(cycles=1, interval_seconds=60):
                 if delay:
                     time.sleep(delay)
     finally:
+        if EXIT_WATCHDOG is not None:
+            EXIT_WATCHDOG.stop()
+            EXIT_WATCHDOG = None
         EXIT_SERVICE_AT = None
 
 
