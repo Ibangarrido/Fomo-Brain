@@ -35,7 +35,7 @@ EVENT_KEYWORDS = [
     "doge", "pepe", "pump", "moon"
 ]
 EVENT_ACCOUNTS = [
-    "realDonaldTrump"
+    "realDonaldTrump", "elonmusk"
 ]
 
 # Filtros iniciales
@@ -569,55 +569,25 @@ def cargar_eventos():
 
 
 def consultar_x():
-    """Consulta publicaciones recientes mediante la API oficial de X."""
+    """Read both public accounts; keywords classify posts after retrieval."""
     global X_STATUS
     if not EVENT_RADAR_ENABLED or not SOCIAL_FEED_CONNECTED:
         X_STATUS = "SIN CREDENCIALES" if not SOCIAL_FEED_CONNECTED else "OFF"
         return []
+    from social_radar import collect_posts
 
-    query = "(crypto OR memecoin OR meme OR token OR coin) from:realDonaldTrump -is:retweet"
-    params = urllib.parse.urlencode({
-        "query": query,
-        "max_results": 10,
-        "tweet.fields": "created_at,author_id"
-    })
-    url = "https://api.x.com/2/tweets/search/recent?" + params
-    req = urllib.request.Request(
-        url,
-        headers={
+    def fetch(params):
+        url = "https://api.x.com/2/tweets/search/recent?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={
             "Authorization": "Bearer " + X_BEARER_TOKEN,
-            "User-Agent": "FOMO-Brain/8.0"
-        }
-    )
-
-    try:
+            "User-Agent": "FOMO-Brain/social-r2"})
         with urllib.request.urlopen(req, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        X_STATUS = "ERROR"
-        print(f"X API: ERROR CONTROLADO | {type(exc).__name__}: {exc}")
-        return []
+            return json.loads(response.read().decode("utf-8"))
 
-    if payload.get("errors"):
-        X_STATUS = "RESPUESTA CON ERRORES"
-        print("X API: respuesta parcial/con errores; no confirma cobertura")
-    else:
-        X_STATUS = "CONSULTA OK"
-
-    eventos = []
-    for post in payload.get("data", []):
-        texto = str(post.get("text", ""))
-        lower = texto.lower()
-        keywords = [k for k in EVENT_KEYWORDS if k in lower]
-        eventos.append({
-            "source": "X",
-            "account": "realDonaldTrump",
-            "id": post.get("id"),
-            "created_at": post.get("created_at"),
-            "text": texto,
-            "keywords": keywords
-        })
-    return eventos
+    events, status, coverage = collect_posts(fetch, EVENT_ACCOUNTS, EVENT_KEYWORDS)
+    X_STATUS = status
+    print("X COBERTURA social-r2 | " + json.dumps(coverage, ensure_ascii=False))
+    return events
 
 
 def guardar_eventos(eventos):

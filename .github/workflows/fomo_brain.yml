@@ -40,6 +40,7 @@ jobs:
           python test_fomo_v8.py
           python -m unittest -v test_quote_safety.py
           python -m unittest -v test_exit_watchdog.py
+          python -m unittest -v test_social_radar.py
 
       - name: Verificar laboratorio de velas sin red
         id: candle_tests
