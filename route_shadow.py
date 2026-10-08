@@ -206,17 +206,27 @@ def snapshots():
 
 def jupiter_quote(mint, amount, fetch=get_json):
     """Keyless GET-only price check. No taker, transaction building or execution."""
+    result = jupiter_pair_quote(mint, USDC, amount, fetch)
+    result.update(expected_out_usdc=int(result["output_amount_raw"]) / 1_000_000,
+                  threshold_usdc=int(result["threshold_amount_raw"]) / 1_000_000)
+    return result
+
+
+def jupiter_pair_quote(mint, output_mint, amount, fetch=get_json):
+    """Validate both sides of an ExactIn quote; output remains integer token units."""
     if (not isinstance(mint, str) or not 32 <= len(mint) <= 44 or any(
             c not in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for c in mint)
+            or not isinstance(output_mint, str) or not 32 <= len(output_mint) <= 44 or any(
+                c not in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for c in output_mint)
             or not isinstance(amount, str) or not amount.isascii() or not amount.isdigit()
             or not 0 < int(amount) < 2 ** 64):
         raise ValueError("Invalid Jupiter mint/amount")
-    query = urllib.parse.urlencode({"inputMint": mint, "outputMint": USDC, "amount": amount})
+    query = urllib.parse.urlencode({"inputMint": mint, "outputMint": output_mint, "amount": amount})
     started = time.monotonic()
     data = fetch("https://api.jup.ag/swap/v2/order?" + query)
     if data.get("error") or data.get("errorCode") or data.get("errorMessage"):
         raise ValueError("Jupiter provider error: " + str(data.get("error") or data.get("errorMessage") or data.get("errorCode"))[:160])
-    if (data.get("inputMint") != mint or data.get("outputMint") != USDC
+    if (data.get("inputMint") != mint or data.get("outputMint") != output_mint
             or data.get("inAmount") != amount or data.get("swapMode") != "ExactIn"
             or data.get("transaction") is not None or data.get("taker")
             or data.get("router") not in {"metis", "jupiterz", "dflow", "okx"}):
@@ -228,14 +238,35 @@ def jupiter_quote(mint, amount, fetch=get_json):
             or not 0 <= int(threshold) <= int(output)):
         raise ValueError("Invalid Jupiter output/threshold")
     return {"status": "QUOTE_ONLY", "provider": "Jupiter Swap V2 keyless",
-            "input_amount_raw": amount, "output_mint": USDC,
-            "expected_out_usdc": int(output) / 1_000_000,
-            "threshold_usdc": int(threshold) / 1_000_000,
+            "input_amount_raw": amount, "output_mint": output_mint,
+            "output_amount_raw": output, "threshold_amount_raw": threshold,
             "router": data["router"], "slippage_bps": data.get("slippageBps"),
             "quote_request_seconds": time.monotonic() - started,
             "received_at": datetime.now(timezone.utc).isoformat(),
             "market_data_age_seconds": None, "network_costs_included": False,
             "execution_verified": False}
+
+
+def roundtrip_quote(mint, fetch=get_json):
+    """Sequential hypothetical 5 USDC buy/sell. Never paper equity or a fill."""
+    record = {"version": "roundtrip-shadow-r1", "chain": "solana", "address": mint,
+              "started_at": datetime.now(timezone.utc).isoformat(), "input_usdc": 5,
+              "execution_verified": False, "fx_applied": False,
+              "network_cost_usdc": None, "realized_slippage_usdc": None,
+              "returned_usdc": None, "quoted_roundtrip_loss_pct": None,
+              "failure_stage": "buy_quote"}
+    try:
+        buy = jupiter_pair_quote(USDC, mint, "5000000", fetch)
+        record.update(buy_quote=buy, failure_stage="sell_quote")
+        sell = jupiter_pair_quote(mint, USDC, buy["output_amount_raw"], fetch)
+        returned = int(sell["output_amount_raw"]) / 1_000_000
+        record.update(status="QUOTE_ONLY", failure_stage=None, sell_quote=sell,
+                      returned_usdc=returned, quoted_roundtrip_loss_pct=(1-returned/5)*100)
+    except Exception as exc:
+        record.update(http_diagnostics(exc))
+        record.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240])
+    record["finished_at"] = datetime.now(timezone.utc).isoformat()
+    return record
 
 
 class RouteShadow:
@@ -247,6 +278,7 @@ class RouteShadow:
         self.cursor = 0
         self.jupiter_enabled = os.getenv("BRAIN_JUPITER_SHADOW", "1") == "1"
         self.next_jupiter_request = 0
+        self.roundtrip_enabled = os.getenv("BRAIN_ROUNDTRIP_SHADOW", "1") == "1"
         self.thread = threading.Thread(target=self.run, name="paper-route-shadow")
 
     def start(self):
@@ -254,6 +286,14 @@ class RouteShadow:
         print("ROUTE SHADOW r3 INICIO | Solana | read-only GET quotes + RPC mint fallback | staged failure evidence | max4 cantidades/60s | logs only | sin cambios de saldo", flush=True)
         if self.jupiter_enabled:
             print("JUPITER SHADOW r2 INICIO | keyless GET quote-only | HTTP diagnostics | marcas por posicion USDC | sin taker | separacion minima 3s | sin cambios de saldo", flush=True)
+            if self.roundtrip_enabled:
+                print("ROUNDTRIP SHADOW r1 INICIO | hipotetico 5 USDC | max1 token/pase | GET quote-only | sin cambios de saldo", flush=True)
+
+    def paced_jupiter_fetch(self, url):
+        if self.stop_event.wait(max(0, self.next_jupiter_request - time.monotonic())):
+            raise ValueError("Shadow stopped")
+        self.next_jupiter_request = time.monotonic() + 3
+        return self.fetch(url)
 
     def stop(self):
         self.stop_event.set()
@@ -304,6 +344,10 @@ class RouteShadow:
                 comparison["position_valuations"] = position_valuations(item, comparison)
                 print("JUPITER SHADOW " + json.dumps(comparison, ensure_ascii=False, allow_nan=False), flush=True)
         self.cursor = (self.cursor + count) % len(items)
+        if self.jupiter_enabled and self.roundtrip_enabled and not self.stop_event.is_set():
+            mint = items[(self.cursor - count) % len(items)]["address"]
+            result = roundtrip_quote(mint, self.paced_jupiter_fetch)
+            print("ROUNDTRIP SHADOW " + json.dumps(result, ensure_ascii=False, allow_nan=False), flush=True)
 
     def run(self):
         started = time.monotonic()

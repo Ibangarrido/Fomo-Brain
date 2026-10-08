@@ -98,3 +98,21 @@ new portfolios or equity; do not add wallets/providers or treat marks as cash.
 Tests reproduce HTTP400 propagation, bounded/non-JSON errors, wallet isolation,
 unknown cost fields and rejection of stale outputs. They do not prove live
 provider error codes or actual execution. Live validation needs a subsequent run.
+# Round-trip quote diagnostic r1
+
+`BRAIN_ROUNDTRIP_SHADOW=1` (default; 0 disables) logs one hypothetical
+5 USDC -> open Solana mint -> USDC quote pair per shadow pass. Both calls
+share Jupiter's minimum 3-second request spacing; the second uses the exact
+integer output of the first. This adds at most two GET requests per pass.
+The existing rotation chooses the token. This observes open tokens, not
+all entry candidates, and does not filter entries or change any wallet.
+
+`ROUNDTRIP SHADOW` records each leg's amount, router, receipt timestamp and
+latency, and the sequential quoted return/loss. Missing or invalid legs
+leave return/loss null and retain the failure stage. These sequential quotes
+are not simultaneous, fills or net liquidation; movement between requests
+also affects the difference. Network costs, realized slippage and market-data
+age remain unknown. Output quotes may already contain provider fees; do not
+add paper-model fees or infer an isolated fee cost from the difference.
+USDC is not EUR. No wallet, transaction construction or execution is used.
+

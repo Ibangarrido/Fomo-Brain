@@ -219,6 +219,7 @@ class RouteShadowTests(unittest.TestCase):
     def test_jupiter_spacing_is_interruptible_and_at_least_three_seconds(self):
         item = {"chain": "solana", "address": self.mint, "quantity": 1.23456789}
         watcher = RouteShadow(read=lambda: [item, item], fetch=self.fetcher(self.response(), []))
+        watcher.roundtrip_enabled = False  # This test isolates the existing exit-quote pacing.
         waits = []
         with patch("route_shadow.time.monotonic", return_value=100), \
                 patch.object(watcher.stop_event, "wait", side_effect=lambda seconds: waits.append(seconds) or False), \
