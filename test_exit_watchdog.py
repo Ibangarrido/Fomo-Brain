@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import fomo_brain as brain
 from test_roundtrip_shadow import RoundtripTests  # Include diagnostic tests in existing CI entry point.
-from exit_watchdog import ExitWatchdog, ThreadCache, wallet_lock, wallet_transaction
+from exit_watchdog import ExitWatchdog, ThreadCache, wallet_lock, wallet_transaction, MarketRateLimiter
 from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC, mint_decimals, token_supply, jupiter_quote, get_json, ProviderHTTPError, position_valuations
 
 
@@ -280,6 +280,16 @@ class RouteShadowTests(unittest.TestCase):
 
 
 class WatchdogTests(unittest.TestCase):
+    def test_provider_specific_pacing_is_shared_without_cross_host_delay(self):
+        limiter=MarketRateLimiter(.25, {'api.geckoterminal.com':2.1})
+        with patch('exit_watchdog.time.monotonic',return_value=100), \
+             patch('exit_watchdog.time.sleep') as sleeper:
+            limiter.wait('https://api.geckoterminal.com/a')
+            limiter.wait('https://api.dexscreener.com/a')
+            sleeper.assert_not_called()
+            limiter.wait('https://api.geckoterminal.com/b')
+            self.assertAlmostEqual(sleeper.call_args.args[0],2.1)
+
     def test_cache_isolation(self):
         cache = ThreadCache()
         cache["main"] = 1
@@ -374,3 +384,4 @@ class WatchdogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

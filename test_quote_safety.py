@@ -6,6 +6,7 @@ import json
 import io
 import contextlib
 from unittest.mock import patch
+from datetime import datetime, timezone, timedelta
 import quote_safety as q
 from test_fomo_v8 import b, pair
 
@@ -18,6 +19,50 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(q.extreme(.0000002887,.0007065))
         self.assertFalse(q.extreme(.8,1))
         self.assertTrue(q.extreme(5,1))
+        self.assertTrue(q.extreme(.70,1))
+        self.assertFalse(q.extreme(.71,1))
+        self.assertTrue(q.extreme(1.50,1))
+        self.assertFalse(q.extreme(1.49,1))
+
+    def test_repeated_price_never_claims_fresh_trade_and_history_is_bounded(self):
+        pos={};market=pair();now=datetime(2026,10,8,tzinfo=timezone.utc)
+        first=q.record_market_observation(pos,1,market,now)
+        second=q.record_market_observation(pos,1,market,now+timedelta(seconds=120))
+        self.assertIsNone(second['source_timestamp'])
+        self.assertIsNone(second['market_data_age_seconds'])
+        self.assertEqual(second['snapshot_unchanged_seconds'],120)
+        self.assertEqual(second['price_unchanged_seconds'],120)
+        changed=copy.deepcopy(market);changed['volume']['m5']+=1
+        third=q.record_market_observation(pos,1,changed,now+timedelta(seconds=123))
+        self.assertEqual(third['snapshot_unchanged_seconds'],0)
+        self.assertEqual(third['price_unchanged_seconds'],123)
+        for i in range(400):q.record_market_observation(pos,2,changed,now+timedelta(seconds=124+i))
+        self.assertEqual(len(pos['quote_history']),360)
+        self.assertEqual(pos['quote_audit']['price_unchanged_seconds'],399)
+
+    def test_panda_sized_drop_is_corroborated_and_preserves_real_observed_loss(self):
+        pos=b.analizar_par(pair())
+        pos.update(quantity=1,mark_net=.99*.98,last_verified_price=1)
+        with patch.dict(os.environ,{'BRAIN_QUOTE_GUARD':'1'}), \
+             patch.object(b,'pedir_json',return_value={'pairs':[pair(price=.48)]}), \
+             patch.object(q,'corroborate',return_value={'status':'COINCIDE'}) as crosscheck:
+            price,_,_=b.cotizar_posicion(pos)
+        crosscheck.assert_called_once()
+        self.assertEqual(price,.48)
+        self.assertTrue(pos['quote_history'][-1]['accepted'])
+        self.assertIsNone(pos['quote_history'][-1]['market_data_age_seconds'])
+
+    def test_moderate_discrepant_drop_keeps_previous_mark_and_records_rejected_price(self):
+        pos=b.analizar_par(pair())
+        pos.update(quantity=1,mark_net=.99*.98,last_verified_price=1)
+        with patch.dict(os.environ,{'BRAIN_QUOTE_GUARD':'1'}), \
+             patch.object(b,'pedir_json',return_value={'pairs':[pair(price=.48)]}), \
+             patch.object(q,'corroborate',return_value={'status':'DISCREPANCIA'}):
+            with self.assertRaises(ValueError):b.cotizar_posicion(pos)
+        self.assertEqual(pos['last_verified_price'],1)
+        self.assertEqual(pos['mark_net'],.99*.98)
+        self.assertEqual(pos['quote_history'][-1]['price'],.48)
+        self.assertFalse(pos['quote_history'][-1]['accepted'])
     def test_corroborate_identity_and_disagreement(self):
         pos={'chain':'solana','pair':'Pool','address':'Token'}
         self.assertEqual(q.corroborate(pos,.0000002887,lambda _:self.pool(.00058))['status'],'DISCREPANCIA')
@@ -139,4 +184,29 @@ class SafetyTests(unittest.TestCase):
                 self.assertFalse(after['observations'][-1]['valuation_complete'])
             finally:os.chdir(cwd)
 
+    def test_confirmed_panda_sized_stop_does_not_fabricate_fill_at_minus_15(self):
+        before=self.final_entry_case(1)
+        cwd=os.getcwd()
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                os.chdir(temp)
+                with open(b.V10_FILE,'w') as handle:json.dump(before,handle)
+                with patch.dict(os.environ,{'BRAIN_QUOTE_GUARD':'1'}), \
+                     patch.object(b,'pedir_json',return_value={'pairs':[pair(price=.48)]}), \
+                     patch.object(q,'corroborate',return_value={'status':'COINCIDE'}), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    b.simular_cartera([],confirm=False)
+                with open(b.V10_FILE) as handle:after=json.load(handle)
+                expected=before['positions'][0]['quantity']*.48*.99*.98
+                self.assertEqual(after['positions'],[])
+                self.assertAlmostEqual(after['cash'],before['cash']+expected)
+                sale=after['closed'][-1]
+                self.assertEqual(sale['exit_reason'],'STOP -15%')
+                self.assertAlmostEqual(sale['profit'],expected-5)
+                self.assertLess(sale['last_pnl_net_pct'],-50)
+                self.assertTrue(sale['quote_history'][-1]['accepted'])
+                self.assertEqual(len(after['data_policy_history']),len(before['data_policy_history']))
+            finally:os.chdir(cwd)
+
 if __name__=='__main__':unittest.main()
+

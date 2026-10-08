@@ -1,5 +1,53 @@
 # V10: entradas EARLY r4 e IMPULSO r3
 
+## Actualización prospectiva — EARLY r5 / quote-r2, 8 octubre 2026
+
+Las NUEVAS entradas EARLY rechazan `change1h > 150` en la lectura actual y
+en la anterior usada para confirmar. El límite se aplica también a la cotización
+final tras seguridad y por igual a CONTROL y PROTECT, incluidos los laboratorios
+de velas. El valor exactamente 150 se admite. IMPULSO conserva su política.
+La versión de entrada nueva es `early-r5`; las posiciones y resultados antiguos
+no se reetiquetan ni recalculan. `data_policy_history` guarda la fecha efectiva,
+caja, reserva, abiertas y ventas del cambio por cartera. Comparar periodos con
+la misma política; no atribuir toda la trayectoria a r5.
+
+PANDA entró con +254%/1h y ambos brazos cerraron a -55,68% neto. El filtro
+habría rechazado esos indicadores, pero ese caso no valida rentabilidad ni
+permite borrar su pérdida. El stop sigue evaluándose al precio recibido,
+nunca se inventa una ejecución histórica a -15%.
+
+`quote-r2` contrasta con GeckoTerminal los cambios de precio de al menos -30%
+o +50% desde la última cotización admitida, frente a -80%/+400% antes. Es una
+hipótesis de calidad de datos, no un umbral optimizado. Una discrepancia o fallo
+mantiene la posición NO VERIFICABLE, registra el valor indicativo y pausa entradas;
+no genera caja ni fuerza una salida al precio de otra fuente. Una coincidencia
+permite seguir las reglas de salida a precio observado, aun con pérdida superior
+al stop. El contraste puede retrasar la valoración/salida virtual y la segunda
+fuente también puede estar cacheada; no garantiza mejores resultados.
+
+Cada posición vigilada conserva hasta 360 recepciones de precio, par, liquidez,
+admisión y evidencia de contraste. `quote_audit` diferencia tiempo sin cambio
+del precio y del snapshot de mercado. DEX Screener no proporciona un timestamp
+de la operación correspondiente a `priceUsd`: `source_timestamp` y
+`market_data_age_seconds` quedan null. Recepción reciente NO acredita dato fresco;
+precio repetido tampoco demuestra por sí mismo que sea antiguo. El estado OK
+continúa significando admitido para la simulación, no ejecución ni frescura certificadas.
+
+El limitador compartido respeta un intervalo >=2,1 s por petición a GeckoTerminal
+(<30/min en este proceso), además del límite conservador de DEX. Otros procesos
+o runs externos pueden consumir cuota; errores siguen produciendo valoración
+desconocida. Los huecos entre runs y la caché del proveedor siguen existiendo.
+
+Fuentes técnicas oficiales consultadas el 8 octubre 2026:
+- DEX Screener, esquema de pares y límites: https://docs.dexscreener.com/api/reference
+- GeckoTerminal, límite de API pública: https://api.geckoterminal.com/docs/index.html
+- CoinGecko OHLCV: caché/actualización de 60 s en Demo/Keyless y 10 s en API de pago:
+  https://docs.coingecko.com/reference/pool-ohlcv-contract-address
+
+Las velas históricas de PANDA muestran extremos que Brain no registró. Es una
+limitación de cobertura temporal; no se usan máximos retrospectivos para armar
+PROTECT ni simular ventas pasadas. +12%/+2%, importes, costes y salidas no cambian.
+
 ## Alcance
 
 Ajuste experimental prospectivo tras las runs 128–133. No se recalculan resultados ni se reinician carteras. Las posiciones abiertas conservan las salidas existentes. Cada entrada nueva lleva su version de reglas (early-r4 o impulse-r3), indicadores de la cotizacion fresca, precio de la señal, desviacion y la lectura previa exacta usada para confirmar. El patrimonio acumulado mezcla versiones: no atribuir todo el resultado a la ultima revision.
@@ -72,3 +120,4 @@ No se garantiza recuperar pérdidas ni se simulan ventas al umbral histórico.
 Ejemplos verificables: Sirius EARLY -4.41 (run155), CWC IMPULSO -3.71 (run157),
 phubber ambas -2.43 y SI EARLY -2.32 (run169). No se modifica un umbral de entrada
 por un único token ni se atribuye el beneficio de NFTM al freno recién añadido.
+

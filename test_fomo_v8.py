@@ -383,21 +383,25 @@ class V10Tests(unittest.TestCase):
         self.assertEqual(accepted['cash'], 95)
         pos = accepted['positions'][0]
         self.assertEqual(float(pos['entry_snapshot']['price']), 1.01)
-        self.assertEqual(pos['entry_policy_version'], 'early-r4')
+        self.assertEqual(pos['entry_policy_version'], 'early-r5')
         self.assertEqual(pos['entry_confirmation']['hora'], old['hora'])
         self.assertEqual(pos['entry_confirmation']['price'], .95)
         self.assertAlmostEqual(pos['quote_drift_pct'], 1)
         self.assertEqual(float(pos['signal_price']), 1)
 
-    def test_early_allows_hourly_pump_but_requires_recent_confirmation(self):
+    def test_early_caps_hourly_pump_and_requires_recent_confirmation(self):
         t = b.analizar_par(pair())
-        t['change1h'] = 500
+        t['change1h'] = 150
         old = dict(t, hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
                    price=.95, liquidity=19000, vol5m=2000)
         with patch.object(b, 'cargar_memoria', return_value=[old]):
             self.assertIsNone(b.motivo_entrada(t, True))
+            self.assertIn('subida 1h', b.motivo_entrada(dict(t, change1h=150.01), True))
+            self.assertIn('subida 1h', b.motivo_entrada(dict(t, change1h=254), True))
             self.assertIsNotNone(b.motivo_entrada(dict(t, ageMinutes=1), True))
             self.assertIsNotNone(b.motivo_entrada(dict(t, change5m=1), True))
+        with patch.object(b, 'cargar_memoria', return_value=[dict(old, change1h=254)]):
+            self.assertIn('lectura anterior', b.motivo_entrada(t, True))
         old['hora'] = (datetime.now(timezone.utc)-timedelta(minutes=15)).isoformat()
         with patch.object(b, 'cargar_memoria', return_value=[old]):
             self.assertIsNotNone(b.motivo_entrada(t, True))
@@ -584,4 +588,5 @@ class V10Tests(unittest.TestCase):
 if __name__ == '__main__':
     with contextlib.redirect_stdout(io.StringIO()):
         unittest.main()
+
 

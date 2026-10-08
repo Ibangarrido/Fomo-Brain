@@ -58,7 +58,8 @@ SESSION_WINDOW_SECONDS = 900
 MAX_CONFIRMATION_MINUTES = 1.5
 JSON_CACHE = ThreadCache()
 EXIT_WATCHDOG = None
-MARKET_RATE_LIMITER = MarketRateLimiter(0.25)  # <=240 requests/minute/host in watchdog sessions.
+MARKET_RATE_LIMITER = MarketRateLimiter(0.25, {"api.geckoterminal.com": 2.1})
+# DEX <=240/min; public GeckoTerminal <30/min, shared by discovery and watcher.
 REJECTIONS = []
 X_STATUS = "PENDIENTE"
 STUDY_TOKENS = [
@@ -81,7 +82,7 @@ def pedir_json(url):
         url,
         headers={"User-Agent": "FOMO-Brain/8.0"}
     )
-    if EXIT_WATCHDOG is not None:
+    if EXIT_WATCHDOG is not None or urllib.parse.urlsplit(url).netloc == "api.geckoterminal.com":
         MARKET_RATE_LIMITER.wait(url)
     with urllib.request.urlopen(req, timeout=15) as response:
         data = json.loads(response.read().decode())
@@ -733,7 +734,9 @@ def cotizar_posicion(pos):
     pos["quote_pair"] = pair["pairAddress"]
     pos["quote_observed_at"] = datetime.now(timezone.utc).isoformat()
     if os.getenv("BRAIN_QUOTE_GUARD", "0") == "1" and pos.get("quantity"):
-        from quote_safety import extreme, corroborate
+        from quote_safety import extreme, corroborate, record_market_observation
+        observation = record_market_observation(pos, price, pair)
+        observation["accepted"] = False
         previous = pos.get("last_verified_price")
         if previous is None:
             previous = pos.get("mark_net", 0) / pos["quantity"] / ((1 - PAPER_SLIPPAGE) * (1 - PAPER_FEE))
@@ -741,8 +744,9 @@ def cotizar_posicion(pos):
             try:
                 evidence = corroborate(pos, price, pedir_json)
             except Exception as exc:
-                evidence = {"version": "quote-r1", "status": "SIN DATOS", "reason": str(exc), "primary_price": price}
+                evidence = {"version": "quote-r2", "status": "SIN DATOS", "reason": str(exc), "primary_price": price}
             pos["quote_crosscheck"] = evidence
+            observation["crosscheck"] = evidence
             if evidence["status"] != "COINCIDE":
                 pos["indicative_price"] = price
                 pos["indicative_liquidity"] = liquidity
@@ -750,6 +754,7 @@ def cotizar_posicion(pos):
                 pos["last_indicative_quote_at"] = datetime.now(timezone.utc).isoformat()
                 raise ValueError("COTIZACION EXTREMA EN REVISION: " + json.dumps(evidence, ensure_ascii=False))
         pos["last_verified_price"] = price
+        observation["accepted"] = True
     return price, liquidity, pair
 
 
@@ -805,6 +810,15 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                     "historical_close_usd": .0005800645649876336})
     if state.get("version") != 1:
         raise ValueError("Version de cartera virtual no compatible")
+    # Preserve the change point; cumulative portfolios mix old and new policies.
+    data_policy = {"version": "quote-r2", "early_entry_version": "early-r5",
+                   "early_max_change1h_pct": 150, "crosscheck_drop_pct": 30,
+                   "crosscheck_rise_pct": 50, "source_price_timestamp": "UNKNOWN"}
+    policy_history = state.setdefault("data_policy_history", [])
+    if not policy_history or policy_history[-1]["version"] != data_policy["version"]:
+        policy_history.append(dict(data_policy, effective_at=now.isoformat(),
+                                   cash=state["cash"], reserve=state["reserve"],
+                                   open=len(state["positions"]), closed=len(state["closed"])))
     if ratio_lab:
         expected = {"mode": entry_mode, "min_buy_ratio": min_buy_ratio, "version": "ratio-r1"}
         if state.get("ratio_experiment", expected) != expected:
@@ -1008,7 +1022,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "last_quote_at": entry_at.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
-            "entry_policy_version": ("early-r4" if entry_mode == "early" else "impulse-r4") if confirm else "base",
+            "entry_policy_version": ("early-r5" if entry_mode == "early" else "impulse-r4") if confirm else "base",
             "entry_fee_evidence": fee_evidence, "entry_final_quote": final_quote_evidence,
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
@@ -1061,7 +1075,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "target_seconds": 3 if EXIT_WATCHDOG is not None else 15,
         "guaranteed": False, "quotes": "indicative market data; not a swap execution",
         "limits": "same-wallet transactions, rate limits, network latency and gaps between runs"}
-    state["assumptions"]["entry_policy"] = "V10 early r4: edad del par 2-60m, momentum5m 2-60% en ambas lecturas, 40 trades, compras >=60%, liquidez >=20000 USD; confirmacion 0.5-1.5m, precio +1-12%, liquidez >=95%, volumen5m no decreciente; subida1h solo aviso" if confirm else "reglas base"
+    state["assumptions"]["entry_policy"] = "V10 early r5: edad del par 2-60m, momentum5m 2-60% en ambas lecturas, 40 trades, compras >=60%, liquidez >=20000 USD; confirmacion 0.5-1.5m, precio +1-12%, liquidez >=95%, volumen5m no decreciente; subida1h <=150% en ambas lecturas" if confirm else "reglas base"
+    state["assumptions"]["quote_quality"] = dict(data_policy,
+        guard_enabled=os.getenv("BRAIN_QUOTE_GUARD", "0") == "1",
+        history_limit_per_position=360, unchanged_price_is_not_proof_of_staleness=True,
+        crosscheck_is_not_execution=True)
     state["assumptions"]["candidate_memory_scope"] = "todos los candidatos filtrados; TOP 10 solo para pantalla"
     state["assumptions"]["max_quote_drift_pct"] = 5 if confirm else None
     state["assumptions"]["entry_mode"] = entry_mode
@@ -1095,6 +1113,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     for pos in state["positions"]:
         print(f"POSICION {pos['symbol']} | chain={pos['chain']} | token={pos['address']} | "
               f"estado={pos['quote_status']} | ultima_cotizacion={pos['last_quote_at']}")
+        if pos.get("quote_audit"):
+            audit = pos["quote_audit"]
+            print(f"CALIDAD PRECIO {pos['symbol']} | antiguedad_dato=DESCONOCIDA"
+                  f" | precio_sin_cambio_s={audit['price_unchanged_seconds']:.1f}"
+                  f" | snapshot_sin_cambio_s={audit['snapshot_unchanged_seconds']:.1f}"
+                  " | recepcion NO demuestra frescura ni ejecucion")
     print(f"Cotizaciones no verificables={stale}; conservan ultimo valor, NO son liquidez")
     print("Costes supuestos POR LADO: comision 1%, deslizamiento 2%; FX fijo 1:1")
     print("Stops: " + str(state["assumptions"]["exit_monitor"]) + "; NO garantizados")
@@ -1140,6 +1164,8 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60)
     if not confirm:
         return None
     if entry_mode == "early":
+        if token["change1h"] > 150:
+            return "early r5: subida 1h > 150%"
         if token["liquidity"] < 20_000:
             return "early r2: liquidez < 20000 USD"
         if token["trades5m"] < 40 or token["buyRatio5m"] < min_buy_ratio:
@@ -1176,6 +1202,8 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60)
         if token["liquidity"] < 0.95 * numero(old.get("liquidity")):
             return "impulso r4: liquidez cae mas del 5%"
         return None
+    if numero(old.get("change1h")) > 150:
+        return "early r5: lectura anterior subida 1h > 150%"
     if not 2 <= numero(old.get("change5m")) <= 60:
         return "early r2: lectura anterior sin momentum positivo sostenido"
     growth = variacion(token["price"], old.get("price"))
@@ -1608,4 +1636,5 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 

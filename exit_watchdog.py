@@ -72,8 +72,9 @@ def wallet_fork(paths):
 
 class MarketRateLimiter:
     """Shared pacing, no catch-up bursts. Provider 429s still fail closed upstream."""
-    def __init__(self, interval):
+    def __init__(self, interval, host_intervals=None):
         self.interval = interval
+        self.host_intervals = dict(host_intervals or {})
         self.lock = threading.Lock()
         self.next_request = {}
 
@@ -82,7 +83,7 @@ class MarketRateLimiter:
         with self.lock:
             now = time.monotonic()
             due = max(now, self.next_request.get(host, now))
-            self.next_request[host] = due + self.interval
+            self.next_request[host] = due + self.host_intervals.get(host, self.interval)
         if due > now:
             time.sleep(due - now)
 
@@ -128,3 +129,4 @@ class ExitWatchdog:
             wait = self.interval if elapsed >= self.interval else self.interval - elapsed
             remaining = self.duration - (time.monotonic() - started)
             self.stop_event.wait(max(0, min(wait, remaining)))
+

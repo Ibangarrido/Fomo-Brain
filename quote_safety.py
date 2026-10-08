@@ -1,5 +1,7 @@
 """Read-only checks for virtual prices and Solana transfer fees."""
 import math
+import hashlib
+import json
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -9,7 +11,37 @@ NETWORKS = {"solana": "solana", "bsc": "bsc", "ethereum": "eth", "base": "base",
 
 
 def extreme(price, previous):
-    return previous > 0 and (price / previous <= .20 or price / previous >= 5)
+    # Data-quality hypothesis, not an optimized trading threshold or a stop.
+    return previous > 0 and (price / previous <= .70 or price / previous >= 1.50)
+
+
+def record_market_observation(pos, price, pair, now=None):
+    """Receipt time is NOT trade time; repeated snapshots do not prove staleness."""
+    now = now or datetime.now(timezone.utc)
+    receipt = now.isoformat()
+    market = {key: pair.get(key) for key in (
+        "pairAddress", "priceUsd", "liquidity", "txns", "volume", "priceChange")}
+    fingerprint = hashlib.sha256(json.dumps(market, sort_keys=True).encode()).hexdigest()
+    audit = pos.setdefault("quote_audit", {})
+    if audit.get("pair") != pair["pairAddress"] or audit.get("fingerprint") != fingerprint:
+        audit["snapshot_unchanged_since"] = receipt
+    if audit.get("pair") != pair["pairAddress"] or audit.get("price") != price:
+        audit["price_unchanged_since"] = receipt
+    audit.update(version="quote-r2", pair=pair["pairAddress"], price=price,
+                 fingerprint=fingerprint, received_at=receipt,
+                 source_timestamp=None, market_data_age_seconds=None,
+                 freshness="DESCONOCIDA: API sin timestamp del precio")
+    for field in ("snapshot", "price"):
+        audit[field + "_unchanged_seconds"] = max(
+            0, (now - datetime.fromisoformat(audit[field + "_unchanged_since"])).total_seconds())
+    row = {"received_at": receipt, "pair": pair["pairAddress"], "price": price,
+           "liquidity": (pair.get("liquidity") or {}).get("usd"),
+           "source_timestamp": None, "market_data_age_seconds": None,
+           "snapshot_unchanged_seconds": audit["snapshot_unchanged_seconds"],
+           "price_unchanged_seconds": audit["price_unchanged_seconds"]}
+    pos.setdefault("quote_history", []).append(row)
+    pos["quote_history"] = pos["quote_history"][-360:]
+    return row
 
 
 def corroborate(pos, price, fetch):
@@ -27,10 +59,12 @@ def corroborate(pos, price, fetch):
     second = float(data["attributes"].get("base_token_price_usd"))
     if not math.isfinite(second) or second <= 0:
         raise ValueError("contraste: precio ausente o invalido")
-    evidence = {"version": "quote-r1", "primary_price": price, "secondary_price": second,
+    evidence = {"version": "quote-r2", "primary_price": price, "secondary_price": second,
                 "secondary_source": "GeckoTerminal", "pool": pos["pair"],
                 "chain": pos["chain"], "address": pos["address"],
                 "observed_at": datetime.now(timezone.utc).isoformat(),
+                "source_timestamp": None, "market_data_age_seconds": None,
+                "execution_verified": False,
                 "status": "COINCIDE" if abs(price / second - 1) <= .20 else "DISCREPANCIA"}
     return evidence
 
@@ -100,3 +134,4 @@ def corroborate_absent_fee(address, fetch):
     return {"source": "RugCheck", "address": address, "token_program": program,
             "status": "SIN EXTENSION DE COMISION",
             "observed_at": datetime.now(timezone.utc).isoformat()}
+
