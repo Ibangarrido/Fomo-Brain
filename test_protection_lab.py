@@ -121,5 +121,85 @@ class ProtectionTests(unittest.TestCase):
             lab.bootstrap()
 
 
+class VelasProtectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.cwd = os.getcwd()
+        os.chdir(self.temp.name)
+        token = b.analizar_par(pair())
+        with patch.object(b, "cotizar_posicion", return_value=(1, 20000, pair())), contextlib.redirect_stdout(io.StringIO()):
+            b.simular_cartera([token], lab.VELAS_SOURCE, confirm=False)
+        with open(lab.VELAS_SOURCE) as handle:
+            self.source = json.load(handle)
+        with contextlib.redirect_stdout(io.StringIO()):
+            lab.bootstrap_velas()
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        self.temp.cleanup()
+
+    def read(self, arm):
+        with open(lab.velas_filename(arm)) as handle:
+            return json.load(handle)
+
+    def step(self, pct, arm):
+        price = (1+pct/100)*1.01*1.02/(.99*.98)
+        with patch.object(b, "cotizar_posicion", return_value=(price, 20000, pair(price=price))), contextlib.redirect_stdout(io.StringIO()):
+            b.simular_cartera([], lab.velas_filename(arm), profit_protection=arm=="protect")
+        return self.read(arm)
+
+    def test_same_funds_and_history_no_restart(self):
+        for arm in lab.ARMS:
+            state = self.read(arm)
+            for key in ("cash", "reserve", "positions", "closed", "seen", "risk_control"):
+                expected = self.source[key]
+                if key == "positions":
+                    expected = [dict(p, protection_fork_at=state["protection_baseline"]["at"]) for p in expected]
+                self.assertEqual(state[key], expected)
+        self.assertFalse(lab.bootstrap_velas())
+        os.remove(lab.velas_filename("protect"))
+        with self.assertRaises(ValueError):
+            lab.bootstrap_velas()
+
+    def test_bunbara_style_peak_retracement_and_gap(self):
+        self.step(12.68, "protect")
+        self.step(12.68, "control")
+        protected = self.step(1.5, "protect")
+        control = self.step(1.5, "control")
+        self.assertEqual(protected["closed"][-1]["exit_reason"], "PROTECCION +12% -> +2%")
+        self.assertAlmostEqual(protected["closed"][-1]["profit"], .075)
+        self.assertEqual(len(control["positions"]), 1)
+        control = self.step(-16.63, "control")
+        self.assertAlmostEqual(control["closed"][-1]["profit"], -.8315)
+        self.assertEqual(control["closed"][-1]["exit_reason"], "STOP -15%")
+
+    def test_same_candle_guard_and_policy_for_both_arms(self):
+        from unittest.mock import Mock
+        simulator = Mock()
+        guards = [Mock(), Mock()]
+        with patch("candle_lab.guard", side_effect=guards) as factory, contextlib.redirect_stdout(io.StringIO()):
+            lab.run_velas([], simulator)
+        self.assertEqual(simulator.call_count, 2)
+        for i, call in enumerate(simulator.call_args_list):
+            self.assertTrue(call.kwargs["confirm"])
+            self.assertEqual(call.kwargs["entry_mode"], "early")
+            self.assertEqual(call.kwargs["min_buy_ratio"], .6)
+            self.assertIs(call.kwargs["entry_guard"], guards[i])
+            self.assertEqual(call.kwargs["profit_protection"], i==1)
+            self.assertEqual(factory.call_args_list[i].args[:2], (True, "early"))
+
+    def test_unverified_source_is_not_forked(self):
+        for arm in lab.ARMS:
+            os.remove(lab.velas_filename(arm))
+        os.remove(lab.VELAS_MARKER)
+        self.source["observations"][-1]["valuation_complete"] = False
+        with open(lab.VELAS_SOURCE, "w") as handle:
+            json.dump(self.source, handle)
+        with self.assertRaises(ValueError):
+            lab.bootstrap_velas()
+        self.assertFalse(os.path.exists(lab.velas_filename("control")))
+
+
 if __name__ == "__main__":
     unittest.main()
+

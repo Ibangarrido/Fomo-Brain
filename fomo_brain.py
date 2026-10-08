@@ -1376,6 +1376,12 @@ def main(refresh_events=True):
             run_protection_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB PROTECCION ERROR: " + str(exc) + "; otros laboratorios siguen activos")
+        if os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
+            try:
+                from protection_lab import run_velas
+                run_velas(ranking, simular_cartera)
+            except Exception as exc:
+                print("LAB PROTECT VELAS ERROR: " + str(exc) + "; historial original conservado")
     if os.getenv("BRAIN_VOLUME_LAB", "0") == "1":
         try:
             from volume_lab import run as run_volume_lab
@@ -1512,6 +1518,11 @@ def refresh_open_positions(stop_event=None):
                 wallets.append((f"fomo_lab_protect_{mode}_{arm}_r1.json",
                                 f"LAB PROTECT {mode.upper()} {arm.upper()} r1", mode, .60, arm == "protect"))
     JSON_CACHE.clear()  # Fresh quotes shared across wallets within this tick only.
+    if os.getenv("BRAIN_PROTECT_LAB", "0") == "1" and os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
+        from protection_lab import velas_filename
+        for arm in ("control", "protect"):
+            wallets.append((velas_filename(arm), f"LAB PROTECT VELAS {arm.upper()} r1",
+                            "early", .60, arm == "protect"))
     if os.getenv("BRAIN_VOLUME_LAB", "0") == "1":
         for arm in ("control", "volume"):
             wallets.append((f"fomo_lab_volume_impulse_{arm}_r1.json",
@@ -1597,3 +1608,4 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+

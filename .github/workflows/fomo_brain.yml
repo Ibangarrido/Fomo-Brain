@@ -117,8 +117,12 @@ jobs:
             fomo_lab_protect_early_protect_r1.json
             fomo_lab_protect_impulse_control_r1.json
             fomo_lab_protect_impulse_protect_r1.json
+            fomo_lab_protect_velas_fork_r1.json
+            fomo_lab_protect_velas_control_r1.json
+            fomo_lab_protect_velas_protect_r1.json
             fomo_lab_volume_fork_r1.json
             fomo_lab_volume_impulse_control_r1.json
             fomo_lab_volume_impulse_volume_r1.json
           if-no-files-found: ignore
           overwrite: true
+
