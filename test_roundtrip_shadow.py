@@ -31,6 +31,9 @@ class RoundtripTests(unittest.TestCase):
         self.assertEqual(calls[1]["amount"], "123456789")
         self.assertEqual(r["returned_usdc"], 4.7)
         self.assertAlmostEqual(r["quoted_roundtrip_loss_pct"], 6)
+        self.assertAlmostEqual(r["raw_roundtrip_change_pct"], -6)
+        self.assertEqual(r["interpretation_status"], "LOSS_PROXY_ONLY")
+        self.assertFalse(r["router_changed"])
         self.assertFalse(r["execution_verified"])
         self.assertIsNone(r["network_cost_usdc"])
 
@@ -41,6 +44,23 @@ class RoundtripTests(unittest.TestCase):
         self.assertEqual(r["status"], "UNAVAILABLE")
         self.assertIsNone(r["returned_usdc"])
         self.assertIsNone(r["quoted_roundtrip_loss_pct"])
+
+    def test_positive_sequential_return_is_not_reported_as_negative_cost(self):
+        calls = []
+        def fetch(url):
+            q = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
+            calls.append(q)
+            return {"inputMint": q["inputMint"], "outputMint": q["outputMint"],
+                    "inAmount": q["amount"], "swapMode": "ExactIn", "transaction": None,
+                    "router": "metis" if len(calls) == 1 else "okx",
+                    "outAmount": "123456789" if len(calls) == 1 else "6361815",
+                    "otherAmountThreshold": "120000000" if len(calls) == 1 else "6300000"}
+        r = roundtrip_quote(MINT, fetch)
+        self.assertEqual(r["returned_usdc"], 6.361815)
+        self.assertIsNone(r["quoted_roundtrip_loss_pct"])
+        self.assertAlmostEqual(r["raw_roundtrip_change_pct"], 27.2363)
+        self.assertTrue(r["router_changed"])
+        self.assertEqual(r["interpretation_status"], "POSITIVE_RETURN_UNRESOLVED")
 
     def test_mismatched_identity_stops_before_sell(self):
         fetch, calls = self.provider(wrong_identity=True)

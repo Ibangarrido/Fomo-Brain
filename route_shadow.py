@@ -249,19 +249,28 @@ def jupiter_pair_quote(mint, output_mint, amount, fetch=get_json):
 
 def roundtrip_quote(mint, fetch=get_json):
     """Sequential hypothetical 5 USDC buy/sell. Never paper equity or a fill."""
-    record = {"version": "roundtrip-shadow-r1", "chain": "solana", "address": mint,
+    record = {"version": "roundtrip-shadow-r2", "chain": "solana", "address": mint,
               "started_at": datetime.now(timezone.utc).isoformat(), "input_usdc": 5,
               "execution_verified": False, "fx_applied": False,
               "network_cost_usdc": None, "realized_slippage_usdc": None,
               "returned_usdc": None, "quoted_roundtrip_loss_pct": None,
+              "raw_roundtrip_change_pct": None, "router_changed": None,
+              "interpretation_status": "INCOMPLETE",
               "failure_stage": "buy_quote"}
     try:
         buy = jupiter_pair_quote(USDC, mint, "5000000", fetch)
         record.update(buy_quote=buy, failure_stage="sell_quote")
         sell = jupiter_pair_quote(mint, USDC, buy["output_amount_raw"], fetch)
         returned = int(sell["output_amount_raw"]) / 1_000_000
+        raw_change = (returned / 5 - 1) * 100
+        positive_return = returned > 5
         record.update(status="QUOTE_ONLY", failure_stage=None, sell_quote=sell,
-                      returned_usdc=returned, quoted_roundtrip_loss_pct=(1-returned/5)*100)
+                      returned_usdc=returned,
+                      raw_roundtrip_change_pct=raw_change,
+                      router_changed=buy["router"] != sell["router"],
+                      interpretation_status=("POSITIVE_RETURN_UNRESOLVED" if positive_return
+                                             else "LOSS_PROXY_ONLY"),
+                      quoted_roundtrip_loss_pct=(None if positive_return else -raw_change))
     except Exception as exc:
         record.update(http_diagnostics(exc))
         record.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240])
@@ -287,7 +296,7 @@ class RouteShadow:
         if self.jupiter_enabled:
             print("JUPITER SHADOW r2 INICIO | keyless GET quote-only | HTTP diagnostics | marcas por posicion USDC | sin taker | separacion minima 3s | sin cambios de saldo", flush=True)
             if self.roundtrip_enabled:
-                print("ROUNDTRIP SHADOW r1 INICIO | hipotetico 5 USDC | max1 token/pase | GET quote-only | sin cambios de saldo", flush=True)
+                print("ROUNDTRIP SHADOW r2 INICIO | hipotetico 5 USDC | max1 token/pase | GET quote-only | sin cambios de saldo", flush=True)
 
     def paced_jupiter_fetch(self, url):
         if self.stop_event.wait(max(0, self.next_jupiter_request - time.monotonic())):
