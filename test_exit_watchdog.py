@@ -7,6 +7,7 @@ import threading
 import unittest
 from unittest.mock import patch
 import fomo_brain as brain
+from test_roundtrip_shadow import RoundtripTests  # Include diagnostic tests in existing CI entry point.
 from exit_watchdog import ExitWatchdog, ThreadCache, wallet_lock, wallet_transaction
 from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC, mint_decimals, token_supply, jupiter_quote, get_json, ProviderHTTPError, position_valuations
 
