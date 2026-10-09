@@ -1168,6 +1168,41 @@ def pares_token(chain, address):
     return [p for p in data if identidad_par(p, chain, address)]
 
 
+def pares_tokens_lote(targets):
+    """Discovery-only batches; never seed exit/final-entry caches with these quotes."""
+    grouped = {}
+    for chain, address in dict.fromkeys(targets):
+        grouped.setdefault(chain, []).append(address)
+    found = {}
+    requests = 0
+    started = time.monotonic()
+    for chain, addresses in grouped.items():
+        for offset in range(0, len(addresses), 30):
+            service_discovery_exits()
+            batch = addresses[offset:offset + 30]
+            url = ("https://api.dexscreener.com/tokens/v1/"
+                   + urllib.parse.quote(chain, safe="") + "/"
+                   + ",".join(urllib.parse.quote(a, safe="") for a in batch))
+            requests += 1
+            try:
+                data = pedir_json(url)
+                if not isinstance(data, list):
+                    raise ValueError("Respuesta tokens-lote no valida")
+                allowed = set(batch)
+                for pair in data:
+                    if not isinstance(pair, dict):
+                        continue
+                    base = pair.get("baseToken")
+                    address = base.get("address") if isinstance(base, dict) else None
+                    if isinstance(address, str) and address in allowed and identidad_par(pair, chain, address):
+                        found.setdefault((chain, address), []).append(pair)
+            except Exception as exc:
+                print(f"FUENTE ERROR lote:{chain} | {exc}; respaldo individual")
+    print(f"DESCUBRIMIENTO LOTES | peticiones={requests} | contratos con datos={len(found)}"
+          f" | segundos={time.monotonic() - started:.3f} | solo radar, no cotizacion final")
+    return found
+
+
 def ultima_lectura_par(token):
     prev = [x for x in cargar_memoria()
             if x.get("chain") == token["chain"] and x.get("address") == token["address"]
@@ -1310,10 +1345,13 @@ def descubrir_pares():
                 requested.setdefault((old["chain"], old["address"]), None)
         except (ValueError, KeyError):
             pass
+    batched = pares_tokens_lote(requested)
     for chain, address in requested:
         service_discovery_exits()
         try:
-            found = pares_token(chain, address)
+            found = batched.get((chain, address))
+            if not found:
+                found = pares_token(chain, address)
             for pair in found:
                 add(pair, "seguimiento" if (chain, address) in STUDY_TOKENS else "perfil/historial")
             if (chain, address) in STUDY_TOKENS:
@@ -1719,6 +1757,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 

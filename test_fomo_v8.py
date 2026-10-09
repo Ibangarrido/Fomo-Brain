@@ -585,8 +585,71 @@ class V10Tests(unittest.TestCase):
             self.quote([pair(pool='old', price='NaN')], [])
 
 
+class BatchDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        b.JSON_CACHE.clear()
+
+    def test_batches_preserve_exact_identity_across_chains_and_ignore_malformed_rows(self):
+        replies = [[pair(address='a', pool='sol'), pair(address='b', pool='foreign'),
+                    None, {'baseToken': []}, dict(pair(address='a'), chainId='bsc')],
+                   [dict(pair(address='a', pool='bsc'), chainId='bsc')]]
+        with patch.object(b, 'pedir_json', side_effect=replies), \
+                patch.object(b, 'service_discovery_exits'), contextlib.redirect_stdout(io.StringIO()):
+            result = b.pares_tokens_lote([('solana', 'a'), ('bsc', 'a')])
+        self.assertEqual([p['pairAddress'] for p in result[('solana', 'a')]], ['sol'])
+        self.assertEqual([p['pairAddress'] for p in result[('bsc', 'a')]], ['bsc'])
+        self.assertNotIn(('solana', 'b'), result)
+
+    def test_sixty_contracts_need_two_requests_and_allow_exit_service_between_batches(self):
+        targets = [('solana', 'mint'+str(i)) for i in range(60)]
+        with patch.object(b, 'pedir_json', return_value=[]) as fetch, \
+                patch.object(b, 'service_discovery_exits') as service, \
+                contextlib.redirect_stdout(io.StringIO()):
+            b.pares_tokens_lote(targets + targets)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(service.call_count, 2)
+        self.assertTrue(all(len(c.args[0].rsplit('/', 1)[-1].split(',')) == 30
+                            for c in fetch.call_args_list))
+
+    def test_failed_or_invalid_batch_leaves_individual_fallback_available(self):
+        for reply in [ValueError('provider unavailable'), {'pairs': []}]:
+            with patch.object(b, 'pedir_json', side_effect=[reply]), \
+                    patch.object(b, 'service_discovery_exits'), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(b.pares_tokens_lote([('solana', 'a')]), {})
+
+    def test_discovery_falls_back_for_missing_contract_only(self):
+        def fetch(url):
+            if '/search/' in url:
+                return {'pairs': []}
+            if '/tokens/v1/' in url:
+                return [pair(address='a', pool='pool-a')]
+            return []
+        with patch.object(b, 'pedir_json', side_effect=fetch), \
+                patch.object(b, 'pares_token', return_value=[pair(address='b', pool='pool-b')]) as fallback, \
+                patch.object(b, 'cargar_memoria', return_value=[]), \
+                patch.object(b, 'STUDY_TOKENS', [('solana', 'a'), ('solana', 'b')]), \
+                patch.dict(os.environ, {'BRAIN_OPPORTUNITY_AUDIT': '0'}), \
+                patch.object(b, 'service_discovery_exits'), \
+                contextlib.redirect_stdout(io.StringIO()):
+            result, sources = b.descubrir_pares()
+        fallback.assert_called_once_with('solana', 'b')
+        self.assertEqual(set(result), {('solana', 'pool-a'), ('solana', 'pool-b')})
+
+    def test_batch_does_not_supply_stale_final_entry_or_exit_quotes(self):
+        with patch.object(b, 'pedir_json', side_effect=[[pair(address='a', price=1)],
+                                                       [pair(address='a', price=2)]]), \
+                patch.object(b, 'service_discovery_exits'), contextlib.redirect_stdout(io.StringIO()):
+            radar = b.pares_tokens_lote([('solana', 'a')])
+            fresh = b.pares_token('solana', 'a')
+        self.assertEqual(float(radar[('solana', 'a')][0]['priceUsd']), 1)
+        self.assertEqual(float(fresh[0]['priceUsd']), 2)
+        self.assertEqual(len(b.JSON_CACHE), 0)
+
+
 if __name__ == '__main__':
     with contextlib.redirect_stdout(io.StringIO()):
         unittest.main()
+
 
 

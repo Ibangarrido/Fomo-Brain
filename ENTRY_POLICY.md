@@ -121,3 +121,21 @@ Ejemplos verificables: Sirius EARLY -4.41 (run155), CWC IMPULSO -3.71 (run157),
 phubber ambas -2.43 y SI EARLY -2.32 (run169). No se modifica un umbral de entrada
 por un único token ni se atribuye el beneficio de NFTM al freno recién añadido.
 
+
+
+## Discovery batches (transport change)
+
+Official DEX Screener reference: https://docs.dexscreener.com/api/reference
+The discovery radar groups exact requested contracts by chain and requests up to
+30 addresses per /tokens/v1 call. It accepts only returned pairs whose chain and
+base mint match a requested contract; missing contracts and failed batches use
+the existing individual token-pairs reader. Provider responses can change pool
+coverage, so this does not claim exhaustive token/pool discovery. The reader
+logs batch request count, contracts with data, and elapsed batch time.
+
+Batch responses are local to discovery. They never seed token-pairs or pair
+cache keys used by final entry checks or exit supervision. Existing independent
+exit watcher, entry confirmation, security/fees, risk thresholds and wallet
+history remain in force. Offline tests demonstrate 60 same-chain contracts in
+two batch calls, identity isolation, fallback and fresh individual pricing.
+Actual latency and trading outcomes require subsequent live paper runs.
