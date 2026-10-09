@@ -1646,6 +1646,18 @@ def refresh_open_positions(stop_event=None):
             lock.release()
 
 
+def finish_exit_window(started):
+    """Keep exit-only supervision alive through the bounded session tail."""
+    while EXIT_WATCHDOG is not None:
+        if EXIT_WATCHDOG.error is not None:
+            raise RuntimeError("Vigilante de salidas fallo") from EXIT_WATCHDOG.error
+        remaining = SESSION_WINDOW_SECONDS - (time.monotonic() - started)
+        if remaining <= 0:
+            return
+        # Bounded waits keep worker errors observable; never run new entries here.
+        time.sleep(min(3, remaining))
+
+
 def run_session(cycles=1, interval_seconds=60):
     global EXIT_SERVICE_AT, EXIT_WATCHDOG
     # Ventana acotada: no cambia el cron ni presupone continuidad entre runs.
@@ -1693,6 +1705,9 @@ def run_session(cycles=1, interval_seconds=60):
                 delay = max(0, deadline - time.monotonic())
                 if delay:
                     time.sleep(delay)
+        if cycles == SESSION_MAX_CYCLES and EXIT_WATCHDOG is not None:
+            print("WATCHDOG COLA | mantener solo salidas hasta completar ventana 900s; huecos entre runs siguen posibles", flush=True)
+            finish_exit_window(started)
     finally:
         if EXIT_WATCHDOG is not None:
             EXIT_WATCHDOG.stop()

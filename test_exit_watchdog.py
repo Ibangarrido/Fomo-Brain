@@ -381,7 +381,27 @@ class WatchdogTests(unittest.TestCase):
         self.assertIsNone(brain.EXIT_WATCHDOG)
         self.assertIsNone(brain.EXIT_SERVICE_AT)
 
+    def test_exit_tail_covers_remaining_window_without_entries(self):
+        worker = ExitWatchdog(lambda stop_event: None)
+        with patch.object(brain, "EXIT_WATCHDOG", worker), \
+                patch.object(brain.time, "monotonic", side_effect=[898, 899, 900]), \
+                patch.object(brain.time, "sleep") as sleeper, \
+                patch.object(brain, "main") as discovery:
+            brain.finish_exit_window(0)
+        self.assertEqual([c.args[0] for c in sleeper.call_args_list], [2, 1])
+        discovery.assert_not_called()
+
+    def test_exit_tail_does_not_hide_worker_failure(self):
+        worker = ExitWatchdog(lambda stop_event: None)
+        worker.error = ValueError("failed quote pass")
+        with patch.object(brain, "EXIT_WATCHDOG", worker), \
+                patch.object(brain.time, "sleep") as sleeper:
+            with self.assertRaises(RuntimeError):
+                brain.finish_exit_window(0)
+        sleeper.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
