@@ -41,6 +41,20 @@ class OpportunityTests(unittest.TestCase):
         self.assertFalse(first["execution_verified"])
         self.assertNotIn("profit", row)
 
+    def test_market_screens_expose_simultaneous_failures_and_missing_data(self):
+        market = pair()
+        market["pairCreatedAt"] = int((self.now - timedelta(hours=3)).timestamp() * 1000)
+        market["txns"] = {"m5": {"buys": 25, "sells": 25}}
+        market["priceChange"] = {"m5": -3}
+        row = self.observe([market])["solana:a"]["last"]
+        control, extended = row["early_market_screens"]["60"], row["early_market_screens"]["1440"]
+        self.assertEqual(control["pair_age_2_60"], "FAIL")
+        self.assertEqual(extended["pair_age_2_1440"], "PASS")
+        self.assertEqual(extended["buy_count_60pct"], "FAIL")
+        self.assertEqual(extended["momentum5m_2_60"], "FAIL")
+        self.assertEqual(extended["change1h_max150"], "UNKNOWN")
+        self.assertEqual(row["trades5m"], 50)
+
     def test_missing_invalid_quotes_preserve_last_price_and_report_gaps(self):
         self.observe([pair()])
         bad = pair(price="nan")

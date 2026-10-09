@@ -43,6 +43,20 @@ def number(value):
         return None
 
 
+def market_screen(snapshot, age_minutes, max_age):
+    """Independent EARLY market gates, not full eligibility or a buy signal."""
+    checks = [
+        (snapshot["liquidity"], lambda v: v >= 20000, "liquidity_20000"),
+        (snapshot["buy_ratio5m"], lambda v: v >= .60, "buy_count_60pct"),
+        (snapshot["trades5m"], lambda v: v >= 40, "trades5m_40"),
+        (snapshot["change5m"], lambda v: 2 <= v <= 60, "momentum5m_2_60"),
+        (snapshot["change1h"], lambda v: v <= 150, "change1h_max150"),
+        (age_minutes, lambda v: 2 <= v <= max_age, "pair_age_2_" + str(max_age)),
+    ]
+    return {name: "UNKNOWN" if value is None else "PASS" if predicate(value) else "FAIL"
+            for value, predicate, name in checks}
+
+
 def watch_targets(now=None):
     now = now or datetime.now(timezone.utc)
     state = read()
@@ -90,9 +104,13 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                 continue
         m5 = (pair.get("txns") or {}).get("m5") or {}
         buys, sells = number(m5.get("buys")), number(m5.get("sells"))
+        created = number(pair.get("pairCreatedAt"))
+        age_minutes = (now.timestamp() - created / 1000) / 60 if created is not None and created > 0 else None
         snapshot = {"received_at": now.isoformat(), "price": number(pair["priceUsd"]),
                     "pair": pair["pairAddress"], "market_cap": cap, "liquidity": liquidity,
                     "buys5m": buys, "sells5m": sells,
+                    "trades5m": buys + sells if buys is not None and sells is not None else None,
+                    "pair_age_minutes": age_minutes,
                     "buy_ratio5m": buys / (buys + sells) if buys is not None and sells is not None and buys + sells > 0 else None,
                     "change5m": number((pair.get("priceChange") or {}).get("m5")),
                     "change1h": number((pair.get("priceChange") or {}).get("h1")),
@@ -102,6 +120,9 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                         if r.get("chain") == chain and r.get("address") == address
                         and r.get("pair") == pair["pairAddress"]}),
                     "data_freshness": "UNKNOWN", "execution_verified": False}
+        snapshot["early_market_screens"] = {str(age): market_screen(snapshot, age_minutes, age)
+                                            for age in (60, 1440)}
+        snapshot["screen_scope"] = "Independent market gates only; excludes score, wallet risk, security, confirmation and executable quotes; not entry eligibility."
         if key not in rows:
             rows[key] = {"chain": chain, "address": address,
                          "symbol": pair["baseToken"].get("symbol"),
