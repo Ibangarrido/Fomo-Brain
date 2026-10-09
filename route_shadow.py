@@ -14,6 +14,46 @@ from exit_watchdog import wallet_lock
 
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 VERSION = "route-shadow-r3"
+AUDIT_FILE = "fomo_quote_audit.json"
+
+
+def fee_evidence(data):
+    """Provider-declared fees only; missing fields never mean zero cost."""
+    fields = ("signatureFeeLamports", "prioritizationFeeLamports", "rentFeeLamports")
+    amounts = {key: data.get(key) if type(data.get(key)) is int
+               and data[key] >= 0 else None for key in fields}
+    return {"provider_network_fee_lamports": amounts,
+            "missing_network_fee_fields": [key for key, value in amounts.items() if value is None],
+            "provider_fee_bps": data.get("feeBps") if type(data.get("feeBps")) is int
+            and data["feeBps"] >= 0 else None,
+            "cost_status": "PROVIDER_ESTIMATE_ONLY" if all(v is not None for v in amounts.values())
+            else "NETWORK_COST_UNKNOWN",
+            "net_liquidation_value_usdc": None,
+            "execution_verified": False}
+
+
+class QuoteAudit:
+    """Bounded evidence for this session only, separate from every paper wallet."""
+    def __init__(self, path=AUDIT_FILE):
+        self.path = path
+        self.state = {"version": "quote-audit-r1", "run_id": os.getenv("GITHUB_RUN_ID"),
+                      "started_at": datetime.now(timezone.utc).isoformat(),
+                      "execution_verified": False, "records": [], "dropped_records": 0}
+
+    def save(self, kind=None, record=None):
+        if record is not None:
+            self.state["records"].append({"kind": kind, **record})
+            excess = max(0, len(self.state["records"]) - 300)
+            if excess:
+                del self.state["records"][:excess]
+                self.state["dropped_records"] += excess
+        try:
+            temporary = self.path + ".tmp"
+            with open(temporary, "w") as handle:
+                json.dump(self.state, handle, ensure_ascii=False, allow_nan=False)
+            os.replace(temporary, self.path)
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"QUOTE AUDIT WRITE ERROR {type(exc).__name__}", flush=True)
 
 
 class ProviderHTTPError(ValueError):
@@ -69,6 +109,7 @@ def position_valuations(item, observation):
              "net_liquidation_value_usdc": None, "market_data_age_seconds": None,
              "network_cost_usdc": None, "realized_slippage_usdc": None,
              "fx_applied": False, "execution_verified": False,
+             "fee_evidence": observation.get("fee_evidence"),
              "paper_mark_at": wallet.get("dex_mark_at"),
              "paper_quote_status": wallet.get("dex_quote_status")}
             for wallet in item.get("wallets", [])]
@@ -241,6 +282,7 @@ def jupiter_pair_quote(mint, output_mint, amount, fetch=get_json):
             "input_amount_raw": amount, "output_mint": output_mint,
             "output_amount_raw": output, "threshold_amount_raw": threshold,
             "router": data["router"], "slippage_bps": data.get("slippageBps"),
+            "fee_evidence": fee_evidence(data),
             "quote_request_seconds": time.monotonic() - started,
             "received_at": datetime.now(timezone.utc).isoformat(),
             "market_data_age_seconds": None, "network_costs_included": False,
@@ -284,6 +326,7 @@ class RouteShadow:
         self.fetch, self.read = fetch, read
         self.supply_reader = supply_reader
         self.stop_event = threading.Event()
+        self.audit = QuoteAudit()
         self.cursor = 0
         self.jupiter_enabled = os.getenv("BRAIN_JUPITER_SHADOW", "1") == "1"
         self.next_jupiter_request = 0
@@ -291,6 +334,7 @@ class RouteShadow:
         self.thread = threading.Thread(target=self.run, name="paper-route-shadow")
 
     def start(self):
+        self.audit.save()
         self.thread.start()
         print("ROUTE SHADOW r3 INICIO | Solana | read-only GET quotes + RPC mint fallback | staged failure evidence | max4 cantidades/60s | logs only | sin cambios de saldo", flush=True)
         if self.jupiter_enabled:
@@ -330,6 +374,7 @@ class RouteShadow:
                 evidence.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240],
                                 execution_verified=False)
             evidence["total_request_seconds"] = time.monotonic() - started
+            self.audit.save("RAYDIUM", evidence)
             print("ROUTE SHADOW " + json.dumps(evidence, ensure_ascii=False, allow_nan=False), flush=True)
             if self.jupiter_enabled:
                 comparison = {"version": "jupiter-shadow-r2", "snapshot_at": evidence["snapshot_at"],
@@ -351,11 +396,13 @@ class RouteShadow:
                         comparison.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240])
                     comparison["total_request_seconds"] = time.monotonic() - requested
                 comparison["position_valuations"] = position_valuations(item, comparison)
+                self.audit.save("JUPITER", comparison)
                 print("JUPITER SHADOW " + json.dumps(comparison, ensure_ascii=False, allow_nan=False), flush=True)
         self.cursor = (self.cursor + count) % len(items)
         if self.jupiter_enabled and self.roundtrip_enabled and not self.stop_event.is_set():
             mint = items[(self.cursor - count) % len(items)]["address"]
             result = roundtrip_quote(mint, self.paced_jupiter_fetch)
+            self.audit.save("ROUNDTRIP", result)
             print("ROUNDTRIP SHADOW " + json.dumps(result, ensure_ascii=False, allow_nan=False), flush=True)
 
     def run(self):

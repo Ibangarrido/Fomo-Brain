@@ -1,5 +1,32 @@
 # Route shadow r3
 
+## Quote audit r1 (9 October 2026)
+
+`fomo_quote_audit.json` now preserves bounded Raydium, Jupiter and round-trip
+observations in each run's `fomo-memory` artifact. It contains the current run ID,
+session start, snapshot and quote receipt times, exact quantity, wallet references,
+provider failures and per-position gross quote marks. It is an evidence sidecar,
+not a portfolio. The file is reset before each Brain session; older downloaded
+marks are never reused. At most 300 records are retained and dropped records are
+counted. Writes replace the sidecar atomically; storage errors do not stop the
+observation thread. Paper wallet files are never written by the audit.
+
+Jupiter records retain provider-declared signature, priority and rent fees in
+lamports, plus feeBps. Missing, negative or malformed fees are unknown, not zero.
+Even complete declared fields are only provider estimates. Payer context, network
+cost in USDC/EUR, FX, market-data age and realized slippage remain unresolved;
+net liquidation remains null. Fees are not deducted from outAmount again because
+provider fees may already be reflected in that quote. This does not lift the M4
+entry pause, change exits or turn a read-only price check into an executed sale.
+
+Sources checked 9 October 2026:
+https://developers.jup.ag/docs/swap/order-and-execute
+https://developers.jup.ag/docs/api-reference/swap/order
+
+Offline regressions verify missing versus zero fees, unchanged gross output and
+unknown net value, session reset, bounded history, wallet isolation and storage
+failure. Live provider coverage must be checked in a subsequent run artifact.
+
 Read-only parallel observation, enabled by default in `run_session`. Set
 `BRAIN_ROUTE_SHADOW=0` to disable. No protected workflows changed.
 

@@ -40,6 +40,7 @@ jobs:
           python test_fomo_v8.py
           python -m unittest -v test_quote_safety.py
           python -m unittest -v test_exit_watchdog.py
+          python -m unittest -v test_quote_audit.py
           python -m unittest -v test_social_radar.py
 
       - name: Verificar laboratorio de velas sin red
@@ -80,6 +81,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: |
+          rm -f fomo_quote_audit.json
           python whale_paper.py &
           whale_pid=$!
           WHALE_TRADER=unipcs python whale_paper.py &
@@ -95,6 +97,7 @@ jobs:
           path: |
             fomo_memory.json
             fomo_event_memory.json
+            fomo_quote_audit.json
             fomo_paper.json
             fomo_shadow_v8.json
             fomo_shadow_v9.json
