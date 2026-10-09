@@ -31,3 +31,14 @@ No wallet keys, signatures, builds, submissions or financial operations.
 Evaluate future runs for prospective new entries, realized paper exits, drawdown
 of the known component, remaining M4 uncertainty and quote coverage. Local
 tests establish state isolation and risk behavior, not improved profitability.
+
+
+## M4 mark diagnostic
+
+The comparison now reports the inherited mark timestamp and age separately from
+recent Jupiter gross quotes for the exact Solana mint and position quantity.
+Only positive finite quote-only results received within the last 120 seconds
+are displayed; future, stale or mismatched records are ignored. The latest
+received record wins regardless of file order. No USDC/EUR conversion is made.
+Net value remains unknown: provider estimates do not establish complete costs
+or execution. This diagnostic never modifies balances, quantities or exits.

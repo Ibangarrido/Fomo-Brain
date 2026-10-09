@@ -13,6 +13,58 @@ RECOVERY = "fomo_lab_m4_recovery_r1.json"
 MARKER = "fomo_lab_m4_fork_r1.json"
 
 
+def m4_diagnostic(state, audit=None, now=None):
+    """Explain the inherited mark using recent exact-quantity evidence, never a fill."""
+    now = now or datetime.now(timezone.utc)
+    positions = [p for p in state.get("positions", [])
+                 if p.get("chain") == "solana" and p.get("address") == MINT]
+    if len(positions) != 1:
+        return {"status": "NO_SINGLE_M4_POSITION", "net_value_usdc": None}
+    pos = positions[0]
+    result = {"status": "NO_RECENT_QUANTITY_QUOTE", "quote_status": pos.get("quote_status"),
+              "historical_mark": pos.get("mark_net"),
+              "historical_mark_is_current": False,
+              "historical_mark_unit": "paper model units; not USDC",
+              "historical_mark_at": pos.get("last_quote_at"),
+              "quantity": pos.get("quantity"), "gross_quote_usdc": None,
+              "net_value_usdc": None, "execution_verified": False,
+              "costs_complete": False, "fx_applied": False}
+    try:
+        result["historical_mark_age_seconds"] = max(0, (now - datetime.fromisoformat(
+            pos["last_quote_at"])).total_seconds())
+    except (KeyError, ValueError, TypeError):
+        result["historical_mark_age_seconds"] = None
+    if audit is None:
+        try:
+            with open("fomo_quote_audit.json") as handle:
+                audit = json.load(handle)
+        except (OSError, ValueError):
+            return result
+    if not isinstance(audit, dict):
+        return result
+    candidates = []
+    for record in audit.get("records", []):
+        try:
+            if (record.get("kind") != "JUPITER" or record.get("chain") != "solana"
+                    or record.get("address") != MINT or record.get("quantity") != pos.get("quantity")
+                    or record.get("status") != "QUOTE_ONLY"):
+                continue
+            received = datetime.fromisoformat(record["received_at"])
+            age = (now - received).total_seconds()
+            value = record["expected_out_usdc"]
+            if (not 0 <= age <= 120 or type(value) not in (int, float)
+                    or not math.isfinite(value) or value <= 0):
+                continue
+            candidates.append((received, age, value))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+    if candidates:
+        received, age, value = max(candidates, key=lambda row: row[0])
+        result.update(status="RECENT_GROSS_QUOTE_ONLY", gross_quote_usdc=value,
+                      quote_received_at=received.isoformat(), quote_age_seconds=age)
+    return result
+
+
 def is_quarantined(position):
     return (position.get("chain") == "solana" and position.get("address") == MINT
             and position.get("m4_quarantine") is True)
@@ -79,6 +131,8 @@ def run(ranking, simulator):
                      "total_equity": obs["estimated_equity"],
                      "unknown": obs["unverified_quotes"], "open": obs["open"],
                      "closed": obs["closed"], "cash": state["cash"], "reserve": state["reserve"]}
+        rows[arm]["m4_diagnostic"] = m4_diagnostic(state)
     rows["total_equity_advantage"] = None
     print("LAB M4 COMPARACION " + json.dumps(rows, allow_nan=False)
           + " | componente conocido NO es rentabilidad total; M4 permanece abierta")
+

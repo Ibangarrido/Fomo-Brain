@@ -35,6 +35,43 @@ class M4Tests(unittest.TestCase):
         with open(path) as handle:
             return json.load(handle)
 
+    def diagnostic_record(self, now, **changes):
+        return dict({"kind": "JUPITER", "chain": "solana", "address": lab.MINT,
+                     "quantity": 100, "status": "QUOTE_ONLY", "expected_out_usdc": .108,
+                     "received_at": now.isoformat()}, **changes)
+
+    def test_recent_quote_does_not_revalue_sell_or_convert_currency(self):
+        now = datetime.now(timezone.utc)
+        original = copy.deepcopy(self.seed)
+        result = lab.m4_diagnostic(self.seed, {"records": [self.diagnostic_record(now)]}, now)
+        self.assertEqual(result["gross_quote_usdc"], .108)
+        self.assertIsNone(result["net_value_usdc"])
+        self.assertFalse(result["historical_mark_is_current"])
+        self.assertFalse(result["execution_verified"])
+        self.assertEqual(self.seed, original)
+
+    def test_stale_future_wrong_mint_and_wrong_quantity_quotes_are_rejected(self):
+        now = datetime.now(timezone.utc)
+        for changes in ({"received_at": (now-timedelta(seconds=121)).isoformat()},
+                        {"received_at": (now+timedelta(seconds=1)).isoformat()},
+                        {"address": "other"}, {"quantity": 101},
+                        {"expected_out_usdc": float('nan')}, {"expected_out_usdc": True},
+                        {"received_at": "2026-10-09T19:00:00"}):
+            with self.subTest(changes=changes):
+                result = lab.m4_diagnostic(self.seed, {"records": [self.diagnostic_record(now, **changes)]}, now)
+                self.assertIsNone(result["gross_quote_usdc"])
+
+    def test_latest_received_quote_wins_over_record_order(self):
+        now = datetime.now(timezone.utc)
+        audit = {"records": [self.diagnostic_record(now, expected_out_usdc=.12),
+                             self.diagnostic_record(now-timedelta(seconds=20))]}
+        self.assertEqual(lab.m4_diagnostic(self.seed, audit, now)["gross_quote_usdc"], .12)
+
+    def test_missing_audit_retains_unknown_value(self):
+        result = lab.m4_diagnostic(self.seed)
+        self.assertEqual(result["status"], "NO_RECENT_QUANTITY_QUOTE")
+        self.assertIsNone(result["net_value_usdc"])
+
     def test_fork_preserves_every_balance_position_and_history_once(self):
         original = self.read(lab.SOURCE)
         self.assertTrue(lab.bootstrap())
@@ -121,3 +158,4 @@ class M4Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
