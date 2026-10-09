@@ -200,6 +200,46 @@ class VelasProtectionTests(unittest.TestCase):
         self.assertFalse(os.path.exists(lab.velas_filename("control")))
 
 
+class ComparisonSummaryTests(unittest.TestCase):
+    def states(self):
+        base = {"at": "2026-10-08T11:00:00+00:00", "equity": 98.0}
+        return {arm: {"protection_baseline": dict(base), "closed": [],
+                      "observations": [{"estimated_equity": equity,
+                                        "valuation_complete": True, "open": 0,
+                                        "unverified_quotes": 0}]}
+                for arm, equity in (("control", 96.0), ("protect", 97.0))}
+
+    def test_advantage_uses_fork_and_excludes_old_protection_exits(self):
+        states = self.states()
+        states["protect"]["closed"] = [
+            {"closed_at": at, "exit_reason": "PROTECCION +12% -> +2%"}
+            for at in ("2026-10-08T10:00:00+00:00", "2026-10-08T12:00:00+00:00")]
+        before = json.dumps(states)
+        result = lab.comparison_summary(states)
+        self.assertEqual(result["control"]["delta"], -2.0)
+        self.assertEqual(result["advantage"], 1.0)
+        self.assertEqual(result["protect"]["protection_exits"], 1)
+        self.assertEqual(json.dumps(states), before)
+
+    def test_unknown_or_nonfinite_equity_cannot_claim_advantage(self):
+        for equity, complete in ((None, False), (99.0, False), (float("nan"), True)):
+            states = self.states()
+            states["protect"]["observations"][0].update(
+                estimated_equity=equity, valuation_complete=complete,
+                open=1, unverified_quotes=1)
+            result = lab.comparison_summary(states)
+            self.assertIsNone(result["advantage"])
+            self.assertIsNone(result["protect"]["delta"])
+            self.assertEqual(result["protect"]["unknown"], 1)
+
+    def test_mismatched_forks_are_rejected(self):
+        states = self.states()
+        states["protect"]["protection_baseline"]["equity"] = 100.0
+        with self.assertRaises(ValueError):
+            lab.comparison_summary(states)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
