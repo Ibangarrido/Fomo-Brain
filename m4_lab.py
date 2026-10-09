@@ -4,7 +4,7 @@ import json
 import math
 import os
 from datetime import datetime, timezone
-from exit_watchdog import wallet_fork
+from exit_watchdog import wallet_fork, wallet_lock
 
 MINT = "HciAVS1urBtboqhLe59HWiMeeN2McEd6y8h4HGkrpump"
 SOURCE = "fomo_lab_early_control_r1.json"
@@ -23,12 +23,14 @@ def m4_diagnostic(state, audit=None, now=None):
     pos = positions[0]
     result = {"status": "NO_RECENT_QUANTITY_QUOTE", "quote_status": pos.get("quote_status"),
               "historical_mark": pos.get("mark_net"),
-              "historical_mark_is_current": False,
+              "historical_mark_is_current": pos.get("quote_status") == "OK",
               "historical_mark_unit": "paper model units; not USDC",
               "historical_mark_at": pos.get("last_quote_at"),
               "quantity": pos.get("quantity"), "gross_quote_usdc": None,
               "net_value_usdc": None, "execution_verified": False,
               "costs_complete": False, "fx_applied": False}
+    result["market_blocker"] = pos.get("quote_error") if pos.get("quote_status") != "OK" else None
+    result["indicative_liquidity_usd"] = pos.get("indicative_liquidity")
     try:
         result["historical_mark_age_seconds"] = max(0, (now - datetime.fromisoformat(
             pos["last_quote_at"])).total_seconds())
@@ -43,7 +45,10 @@ def m4_diagnostic(state, audit=None, now=None):
     if not isinstance(audit, dict):
         return result
     candidates = []
-    for record in audit.get("records", []):
+    records = audit.get("records")
+    if not isinstance(records, list):
+        return result
+    for record in records:
         try:
             if (record.get("kind") != "JUPITER" or record.get("chain") != "solana"
                     or record.get("address") != MINT or record.get("quantity") != pos.get("quantity")
@@ -63,6 +68,18 @@ def m4_diagnostic(state, audit=None, now=None):
         result.update(status="RECENT_GROSS_QUOTE_ONLY", gross_quote_usdc=value,
                       quote_received_at=received.isoformat(), quote_age_seconds=age)
     return result
+
+
+def report_snapshot(path):
+    """Persist report evidence under the same lock as exit writes; preserve accounting."""
+    with wallet_lock(path):
+        with open(path) as handle:
+            state = json.load(handle)
+        state["last_m4_diagnostic"] = {
+            "reported_at": datetime.now(timezone.utc).isoformat(),
+            **m4_diagnostic(state)}
+        write(path, state)
+        return state
 
 
 def is_quarantined(position):
@@ -123,15 +140,14 @@ def run(ranking, simulator):
         simulator(ranking, path, "LAB M4 " + arm.upper(), confirm=True,
                   entry_mode="early", entry_guard=guard(False, "early", "LAB M4 " + arm),
                   quarantine_m4=arm == "recovery")
-        with open(path) as handle:
-            state = json.load(handle)
+        state = report_snapshot(path)
         obs = state["observations"][-1]
         rows[arm] = {"known_component": obs["verified_component"],
                      "known_change": obs["verified_component"] - state["m4_baseline"]["verified_component"],
                      "total_equity": obs["estimated_equity"],
                      "unknown": obs["unverified_quotes"], "open": obs["open"],
                      "closed": obs["closed"], "cash": state["cash"], "reserve": state["reserve"]}
-        rows[arm]["m4_diagnostic"] = m4_diagnostic(state)
+        rows[arm]["m4_diagnostic"] = state["last_m4_diagnostic"]
     rows["total_equity_advantage"] = None
     print("LAB M4 COMPARACION " + json.dumps(rows, allow_nan=False)
           + " | componente conocido NO es rentabilidad total; M4 permanece abierta")

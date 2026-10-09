@@ -72,6 +72,25 @@ class M4Tests(unittest.TestCase):
         self.assertEqual(result["status"], "NO_RECENT_QUANTITY_QUOTE")
         self.assertIsNone(result["net_value_usdc"])
 
+    def test_persisted_report_preserves_all_existing_state(self):
+        lab.bootstrap()
+        before = self.read(lab.RECOVERY)
+        result = lab.report_snapshot(lab.RECOVERY)
+        saved = self.read(lab.RECOVERY)
+        self.assertEqual(result, saved)
+        self.assertIn("last_m4_diagnostic", saved)
+        del saved["last_m4_diagnostic"]
+        self.assertEqual(saved, before)
+
+    def test_malformed_audit_cannot_break_report_and_recovered_mark_is_labelled(self):
+        for audit in ({"records": None}, {"records": {}}, {"records": [None, {}]}):
+            self.assertIsNone(lab.m4_diagnostic(self.seed, audit)["gross_quote_usdc"])
+        state = copy.deepcopy(self.seed)
+        state["positions"][0]["quote_status"] = "OK"
+        result = lab.m4_diagnostic(state, {"records": []})
+        self.assertTrue(result["historical_mark_is_current"])
+        self.assertIsNone(result["market_blocker"])
+
     def test_fork_preserves_every_balance_position_and_history_once(self):
         original = self.read(lab.SOURCE)
         self.assertTrue(lab.bootstrap())

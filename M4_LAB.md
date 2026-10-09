@@ -42,3 +42,8 @@ are displayed; future, stale or mismatched records are ignored. The latest
 received record wins regardless of file order. No USDC/EUR conversion is made.
 Net value remains unknown: provider estimates do not establish complete costs
 or execution. This diagnostic never modifies balances, quantities or exits.
+
+Diagnostics are also persisted as last_m4_diagnostic in each M4 lab artifact,
+including the market blocker and observed indicative liquidity. Report writes
+use the exit watcher wallet lock and re-read state inside it to prevent lost
+exit updates. Balance, quantity, history and original source remain unchanged.
