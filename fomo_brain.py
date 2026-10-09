@@ -1106,6 +1106,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     with open(paper_file + ".tmp", "w") as handle:
         json.dump(state, handle, indent=2)
     os.replace(paper_file + ".tmp", paper_file)
+    if ranking and os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
+        from opportunity_audit import record_decisions
+        record_decisions(label, notes)
     print(f"\nCARTERA VIRTUAL {label} — NO EJECUTA ORDENES REALES")
     for note in notes:
         print(note)
@@ -1262,6 +1265,13 @@ def descubrir_pares():
 
     # Perfiles no equivalen a todos los lanzamientos ni a una recomendacion.
     requested = dict.fromkeys(STUDY_TOKENS)
+    if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
+        try:
+            from opportunity_audit import watch_targets
+            for target in watch_targets():
+                requested.setdefault(target, None)
+        except Exception as exc:
+            print("AUDITORIA SEGUIMIENTO ERROR: " + str(exc))
     for endpoint in ("token-profiles/latest/v1", "token-profiles/recent-updates/v1"):
         service_discovery_exits()
         try:
@@ -1306,6 +1316,9 @@ def descubrir_pares():
 def main(refresh_events=True):
     from candle_lab import begin_cycle
     begin_cycle()
+    if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
+        from opportunity_audit import begin_cycle as begin_opportunity_cycle
+        begin_opportunity_cycle()
     service_discovery_exits()
     ahora = datetime.now(timezone.utc)
 
@@ -1431,6 +1444,12 @@ def main(refresh_events=True):
             run_m4_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB M4 ERROR: " + str(exc) + "; historiales originales conservados")
+    if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
+        try:
+            from opportunity_audit import observe
+            observe(pairs, sources, discovery_rejections=REJECTIONS)
+        except Exception as exc:
+            print("AUDITORIA OPORTUNIDADES ERROR: " + str(exc) + "; carteras conservadas")
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
@@ -1656,5 +1675,6 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 

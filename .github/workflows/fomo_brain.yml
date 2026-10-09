@@ -42,6 +42,7 @@ jobs:
           python -m unittest -v test_exit_watchdog.py
           python -m unittest -v test_quote_audit.py
           python -m unittest -v test_m4_lab.py
+          python -m unittest -v test_opportunity_audit.py
           python -m unittest -v test_social_radar.py
 
       - name: Verificar laboratorio de velas sin red
@@ -79,6 +80,7 @@ jobs:
           BRAIN_VOLUME_LAB: ${{ steps.volume_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
           BRAIN_QUOTE_GUARD: "1"
           BRAIN_M4_LAB: "1"
+          BRAIN_OPPORTUNITY_AUDIT: "1"
           BRAIN_EXIT_WATCHDOG: "1"
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
@@ -100,6 +102,7 @@ jobs:
             fomo_memory.json
             fomo_event_memory.json
             fomo_quote_audit.json
+            fomo_opportunity_audit_r1.json
             fomo_lab_m4_control_r1.json
             fomo_lab_m4_recovery_r1.json
             fomo_lab_m4_fork_r1.json
@@ -133,4 +136,5 @@ jobs:
             fomo_lab_volume_impulse_volume_r1.json
           if-no-files-found: ignore
           overwrite: true
+
 
