@@ -58,11 +58,38 @@ def bootstrap_velas():
     return True
 
 
+def comparison_summary(states):
+    """Read-only snapshot; an incomplete valuation never becomes an advantage."""
+    baselines = [states[arm]["protection_baseline"] for arm in ARMS]
+    if baselines[0] != baselines[1]:
+        raise ValueError("Bases CONTROL/PROTECT distintas; comparacion invalida")
+    result = {}
+    for arm in ARMS:
+        state = states[arm]
+        obs = state["observations"][-1]
+        equity = obs.get("estimated_equity")
+        complete = (obs.get("valuation_complete") and
+                    isinstance(equity, (int, float)) and math.isfinite(equity))
+        exits = [p for p in state["closed"]
+                 if p["closed_at"] >= baselines[0]["at"]]
+        result[arm] = {
+            "delta": equity - baselines[0]["equity"] if complete else None,
+            "open": obs["open"],
+            "unknown": obs["unverified_quotes"],
+            "protection_exits": sum(p.get("exit_reason") == "PROTECCION +12% -> +2%"
+                                    for p in exits),
+        }
+    c, p = result["control"]["delta"], result["protect"]["delta"]
+    result["advantage"] = p - c if c is not None and p is not None else None
+    return result
+
+
 def run_velas(ranking, simulator):
     from candle_lab import guard
     if bootstrap_velas():
         print("LAB PROTECT VELAS: copia inicial; decisiones desde la proxima lectura.")
         return
+    states = {}
     for arm in ARMS:
         label = f"LAB PROTECT VELAS {arm.upper()} r1"
         simulator(ranking, velas_filename(arm), label, confirm=True, entry_mode="early",
@@ -70,10 +97,21 @@ def run_velas(ranking, simulator):
                   profit_protection=arm == "protect")
         with open(velas_filename(arm)) as handle:
             state = json.load(handle)
+        states[arm] = state
         obs = state["observations"][-1]
         delta = (f"{obs['estimated_equity'] - state['protection_baseline']['equity']:+.2f}"
                  if obs.get("valuation_complete") else "DESCONOCIDO")
         print(f"{label} | cambio desde bifurcacion EUR {delta}")
+    summary = comparison_summary(states)
+    advantage = summary["advantage"]
+    text = f"{advantage:+.2f}" if advantage is not None else "DESCONOCIDO"
+    print(f"LAB PROTECT VELAS COMPARACION | ventaja PROTECT-CONTROL EUR {text}"
+          " | patrimonio virtual; no demuestra perdidas evitadas ni ejecucion")
+    for arm in ARMS:
+        row = summary[arm]
+        print(f"{arm.upper()} | abiertas={row['open']}"
+              f" | cotizaciones desconocidas={row['unknown']}"
+              f" | salidas proteccion desde bifurcacion={row['protection_exits']}")
 
 
 def filename(mode, arm):
@@ -141,4 +179,5 @@ def run(ranking, simulator):
                       f"LAB PROTECT {mode.upper()} {arm.upper()} r1",
                       confirm=True, entry_mode=mode, min_buy_ratio=.60,
                       profit_protection=arm == "protect")
+
 
