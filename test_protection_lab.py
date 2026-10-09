@@ -7,6 +7,88 @@ import unittest
 from unittest.mock import patch
 from test_fomo_v8 import b, pair
 import protection_lab as lab
+import copy
+from research_metrics import wallet_report, compare
+
+
+class ResearchMetricsTests(unittest.TestCase):
+    def state(self):
+        return {"protection_baseline": {"at": "2026-10-01T00:00:00+00:00", "equity": 100},
+                "positions": [], "closed": [], "observations": [{
+                    "at": "2026-10-02T00:00:00+00:00", "valuation_complete": True,
+                    "unverified_quotes": 0, "estimated_equity": 98}]}
+
+    def leg(self, profit, reason="STOP -15%", opened="2026-10-01T01:00:00+00:00"):
+        return {"chain": "solana", "address": "mint", "opened_at": opened,
+                "closed_at": "2026-10-01T02:00:00+00:00", "profit": profit,
+                "exit_reason": reason, "entry_policy_version": "early-r5",
+                "entry_risk_policy_version": "capital-r2"}
+
+    def test_partial_and_final_are_one_losing_position_without_mutation(self):
+        state = self.state()
+        state['closed'] = [self.leg(1, 'PARCIAL +30%'), self.leg(-3)]
+        before = copy.deepcopy(state)
+        row = wallet_report(state, 'protection_baseline')
+        self.assertEqual((row['sale_legs_all_history'], row['new_completed_positions'],
+                          row['new_winners'], row['new_losers']), (2, 1, 0, 1))
+        self.assertEqual(row['new_completed_realized_profit'], -2)
+        self.assertEqual(state, before)
+
+    def test_open_partial_is_not_a_completed_winner(self):
+        state = self.state()
+        state['closed'] = [self.leg(1, 'PARCIAL +30%')]
+        state['positions'] = [dict(state['closed'][0], quote_status='OK')]
+        row = wallet_report(state, 'protection_baseline')
+        self.assertEqual(row['new_completed_positions'], 0)
+        self.assertEqual(row['positions_with_sales_still_open_or_partial_only'], 1)
+
+    def test_inherited_and_changed_policies_are_explicit(self):
+        state = self.state()
+        state['closed'] = [self.leg(4, opened='2026-09-30T00:00:00+00:00'),
+                           dict(self.leg(-2), address='new', entry_risk_policy_version=None),
+                           dict(self.leg(1), address='another')]
+        row = wallet_report(state, 'protection_baseline')
+        self.assertEqual(row['inherited_completed_positions'], 1)
+        self.assertEqual(row['inherited_lifetime_realized_profit'], 4)
+        self.assertEqual(row['new_completed_positions'], 2)
+        self.assertEqual(row['new_completed_realized_profit'], -1)
+        self.assertTrue(row['mixed_or_unknown_policies'])
+
+    def test_unknown_mark_or_baseline_cannot_create_advantage(self):
+        control, variant = self.state(), self.state()
+        variant['positions'] = [dict(self.leg(0), quote_status='NO VERIFICABLE', mark_net=7)]
+        self.assertIsNone(compare(control, variant, 'protection_baseline')['relative_equity_advantage'])
+        variant = self.state()
+        variant['observations'][0].pop('at')
+        self.assertIsNone(compare(self.state(), variant, 'protection_baseline')['relative_equity_advantage'])
+        variant = self.state()
+        for state in (control, variant):
+            state['protection_baseline'] = {'at': '2026-10-01T00:00:00+00:00', 'total_equity': None}
+        self.assertIsNone(compare(control, variant, 'protection_baseline')['relative_equity_advantage'])
+
+    def test_relative_advantage_is_not_positive_profit_or_winner(self):
+        control, variant = self.state(), self.state()
+        control['observations'][-1]['estimated_equity'] = 95
+        result = compare(control, variant, 'protection_baseline')
+        self.assertEqual(result['relative_equity_advantage'], 3)
+        self.assertEqual(result['variant']['equity_delta'], -2)
+        self.assertFalse(result['winner_selected'])
+        self.assertIsNone(result['statistical_significance'])
+        variant['protection_baseline']['equity'] = 101
+        with self.assertRaises(ValueError):
+            compare(control, variant, 'protection_baseline')
+
+    def test_invalid_data_fails_closed(self):
+        for mutation in ('profit', 'identity', 'timezone', 'old_observation', 'future_sale'):
+            state = self.state()
+            state['closed'] = [self.leg(-1)]
+            if mutation == 'profit': state['closed'][0]['profit'] = float('nan')
+            if mutation == 'identity': state['closed'][0].pop('address')
+            if mutation == 'timezone': state['closed'][0]['opened_at'] = '2026-10-01T01:00:00'
+            if mutation == 'old_observation': state['observations'][0]['at'] = '2026-09-30T00:00:00+00:00'
+            if mutation == 'future_sale': state['closed'][0]['closed_at'] = '2026-10-03T00:00:00+00:00'
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                wallet_report(state, 'protection_baseline')
 
 
 class ProtectionTests(unittest.TestCase):
@@ -241,5 +323,6 @@ class ComparisonSummaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
