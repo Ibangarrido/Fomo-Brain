@@ -781,10 +781,14 @@ def record_unverified_quote(pos, error, now):
 
 
 @wallet_transaction
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60):
     from m4_lab import RECOVERY, is_quarantined
-    if type(quarantine_m4) is not bool or (quarantine_m4 and os.path.basename(paper_file) != RECOVERY):
+    rebound_files = {"fomo_lab_rebound_control_r1.json", "fomo_lab_rebound_extended_r1.json"}
+    basename = os.path.basename(paper_file)
+    if type(quarantine_m4) is not bool or (quarantine_m4 and basename not in rebound_files | {RECOVERY}):
         raise ValueError("Cuarentena M4 reservada al laboratorio aislado")
+    if max_pair_age_minutes != 60 and (max_pair_age_minutes != 1440 or basename != "fomo_lab_rebound_extended_r1.json" or entry_mode != "early" or not confirm):
+        raise ValueError("Edad ampliada reservada al laboratorio rebound")
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
     ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
@@ -816,6 +820,14 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         raise ValueError("Version de cartera virtual no compatible")
     if quarantine_m4 and state.get("m4_experiment", {}).get("arm") != "recovery":
         raise ValueError("Falta bifurcacion M4 recovery; no reiniciar")
+    if basename in rebound_files:
+        if entry_mode != "early" or not confirm or not quarantine_m4:
+            raise ValueError("Laboratorio rebound requiere EARLY confirmado y cuarentena heredada")
+        expected_arm = "extended" if "extended" in basename else "control"
+        if state.get("rebound_experiment") != {"version": "age-r1", "arm": expected_arm}:
+            raise ValueError("Falta bifurcacion rebound; no reiniciar")
+        if max_pair_age_minutes != (1440 if expected_arm == "extended" else 60):
+            raise ValueError("Politica de edad incompatible con cartera rebound")
     # Preserve the change point; cumulative portfolios mix old and new policies.
     data_policy = {"version": "quote-r2", "early_entry_version": "early-r5",
                    "early_max_change1h_pct": 150, "crosscheck_drop_pct": 30,
@@ -975,7 +987,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             if confirm and (drift is None or abs(drift) > 5):
                 notes.append(f"DESCARTE {key} | cotizacion se aleja >5% de la señal")
                 continue
-            reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio)
+            reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes)
             if not reason and entry_guard is not None:
                 reason = entry_guard(fresh)
             if reason:
@@ -1003,7 +1015,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 drift = variacion(price, token.get("price"))
                 if confirm and (drift is None or abs(drift) > 5):
                     raise ValueError("precio final se aleja >5% de la señal")
-                reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio)
+                reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes)
                 if not reason and entry_guard is not None:
                     reason = entry_guard(fresh)
                 if reason:
@@ -1043,6 +1055,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "entry_protection_policy": "protect-r1" if profit_protection else None,
             "entry_risk_policy_version": V10_RISK_VERSION,
             "entry_min_buy_ratio": min_buy_ratio,
+            "entry_max_pair_age_minutes": max_pair_age_minutes,
             "entry_policy_suffix": fresh.get("entry_policy_suffix")})
         notes.append("ENTRADA VIRTUAL " + token["symbol"] + " | EUR "
                      + format(budget, ".2f")
@@ -1099,6 +1112,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if entry_mode == "impulse":
         state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"
     state["assumptions"]["entry_policy"] = state["assumptions"]["entry_policy"].replace("compras >=60%", f"compras >={min_buy_ratio:.0%}")
+    if basename in rebound_files:
+        state["assumptions"]["entry_policy"] = state["assumptions"]["entry_policy"].replace("2-60m", f"2-{max_pair_age_minutes}m")
+        state["assumptions"]["age_experiment"] = "age-r1; only age ceiling differs; no proof of rebound structure"
     state["assumptions"]["profit_protection"] = {"enabled": profit_protection, "arm_net_pct": 12, "exit_net_pct": 2,
                                                 "fills": "Precio observado, no garantiza +2%"}
     state["last_rejections"] = REJECTIONS[-300:]
@@ -1159,7 +1175,9 @@ def ultima_lectura_par(token):
     return prev[-1] if prev else None
 
 
-def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60):
+def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60, max_pair_age_minutes=60):
+    if max_pair_age_minutes not in (60, 1440):
+        raise ValueError("Limite de edad invalido")
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
     if entry_mode not in ("early", "impulse"):
@@ -1183,8 +1201,8 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60)
         if token["trades5m"] < 40 or token["buyRatio5m"] < min_buy_ratio:
             return f"early r2: requiere 40 trades y compras >={min_buy_ratio:.0%}"
     age = token.get("ageMinutes")
-    if entry_mode == "early" and (age is None or not 2 <= age <= 60):
-        return "comparacion: edad fuera de 2-60 min"
+    if entry_mode == "early" and (age is None or not 2 <= age <= max_pair_age_minutes):
+        return f"comparacion: edad fuera de 2-{max_pair_age_minutes} min"
     if not 2 <= token["change5m"] <= 60:
         return "comparacion: momentum 5m fuera de 2-60%"
     now = datetime.now(timezone.utc)
@@ -1444,6 +1462,12 @@ def main(refresh_events=True):
             run_m4_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB M4 ERROR: " + str(exc) + "; historiales originales conservados")
+    if os.getenv("BRAIN_REBOUND_LAB", "0") == "1":
+        try:
+            from rebound_lab import run as run_rebound_lab
+            run_rebound_lab(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB REBOUND ERROR: " + str(exc) + "; historiales conservados")
     if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         try:
             from opportunity_audit import observe
@@ -1584,6 +1608,10 @@ def refresh_open_positions(stop_event=None):
         from m4_lab import CONTROL, RECOVERY
         for path in (CONTROL, RECOVERY):
             wallets.append((path, "LAB M4 " + path, "early", .60, False))
+    if os.getenv("BRAIN_REBOUND_LAB", "0") == "1":
+        from rebound_lab import CONTROL as rebound_control, EXTENDED
+        for path in (rebound_control, EXTENDED):
+            wallets.append((path, "LAB REBOUND " + path, "early", .60, False))
     if os.getenv("BRAIN_PROTECT_LAB", "0") == "1" and os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
         from protection_lab import velas_filename
         for arm in ("control", "protect"):
@@ -1608,7 +1636,8 @@ def refresh_open_positions(stop_event=None):
             print(f"V10 SALIDAS {'WATCHDOG 3s objetivo' if EXIT_WATCHDOG is not None else '15s'} | {label}", flush=True)
             simular_cartera([], path, label, confirm=True, entry_mode=mode,
                             min_buy_ratio=ratio, profit_protection=protect,
-                            quarantine_m4=os.path.basename(path) == "fomo_lab_m4_recovery_r1.json")
+                            quarantine_m4=os.path.basename(path) in {"fomo_lab_m4_recovery_r1.json", "fomo_lab_rebound_control_r1.json", "fomo_lab_rebound_extended_r1.json"},
+                            max_pair_age_minutes=1440 if os.path.basename(path) == "fomo_lab_rebound_extended_r1.json" else 60)
         except FileNotFoundError:
             continue
         except Exception as exc:
