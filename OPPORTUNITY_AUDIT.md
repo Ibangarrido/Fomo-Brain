@@ -22,10 +22,13 @@ filter. A wallet rejection may mask later filters: it does not establish that
 all other entry rules would pass. No price change is called profit or net return.
 Market-cap changes cannot be substituted for price returns.
 
-Up to ten automatic contracts in a rotating order plus the manual case are
+TikTok and SLOPCORE EkFRff9a2jKztJHML1LG9FRmEkPJDR6XAYp3uCPdpump are
+manual cases selected by the user. Each begins at its first received observation.
+
+Up to ten automatic contracts in a rotating order plus the two manual cases are
 queried per discovery cycle, including when absent from search results. Failed
 quotes do not monopolize monitoring slots. This
-adds at most eleven public token-pair requests; the shared market rate limiter
+adds at most twelve public token-pair requests; the shared market rate limiter
 and exit service remain in use. No source guarantees coverage of all launches
 or direct access to FOMO's launch list.
 

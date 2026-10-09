@@ -7,7 +7,10 @@ from datetime import datetime, timezone
 FILE = "fomo_opportunity_audit_r1.json"
 LIMIT = 500
 HORIZON_SECONDS = 72 * 3600
-MANUAL = {("solana", "64oAuE88tNP7KsSyaiJTKGP4sWmLMFGWLUs9eBTLYgCp")}
+MANUAL = {
+    ("solana", "64oAuE88tNP7KsSyaiJTKGP4sWmLMFGWLUs9eBTLYgCp"),
+    ("solana", "EkFRff9a2jKztJHML1LG9FRmEkPJDR6XAYp3uCPdpump"),
+}
 DECISIONS = {}
 
 
@@ -135,4 +138,4 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
     for chain, address in sorted(MANUAL):
         row = rows.get(chain + ":" + address)
         if row:
-            print("ESTUDIO TIKTOK " + json.dumps({k: row[k] for k in ("cohort", "first", "last", "observed_price_change_pct", "observed_peak_change_pct", "observed_drawdown_from_peak_pct")}, allow_nan=False))
+            print("ESTUDIO OPORTUNIDAD " + json.dumps({k: row[k] for k in ("chain", "address", "symbol", "cohort", "first", "last", "observed_price_change_pct", "observed_peak_change_pct", "observed_drawdown_from_peak_pct")}, allow_nan=False))
