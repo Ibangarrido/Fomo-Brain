@@ -8,6 +8,7 @@ FILE = "fomo_opportunity_audit_r1.json"
 LIMIT = 500
 HORIZON_SECONDS = 72 * 3600
 MANUAL = {
+    ("solana", "EcZndAERfzNhLirHwfsy44dAyPSZazjDU83pa6RApump"),
     ("solana", "HwJyyniKKDRLXxjRSzyLtpvxzqecqrhrbcSbKRm7STNK"),
     ("solana", "64oAuE88tNP7KsSyaiJTKGP4sWmLMFGWLUs9eBTLYgCp"),
     ("solana", "EkFRff9a2jKztJHML1LG9FRmEkPJDR6XAYp3uCPdpump"),
