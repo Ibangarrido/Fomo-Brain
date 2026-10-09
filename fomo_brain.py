@@ -57,6 +57,8 @@ SESSION_MAX_CYCLES = 15
 SESSION_WINDOW_SECONDS = 900
 MAX_CONFIRMATION_MINUTES = 1.5
 JSON_CACHE = ThreadCache()
+JSON_RECEIPTS = ThreadCache()
+DEX_CACHE_TTL_SECONDS = 3.0
 EXIT_WATCHDOG = None
 MARKET_RATE_LIMITER = MarketRateLimiter(0.25, {"api.geckoterminal.com": 2.1})
 # DEX <=240/min; public GeckoTerminal <30/min, shared by discovery and watcher.
@@ -75,9 +77,26 @@ def descartar(pair, reason):
     return None
 
 
+def response_received_at(url, data):
+    """Local response receipt only; never infer provider price/trade age."""
+    receipt = JSON_RECEIPTS.get(url)
+    if (receipt is not None and JSON_CACHE.get(url) is data
+            and receipt[0] is data):
+        return receipt[1]
+    # Test doubles and externally supplied payloads have no cache receipt.
+    return datetime.now(timezone.utc)
+
+
 def pedir_json(url):
     if url in JSON_CACHE:
-        return JSON_CACHE[url]
+        cached = JSON_CACHE[url]
+        receipt = JSON_RECEIPTS.get(url)
+        is_dex = urllib.parse.urlsplit(url).netloc == "api.dexscreener.com"
+        if not is_dex or (receipt is not None and receipt[0] is cached
+                          and time.monotonic() - receipt[2] < DEX_CACHE_TTL_SECONDS):
+            return cached
+        JSON_CACHE.pop(url, None)
+        JSON_RECEIPTS.pop(url, None)
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "FOMO-Brain/8.0"}
@@ -86,7 +105,12 @@ def pedir_json(url):
         MARKET_RATE_LIMITER.wait(url)
     with urllib.request.urlopen(req, timeout=15) as response:
         data = json.loads(response.read().decode())
+    received_at = datetime.now(timezone.utc)
+    received_monotonic = time.monotonic()
     JSON_CACHE[url] = data
+    if len(JSON_RECEIPTS) >= 2048:
+        JSON_RECEIPTS.clear()
+    JSON_RECEIPTS[url] = (data, received_at, received_monotonic)
     return data
 
 
@@ -283,6 +307,8 @@ def analizar_par(pair):
         "graduationStatus": "NO VERIFICADA",
         "url": pair.get("url", "")
     }
+    if pair.get("_brain_received_at") is not None:
+        resultado["received_at"] = pair["_brain_received_at"]
 
     resultado["estadoEarly"] = clasificar_token(
         resultado
@@ -520,7 +546,9 @@ def guardar_memoria(ranking):
     # TOP 10 es solo la salida resumida de pantalla, no el universo confirmable.
     for token in ranking:
         memoria.append({
-            "hora": ahora,
+            "hora": token.get("received_at") or ahora,
+            "saved_at": ahora,
+            "received_at": token.get("received_at"),
             "symbol": token["symbol"],
             "name": token["name"],
             "address": token["address"],
@@ -700,6 +728,8 @@ def cotizar_posicion(pos):
                  if p.get("chainId") == pos["chain"]
                  and p.get("pairAddress") == pos["pair"]
                  and (p.get("baseToken") or {}).get("address") == pos["address"]), None)
+    if pair is not None:
+        pair = dict(pair, _brain_received_at=response_received_at(url, data).isoformat())
     original_pair = pos["pair"]
     if (pair is None or numero(pair.get("priceUsd")) <= 0
             or numero((pair.get("liquidity") or {}).get("usd")) < MIN_LIQUIDITY):
@@ -733,10 +763,13 @@ def cotizar_posicion(pos):
         print(f"CAMBIO PAR {pos['chain']}:{pos['address']} | {original_pair} -> {pos['pair']}")
     pos["quote_source"] = "DEX Screener"
     pos["quote_pair"] = pair["pairAddress"]
-    pos["quote_observed_at"] = datetime.now(timezone.utc).isoformat()
+    received_at = datetime.fromisoformat(pair.get("_brain_received_at") or datetime.now(timezone.utc).isoformat())
+    pos["quote_observed_at"] = received_at.isoformat()
+    pos["quote_received_at"] = received_at.isoformat()
+    pos["quote_cache_age_seconds"] = max(0, (datetime.now(timezone.utc) - received_at).total_seconds())
     if os.getenv("BRAIN_QUOTE_GUARD", "0") == "1" and pos.get("quantity"):
         from quote_safety import extreme, corroborate, record_market_observation
-        observation = record_market_observation(pos, price, pair)
+        observation = record_market_observation(pos, price, pair, now=received_at)
         observation["accepted"] = False
         previous = pos.get("last_verified_price")
         if previous is None:
@@ -778,6 +811,7 @@ def record_unverified_quote(pos, error, now):
         pos["quote_age_seconds"] = max(0, (now - datetime.fromisoformat(pos["last_quote_at"])).total_seconds())
     except (KeyError, TypeError, ValueError):
         pos["quote_age_seconds"] = None
+    pos["seconds_since_last_verified_quote"] = pos["quote_age_seconds"]
 
 
 @wallet_transaction
@@ -872,17 +906,21 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         previous_quote_at = pos.get("last_quote_at")
         quote_requested_at = datetime.now(timezone.utc)
         try:
-            price, liquidity, _ = cotizar_posicion(pos)
+            price, liquidity, quoted_pair = cotizar_posicion(pos)
             now = datetime.now(timezone.utc)  # Timestamp reception, not start of the wallet scan.
             pos["quote_request_seconds"] = max(0, (now - quote_requested_at).total_seconds())
             pos["mark_net"] = pos["quantity"] * price * proceeds_factor
-            pos["last_quote_at"] = now.isoformat()
+            received_at = datetime.fromisoformat(quoted_pair.get("_brain_received_at") or now.isoformat())
+            pos["last_quote_at"] = received_at.isoformat()
+            pos["quote_received_at"] = received_at.isoformat()
             pos["quote_status"] = "OK"
             pos.pop("quote_error", None)
             pos["last_quote_attempt_at"] = now.isoformat()
-            pos["quote_age_seconds"] = 0.0
+            pos["quote_age_seconds"] = max(0, (now - received_at).total_seconds())
+            pos["quote_cache_age_seconds"] = pos["quote_age_seconds"]
+            pos["seconds_since_last_verified_quote"] = pos["quote_age_seconds"]
             try:
-                pos["quote_gap_seconds"] = max(0, (now - datetime.fromisoformat(previous_quote_at)).total_seconds())
+                pos["quote_gap_seconds"] = max(0, (received_at - datetime.fromisoformat(previous_quote_at)).total_seconds())
             except (TypeError, ValueError):
                 pos["quote_gap_seconds"] = None
         except CotizacionBajaLiquidez as exc:
@@ -1026,6 +1064,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                     raise ValueError(reason)
                 final_quote_evidence = {"version": "entry-quote-r1", "after_security_checks": True,
                                         "observed_at": entry_at.isoformat(), "price": price,
+                                        "evaluated_at": entry_at.isoformat(), "received_at": fresh.get("received_at"),
                                         "pair": fresh_pair["pairAddress"], "drift_pct": drift}
             except Exception as exc:
                 notes.append(f"ENTRADA OMITIDA {key} | precio final tras seguridad: {exc}")
@@ -1040,14 +1079,14 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "opened_at": entry_at.isoformat(), "entry_price": price,
             "budget": budget, "quantity": quantity,
             "mark_net": quantity * price * proceeds_factor,
-            "last_quote_at": entry_at.isoformat(), "quote_status": "OK",
+            "last_quote_at": fresh.get("received_at") or entry_at.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
             "entry_policy_version": ("early-r5" if entry_mode == "early" else "impulse-r4") if confirm else "base",
             "entry_fee_evidence": fee_evidence, "entry_final_quote": final_quote_evidence,
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
-                "buys5m", "sells5m", "change5m", "change1h", "ageMinutes")},
+                "buys5m", "sells5m", "change5m", "change1h", "ageMinutes", "received_at")},
             "signal_price": token.get("price"), "quote_drift_pct": drift,
             "entry_confirmation": ultima_lectura_par(fresh) if confirm else None,
             "entry_candle_context": fresh.get("candle_context"),
@@ -1165,7 +1204,8 @@ def pares_token(chain, address):
     data = pedir_json(url)
     if not isinstance(data, list):
         raise ValueError("Respuesta token-pairs no valida")
-    return [p for p in data if identidad_par(p, chain, address)]
+    received_at = response_received_at(url, data).isoformat()
+    return [dict(p, _brain_received_at=received_at) for p in data if identidad_par(p, chain, address)]
 
 
 def pares_tokens_lote(targets):
@@ -1188,6 +1228,7 @@ def pares_tokens_lote(targets):
                 data = pedir_json(url)
                 if not isinstance(data, list):
                     raise ValueError("Respuesta tokens-lote no valida")
+                received_at = response_received_at(url, data).isoformat()
                 allowed = set(batch)
                 for pair in data:
                     if not isinstance(pair, dict):
@@ -1195,7 +1236,7 @@ def pares_tokens_lote(targets):
                     base = pair.get("baseToken")
                     address = base.get("address") if isinstance(base, dict) else None
                     if isinstance(address, str) and address in allowed and identidad_par(pair, chain, address):
-                        found.setdefault((chain, address), []).append(pair)
+                        found.setdefault((chain, address), []).append(dict(pair, _brain_received_at=received_at))
             except Exception as exc:
                 print(f"FUENTE ERROR lote:{chain} | {exc}; respaldo individual")
     print(f"DESCUBRIMIENTO LOTES | peticiones={requests} | contratos con datos={len(found)}"
@@ -1245,8 +1286,18 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60,
     if old is None:
         return "comparacion: falta lectura previa del mismo par"
     try:
-        minutes = (now - datetime.fromisoformat(old["hora"])).total_seconds() / 60
-    except (ValueError, KeyError):
+        if token.get("received_at") is not None:
+            current_at = datetime.fromisoformat(token["received_at"])
+            previous_at = datetime.fromisoformat(old["received_at"])
+            if (current_at.utcoffset() is None or previous_at.utcoffset() is None
+                    or current_at > now or previous_at > now):
+                return "comparacion: recepcion invalida o futura"
+            if (now - previous_at).total_seconds() > MAX_CONFIRMATION_MINUTES * 60:
+                return "comparacion: lectura previa fuera de 30-90 segundos"
+            minutes = (current_at - previous_at).total_seconds() / 60
+        else:
+            minutes = (now - datetime.fromisoformat(old["hora"])).total_seconds() / 60
+    except (ValueError, KeyError, TypeError):
         return "comparacion: lectura previa invalida"
     if not 0.5 <= minutes <= MAX_CONFIRMATION_MINUTES:
         return "comparacion: lectura previa fuera de 30-90 segundos"
@@ -1309,10 +1360,11 @@ def descubrir_pares():
     for term in SEARCHES:
         service_discovery_exits()
         try:
-            data = pedir_json("https://api.dexscreener.com/latest/dex/search/?q="
-                              + urllib.parse.quote(term))
+            url = "https://api.dexscreener.com/latest/dex/search/?q=" + urllib.parse.quote(term)
+            data = pedir_json(url)
+            received_at = response_received_at(url, data).isoformat()
             for pair in data.get("pairs") or []:
-                add(pair, "busqueda:" + term)
+                add(dict(pair, _brain_received_at=received_at), "busqueda:" + term)
         except Exception as exc:
             print(f"FUENTE ERROR busqueda:{term} | {exc}")
 

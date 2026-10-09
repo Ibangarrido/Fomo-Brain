@@ -4,10 +4,57 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from route_shadow import QuoteAudit, fee_evidence, jupiter_pair_quote, USDC
+from route_shadow import QuoteAudit, fee_evidence, jupiter_pair_quote, quote, USDC
 
 
 class QuoteAuditTests(unittest.TestCase):
+    def raydium_quote(self, output, threshold):
+        mint = "HciAVS1urBtboqhLe59HWiMeeN2McEd6y8h4HGkrpump"
+        def fetch(url):
+            if "mint/ids" in url:
+                return {"success": True, "data": [{"address": mint, "decimals": 6}]}
+            return {"success": True, "data": {
+                "inputMint": mint, "outputMint": USDC, "inputAmount": "1000000",
+                "swapType": "BaseIn", "slippageBps": 200,
+                "routePlan": [{"poolId": "test-pool"}],
+                "outputAmount": output, "otherAmountThreshold": threshold}}
+        return quote({"chain": "solana", "address": mint, "quantity": 1}, fetch)
+
+    def test_raydium_rejects_coerced_and_out_of_range_amounts(self):
+        invalid = (True, False, 1.9, 1.0, None, -1, "-1", "+1", "1e6",
+                   "1.0", " 1", "١", 2 ** 64, str(2 ** 64))
+        for value in invalid:
+            for field in ("output", "threshold"):
+                with self.subTest(value=value, field=field), self.assertRaises(ValueError):
+                    self.raydium_quote(value if field == "output" else "1000000",
+                                       value if field == "threshold" else "0")
+
+    def test_raydium_accepts_integer_units_and_preserves_quote_only(self):
+        for output, threshold in ((1000000, 0), ("1000000", "990000"),
+                                  (str(2 ** 64 - 1), str(2 ** 64 - 1))):
+            with self.subTest(output=output, threshold=threshold):
+                result = self.raydium_quote(output, threshold)
+                self.assertEqual(result["status"], "QUOTE_ONLY")
+                self.assertEqual(result["expected_out_usdc"], int(output) / 1_000_000)
+                self.assertEqual(result["threshold_usdc"], int(threshold) / 1_000_000)
+                self.assertFalse(result["execution_verified"])
+                self.assertFalse(result["network_costs_included"])
+
+    def test_raydium_rejects_zero_output_or_threshold_above_output(self):
+        for output, threshold in ((0, 0), ("0", "0"), ("10", "11")):
+            with self.subTest(output=output, threshold=threshold), self.assertRaises(ValueError):
+                self.raydium_quote(output, threshold)
+
+    def test_jupiter_keeps_string_only_integer_validation(self):
+        mint = "HciAVS1urBtboqhLe59HWiMeeN2McEd6y8h4HGkrpump"
+        data = {"inputMint": mint, "outputMint": USDC, "inAmount": "123",
+                "swapMode": "ExactIn", "transaction": None, "router": "metis",
+                "outAmount": "1000000", "otherAmountThreshold": "990000"}
+        for field in ("outAmount", "otherAmountThreshold"):
+            for value in (1000000, True, 1.9, "-1", "١", "1e6", str(2 ** 64)):
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    jupiter_pair_quote(mint, USDC, "123", lambda url: {**data, field: value})
+
     def test_missing_malformed_and_zero_fees_are_distinct(self):
         for value in (None, -1, True, "0", float("nan")):
             evidence = fee_evidence({"signatureFeeLamports": value})
@@ -69,3 +116,4 @@ class QuoteAuditTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

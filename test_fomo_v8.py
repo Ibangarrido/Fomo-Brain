@@ -585,6 +585,71 @@ class V10Tests(unittest.TestCase):
             self.quote([pair(pool='old', price='NaN')], [])
 
 
+    def test_receipt_confirmation_uses_real_separation_and_original_age(self):
+        now = datetime.now(timezone.utc)
+        t = b.analizar_par(pair())
+        for separation, current_age, accepted in [(29, 0, False), (30, 0, True),
+                                                  (90, 0, True), (91, 0, False),
+                                                  (60, 31, False), (0, 60, False)]:
+            current = now-timedelta(seconds=current_age)
+            old = dict(t, received_at=(current-timedelta(seconds=separation)).isoformat(),
+                       hora=now.isoformat(), price=.95, vol5m=2000)
+            token = dict(t, received_at=current.isoformat())
+            with patch.object(b, 'datetime') as clock, patch.object(b, 'cargar_memoria', return_value=[old]):
+                clock.now.return_value = now
+                clock.fromisoformat.side_effect = datetime.fromisoformat
+                for mode in ('early', 'impulse'):
+                    with self.subTest(separation=separation, current_age=current_age, mode=mode):
+                        self.assertEqual(b.motivo_entrada(token, True, mode) is None, accepted)
+
+    def test_received_entry_requires_valid_previous_receipt(self):
+        now = datetime.now(timezone.utc)
+        t = dict(b.analizar_par(pair()), received_at=now.isoformat())
+        previous = dict(t, hora=(now-timedelta(seconds=60)).isoformat(), price=.95, vol5m=2000)
+        for receipt in [None, '', 'invalid', (now-timedelta(seconds=60)).replace(tzinfo=None).isoformat(),
+                        (now+timedelta(seconds=10)).isoformat()]:
+            with patch.object(b, 'cargar_memoria', return_value=[dict(previous, received_at=receipt)]):
+                self.assertIsNotNone(b.motivo_entrada(t, True))
+        for receipt in ['', 'invalid', now.replace(tzinfo=None).isoformat(),
+                        (now+timedelta(seconds=10)).isoformat()]:
+            with patch.object(b, 'cargar_memoria', return_value=[dict(previous, received_at=(now-timedelta(seconds=60)).isoformat())]):
+                self.assertIsNotNone(b.motivo_entrada(dict(t, received_at=receipt), True))
+        # Legacy synthetic inputs retain the old explicit wall-clock mode.
+        legacy = dict(t)
+        legacy.pop('received_at')
+        with patch.object(b, 'cargar_memoria', return_value=[previous]):
+            self.assertIsNone(b.motivo_entrada(legacy, True))
+
+    def test_memory_save_does_not_rejuvenate_observation(self):
+        receipt = (datetime.now(timezone.utc)-timedelta(seconds=120)).isoformat()
+        raw = dict(pair(), _brain_received_at=receipt)
+        token = b.analizar_par(raw)
+        b.guardar_memoria([token])
+        old = b.cargar_memoria()[0]
+        self.assertEqual(old['hora'], receipt)
+        self.assertEqual(old['received_at'], receipt)
+        self.assertGreater(datetime.fromisoformat(old['saved_at']), datetime.fromisoformat(receipt))
+
+    def test_new_position_keeps_receipt_after_security_evaluation(self):
+        receipt = datetime.now(timezone.utc)-timedelta(seconds=5)
+        raw = dict(pair(), _brain_received_at=receipt.isoformat())
+        token = b.analizar_par(raw)
+        old = dict(token, received_at=(receipt-timedelta(seconds=60)).isoformat(),
+                   hora=(receipt-timedelta(seconds=60)).isoformat(), price=.95, vol5m=2000)
+        with patch.object(b, 'cargar_memoria', return_value=[old]), \
+                patch.object(b, 'cotizar_posicion', return_value=(1, 20000, raw)), \
+                patch('quote_safety.entry_fees', return_value=({}, None)), \
+                patch.dict(os.environ, {'BRAIN_QUOTE_GUARD': '1'}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            b.simular_cartera([token])
+        with open(b.V10_FILE) as handle:
+            position = json.load(handle)['positions'][0]
+        self.assertEqual(position['entry_snapshot']['received_at'], receipt.isoformat())
+        self.assertEqual(position['last_quote_at'], receipt.isoformat())
+        self.assertEqual(position['entry_final_quote']['received_at'], receipt.isoformat())
+        self.assertGreater(datetime.fromisoformat(position['entry_final_quote']['evaluated_at']), receipt)
+
+
 class BatchDiscoveryTests(unittest.TestCase):
     def setUp(self):
         b.JSON_CACHE.clear()
@@ -599,6 +664,32 @@ class BatchDiscoveryTests(unittest.TestCase):
         self.assertEqual([p['pairAddress'] for p in result[('solana', 'a')]], ['sol'])
         self.assertEqual([p['pairAddress'] for p in result[('bsc', 'a')]], ['bsc'])
         self.assertNotIn(('solana', 'b'), result)
+
+    def test_batch_receipt_is_preserved_without_mutating_payload(self):
+        receipt = datetime.now(timezone.utc)-timedelta(seconds=60)
+        raw = [pair()]
+        with patch.object(b, 'pedir_json', return_value=raw), \
+                patch.object(b, 'response_received_at', return_value=receipt), \
+                patch.object(b, 'service_discovery_exits'), contextlib.redirect_stdout(io.StringIO()):
+            one = b.pares_tokens_lote([('solana', 'a')])
+            two = b.pares_tokens_lote([('solana', 'a')])
+        self.assertEqual(one[('solana', 'a')][0]['_brain_received_at'], receipt.isoformat())
+        self.assertEqual(two[('solana', 'a')][0]['_brain_received_at'], receipt.isoformat())
+        self.assertNotIn('_brain_received_at', raw[0])
+
+    def test_search_receipt_is_preserved_without_mutating_payload(self):
+        receipt = datetime.now(timezone.utc)-timedelta(seconds=60)
+        raw = {'pairs': [pair()]}
+        with patch.object(b, 'pedir_json', side_effect=lambda url: raw if '/search/' in url else []), \
+                patch.object(b, 'response_received_at', return_value=receipt), \
+                patch.object(b, 'SEARCHES', ['test']), patch.object(b, 'STUDY_TOKENS', []), \
+                patch.object(b, 'cargar_memoria', return_value=[]), \
+                patch.object(b, 'service_discovery_exits'), \
+                patch.dict(os.environ, {'BRAIN_OPPORTUNITY_AUDIT': '0'}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            pairs, sources = b.descubrir_pares()
+        self.assertEqual(pairs[('solana', 'p')]['_brain_received_at'], receipt.isoformat())
+        self.assertNotIn('_brain_received_at', raw['pairs'][0])
 
     def test_sixty_contracts_need_two_requests_and_allow_exit_service_between_batches(self):
         targets = [('solana', 'mint'+str(i)) for i in range(60)]

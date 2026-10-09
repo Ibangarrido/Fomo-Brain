@@ -147,3 +147,14 @@ age remain unknown. Output quotes may already contain provider fees; do not
 add paper-model fees or infer an isolated fee cost from the difference.
 USDC is not EUR. No wallet, transaction construction or execution is used.
 
+
+## Strict raw output quantities (9 October 2026)
+
+Raydium outputAmount and otherAmountThreshold accept only explicit integer values
+(excluding booleans) or nonempty ASCII digit strings in the uint64 range. Floats,
+signs, exponent notation, Unicode digits and overflow are rejected instead of
+being coerced or truncated. Output must be positive and threshold cannot exceed
+output. Jupiter retains its existing stricter string-only quantity validation.
+Malformed observations remain unavailable; there is no wallet valuation, sale,
+route/API change or new financial threshold. Offline tests cover both fields,
+uint64 boundaries and Jupiter regressions.

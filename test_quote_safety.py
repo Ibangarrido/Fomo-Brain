@@ -208,5 +208,72 @@ class SafetyTests(unittest.TestCase):
                 self.assertEqual(len(after['data_policy_history']),len(before['data_policy_history']))
             finally:os.chdir(cwd)
 
+    def test_dex_cache_ttl_and_original_receipt(self):
+        url='https://api.dexscreener.com/latest/dex/pairs/solana/Pool'
+        b.JSON_CACHE.clear();b.JSON_RECEIPTS.clear()
+        with patch.object(b.urllib.request,'urlopen',side_effect=[io.BytesIO(b'{"pairs": []}'),io.BytesIO(b'{"pairs": []}')]) as fetch, patch.object(b.time,'monotonic',return_value=100) as clock, patch.object(b.MARKET_RATE_LIMITER,'wait'):
+            first=b.pedir_json(url);received=b.response_received_at(url,first)
+            clock.return_value=102.9
+            self.assertIs(b.pedir_json(url),first)
+            self.assertEqual(b.response_received_at(url,first),received)
+            self.assertEqual(fetch.call_count,1)
+            clock.return_value=103
+            self.assertIsNot(b.pedir_json(url),first)
+            self.assertEqual(fetch.call_count,2)
+        b.JSON_CACHE.clear();b.JSON_RECEIPTS.clear()
+
+    def test_receipt_requires_real_payload_identity(self):
+        url='https://api.dexscreener.com/test';payload={}
+        old=datetime.now(timezone.utc)-timedelta(hours=1)
+        b.JSON_CACHE[url]=payload;b.JSON_RECEIPTS[url]=(payload,old,0)
+        self.assertEqual(b.response_received_at(url,payload),old)
+        self.assertGreater(b.response_received_at(url,{}),old)
+        b.JSON_CACHE.clear()
+        self.assertGreater(b.response_received_at(url,payload),old)
+        b.JSON_RECEIPTS.clear()
+
+    def test_position_audit_preserves_cached_market_receipt(self):
+        pos=b.analizar_par(pair());pos.update(quantity=1,mark_net=.99*.98,last_verified_price=1)
+        url=f"https://api.dexscreener.com/latest/dex/pairs/{pos['chain']}/{pos['pair']}"
+        payload={'pairs':[pair()]};old=datetime.now(timezone.utc)-timedelta(seconds=2)
+        b.JSON_CACHE[url]=payload;b.JSON_RECEIPTS[url]=(payload,old,b.time.monotonic())
+        try:
+            with patch.dict(os.environ,{'BRAIN_QUOTE_GUARD':'1'}),patch.object(b,'pedir_json',return_value=payload):
+                price,liquidity,market=b.cotizar_posicion(pos)
+            self.assertEqual(market['_brain_received_at'],old.isoformat())
+            self.assertEqual(pos['quote_observed_at'],old.isoformat())
+            self.assertEqual(pos['quote_history'][-1]['received_at'],old.isoformat())
+            self.assertIsNone(pos['quote_audit']['source_timestamp'])
+        finally:b.JSON_CACHE.clear();b.JSON_RECEIPTS.clear()
+
+    def test_cached_exit_preserves_receipt_and_local_age(self):
+        state=self.final_entry_case(1)
+        old=datetime.now(timezone.utc)-timedelta(seconds=2)
+        state['positions'][0]['last_quote_at']=(old-timedelta(seconds=3)).isoformat()
+        cwd=os.getcwd()
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                os.chdir(temp)
+                with open(b.V10_FILE,'w') as handle:json.dump(state,handle)
+                market=dict(pair(),_brain_received_at=old.isoformat())
+                with patch.object(b,'cotizar_posicion',return_value=(1,20000,market)),contextlib.redirect_stdout(io.StringIO()):
+                    b.simular_cartera([],confirm=False)
+                with open(b.V10_FILE) as handle:after=json.load(handle)
+                pos=after['positions'][0]
+                self.assertEqual(pos['last_quote_at'],old.isoformat())
+                self.assertEqual(pos['quote_received_at'],old.isoformat())
+                self.assertGreaterEqual(pos['quote_age_seconds'],2)
+                self.assertEqual(pos['quote_gap_seconds'],3)
+                self.assertEqual(pos['seconds_since_last_verified_quote'],pos['quote_age_seconds'])
+            finally:os.chdir(cwd)
+
+    def test_unverified_reports_time_since_success(self):
+        now=datetime(2026,10,9,tzinfo=timezone.utc)
+        pos={'last_quote_at':(now-timedelta(days=2)).isoformat(),'quote_gap_seconds':3}
+        b.record_unverified_quote(pos,ValueError('low liquidity'),now)
+        self.assertEqual(pos['seconds_since_last_verified_quote'],172800)
+        self.assertEqual(pos['quote_status'],'NO VERIFICABLE')
+
 if __name__=='__main__':unittest.main()
+
 

@@ -139,3 +139,26 @@ exit watcher, entry confirmation, security/fees, risk thresholds and wallet
 history remain in force. Offline tests demonstrate 60 same-chain contracts in
 two batch calls, identity isolation, fallback and fresh individual pricing.
 Actual latency and trading outcomes require subsequent live paper runs.
+
+## Local receipt timing r1 (9 October 2026)
+
+DEX responses now have a per-thread receipt timestamp and a three-second cache
+TTL measured by a monotonic clock. Reusing a cached response preserves its original
+receipt; it does not create a fresh observation. Discovery search, exact-mint
+batches and individual readers carry that receipt into candidates and memory.
+Memory records distinguish receipt time from saved_at, so time spent analysing
+or running laboratories cannot rejuvenate the observation.
+
+When a live candidate carries receipt evidence, confirmation requires that same
+evidence in the previous same-contract/chain/pair observation. Legacy memory
+without receipt evidence must be replaced by a new observation before confirming.
+The existing 30–90 second window uses separation between actual receipts, while
+the previous receipt must also remain no more than 90 seconds old at evaluation.
+Malformed, timezone-free and future receipts fail confirmation. Final checks after
+security retain receipt and evaluation times separately.
+
+Exit diagnostics use actual receipt age/gaps. Failed quotations report
+seconds_since_last_verified_quote, rather than implying that a previous short gap
+is the current quote age. This is local transport timing: provider trade/price age
+remains unknown. Stops, risk budgets, costs and historical results are unchanged;
+these corrections do not establish profitability or guaranteed execution.

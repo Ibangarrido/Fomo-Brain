@@ -164,6 +164,19 @@ def raw_quantity(quantity, decimals):
     return amount
 
 
+def raydium_uint64(value):
+    """Accept provider integer units without coercion, truncation or overflow."""
+    if type(value) is int:
+        amount = value
+    elif isinstance(value, str) and value.isascii() and value.isdigit():
+        amount = int(value)
+    else:
+        raise ValueError("Invalid Raydium integer amount")
+    if not 0 <= amount < 2 ** 64:
+        raise ValueError("Raydium amount outside uint64")
+    return amount
+
+
 def quote(position, fetch=get_json, supply_reader=token_supply, diagnostics=None):
     # Preserve completed read stages even when a later provider request fails.
     trace = diagnostics if diagnostics is not None else {}
@@ -197,8 +210,8 @@ def quote(position, fetch=get_json, supply_reader=token_supply, diagnostics=None
             or str(data.get("inputAmount")) != str(amount) or data.get("swapType") != "BaseIn"
             or data.get("slippageBps") != 200 or not data.get("routePlan")):
         raise ValueError("Quote identity/amount/route mismatch")
-    output = int(data["outputAmount"])
-    threshold = int(data["otherAmountThreshold"])
+    output = raydium_uint64(data["outputAmount"])
+    threshold = raydium_uint64(data["otherAmountThreshold"])
     if output <= 0 or not 0 <= threshold <= output:
         raise ValueError("Invalid quote output")
     trace["failure_stage"] = None
@@ -413,3 +426,4 @@ class RouteShadow:
             except Exception as exc:
                 print(f"ROUTE SHADOW ERROR {type(exc).__name__}: {exc}", flush=True)
             self.stop_event.wait(min(self.interval, max(0, self.duration - (time.monotonic() - started))))
+
