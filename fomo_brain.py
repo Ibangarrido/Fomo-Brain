@@ -635,15 +635,16 @@ V10_ENTRY_BUDGET_EUR = 5.0
 V10_RISK_VERSION = "capital-r2"
 
 
-def freno_cartera_v10(state, now):
+def freno_cartera_v10(state, now, conservative_unknown=False):
     """Block NEW entries only. Never fabricate an exit or reset historical losses."""
     control = state.setdefault("risk_control", {"version": V10_RISK_VERSION})
     control["version"] = V10_RISK_VERSION
     if control.get("halted_at"):
         return control["halt_reason"]
-    if all(p.get("quote_status") == "OK" for p in state["positions"]):
+    if conservative_unknown or all(p.get("quote_status") == "OK" for p in state["positions"]):
         equity = (state["cash"] + state["reserve"]
-                  + sum(p["mark_net"] for p in state["positions"]))
+                  + sum(p["mark_net"] for p in state["positions"]
+                        if not conservative_unknown or p.get("quote_status") == "OK"))
         floor = 100.0 * (1 - V10_MAX_TOTAL_LOSS_PCT / 100)
         if equity <= floor:
             reason = (f"riesgo capital-r1: patrimonio EUR {equity:.2f} <= {floor:.2f};"
@@ -780,7 +781,10 @@ def record_unverified_quote(pos, error, now):
 
 
 @wallet_transaction
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False):
+    from m4_lab import RECOVERY, is_quarantined
+    if type(quarantine_m4) is not bool or (quarantine_m4 and os.path.basename(paper_file) != RECOVERY):
+        raise ValueError("Cuarentena M4 reservada al laboratorio aislado")
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
     ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
@@ -810,6 +814,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                     "historical_close_usd": .0005800645649876336})
     if state.get("version") != 1:
         raise ValueError("Version de cartera virtual no compatible")
+    if quarantine_m4 and state.get("m4_experiment", {}).get("arm") != "recovery":
+        raise ValueError("Falta bifurcacion M4 recovery; no reiniciar")
     # Preserve the change point; cumulative portfolios mix old and new policies.
     data_policy = {"version": "quote-r2", "early_entry_version": "early-r5",
                    "early_max_change1h_pct": 150, "crosscheck_drop_pct": 30,
@@ -936,16 +942,19 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                          f" | hueco_cotizacion_s={pos.get('quote_gap_seconds')}"
                          f" | exceso_stop_pp={max(0, -15-pnl_pct):.2f}")
             notes.append(note)
-    quotes_blocked = any(p["quote_status"] != "OK" for p in state["positions"])
+    quotes_blocked = any(p["quote_status"] != "OK" and not
+                        (quarantine_m4 and is_quarantined(p)) for p in state["positions"])
+    if quarantine_m4:
+        notes.append("LAB M4: posicion heredada aislada; valor desconocido excluido del control de riesgo; no es venta")
     if quotes_blocked:
         notes.append("ENTRADAS PAUSADAS: hay posiciones sin cotizacion verificable")
-    risk_reason = freno_cartera_v10(state, now)
+    risk_reason = freno_cartera_v10(state, now, conservative_unknown=quarantine_m4)
     if risk_reason:
         notes.append("FRENO V10: " + risk_reason)
     # Una sola entrada por token durante este experimento, sin reentradas.
     for token in ranking:
         key = token["chain"] + ":" + token["address"]
-        risk_reason = freno_cartera_v10(state, now)
+        risk_reason = freno_cartera_v10(state, now, conservative_unknown=quarantine_m4)
         reason = (risk_reason if risk_reason else
                   "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
@@ -1000,7 +1009,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 if reason:
                     raise ValueError(reason)
                 entry_at = datetime.now(timezone.utc)
-                reason = freno_cartera_v10(state, entry_at)
+                reason = freno_cartera_v10(state, entry_at, conservative_unknown=quarantine_m4)
                 if reason:
                     raise ValueError(reason)
                 final_quote_evidence = {"version": "entry-quote-r1", "after_security_checks": True,
@@ -1416,6 +1425,12 @@ def main(refresh_events=True):
             run_volume_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB VOLUMEN ERROR: " + str(exc) + "; carteras anteriores siguen separadas")
+    if os.getenv("BRAIN_M4_LAB", "0") == "1":
+        try:
+            from m4_lab import run as run_m4_lab
+            run_m4_lab(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB M4 ERROR: " + str(exc) + "; historiales originales conservados")
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
@@ -1546,6 +1561,10 @@ def refresh_open_positions(stop_event=None):
                 wallets.append((f"fomo_lab_protect_{mode}_{arm}_r1.json",
                                 f"LAB PROTECT {mode.upper()} {arm.upper()} r1", mode, .60, arm == "protect"))
     JSON_CACHE.clear()  # Fresh quotes shared across wallets within this tick only.
+    if os.getenv("BRAIN_M4_LAB", "0") == "1":
+        from m4_lab import CONTROL, RECOVERY
+        for path in (CONTROL, RECOVERY):
+            wallets.append((path, "LAB M4 " + path, "early", .60, False))
     if os.getenv("BRAIN_PROTECT_LAB", "0") == "1" and os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
         from protection_lab import velas_filename
         for arm in ("control", "protect"):
@@ -1569,7 +1588,8 @@ def refresh_open_positions(stop_event=None):
                 continue
             print(f"V10 SALIDAS {'WATCHDOG 3s objetivo' if EXIT_WATCHDOG is not None else '15s'} | {label}", flush=True)
             simular_cartera([], path, label, confirm=True, entry_mode=mode,
-                            min_buy_ratio=ratio, profit_protection=protect)
+                            min_buy_ratio=ratio, profit_protection=protect,
+                            quarantine_m4=os.path.basename(path) == "fomo_lab_m4_recovery_r1.json")
         except FileNotFoundError:
             continue
         except Exception as exc:
