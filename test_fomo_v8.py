@@ -738,9 +738,79 @@ class BatchDiscoveryTests(unittest.TestCase):
         self.assertEqual(len(b.JSON_CACHE), 0)
 
 
+class MemoryIndexTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.temp.name, 'memory.json')
+        self.config = patch.object(b, 'MEMORY_FILE', self.path)
+        self.config.start()
+        b.MEMORY_INDEX.clear()
+        self.token = {'chain': 'solana', 'address': 'a', 'pair': 'p'}
+
+    def tearDown(self):
+        b.MEMORY_INDEX.clear()
+        self.config.stop()
+        self.temp.cleanup()
+
+    def write(self, rows):
+        with open(self.path + '.tmp', 'w') as handle:
+            json.dump(rows, handle)
+        os.replace(self.path + '.tmp', self.path)
+
+    def test_repeated_wallet_checks_read_history_once_with_exact_identity(self):
+        rows = [dict(self.token, price=1), dict(self.token, price=2),
+                dict(self.token, chain='base', price=3),
+                dict(self.token, pair='other', price=4)]
+        self.write(rows)
+        with patch.object(b, 'cargar_memoria', wraps=b.cargar_memoria) as read:
+            for _ in range(20):
+                self.assertEqual(b.ultima_lectura_par(self.token), rows[1])
+            self.assertEqual(read.call_count, 1)
+
+    def test_replacing_same_size_history_invalidates_index(self):
+        self.write([dict(self.token, price=1)])
+        self.assertEqual(b.ultima_lectura_par(self.token)['price'], 1)
+        self.write([dict(self.token, price=2)])
+        self.assertEqual(b.ultima_lectura_par(self.token)['price'], 2)
+
+    def test_removed_and_recreated_history_never_reuses_previous_rows(self):
+        self.write([self.token])
+        self.assertIsNotNone(b.ultima_lectura_par(self.token))
+        os.remove(self.path)
+        self.assertIsNone(b.ultima_lectura_par(self.token))
+        self.write([])
+        self.assertIsNone(b.ultima_lectura_par(self.token))
+
+    def test_index_does_not_cache_freshness_decisions(self):
+        now = datetime.now(timezone.utc)
+        self.write([dict(self.token, received_at=(now-timedelta(seconds=120)).isoformat(),
+                         hora=(now-timedelta(seconds=120)).isoformat(), change5m=5,
+                         change1h=20, price=1, liquidity=20000, vol5m=1000)])
+        current = dict(self.token, score=6, price=1.05, liquidity=20000,
+                       buyRatio5m=.7, trades5m=50, change5m=5, change1h=20,
+                       ageMinutes=30, vol5m=1200, received_at=now.isoformat())
+        for _ in range(2):
+            self.assertEqual(b.motivo_entrada(current, confirm=True),
+                             'comparacion: lectura previa fuera de 30-90 segundos')
+
+    def test_thread_indexes_are_independent(self):
+        import threading
+        self.write([self.token])
+        results = []
+        with patch.object(b, 'cargar_memoria', wraps=b.cargar_memoria) as read:
+            b.ultima_lectura_par(self.token)
+            worker = threading.Thread(target=lambda: results.append(b.ultima_lectura_par(self.token)))
+            worker.start()
+            worker.join()
+            b.ultima_lectura_par(self.token)
+            self.assertEqual(read.call_count, 2)
+        self.assertEqual(results, [self.token])
+
+
 if __name__ == '__main__':
     with contextlib.redirect_stdout(io.StringIO()):
         unittest.main()
+
 
 
 

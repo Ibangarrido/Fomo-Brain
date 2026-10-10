@@ -58,6 +58,7 @@ SESSION_WINDOW_SECONDS = 900
 MAX_CONFIRMATION_MINUTES = 1.5
 JSON_CACHE = ThreadCache()
 JSON_RECEIPTS = ThreadCache()
+MEMORY_INDEX = ThreadCache()
 DEX_CACHE_TTL_SECONDS = 3.0
 EXIT_WATCHDOG = None
 MARKET_RATE_LIMITER = MarketRateLimiter(0.25, {"api.geckoterminal.com": 2.1})
@@ -1308,10 +1309,29 @@ def pares_tokens_lote(targets):
 
 
 def ultima_lectura_par(token):
-    prev = [x for x in cargar_memoria()
-            if x.get("chain") == token["chain"] and x.get("address") == token["address"]
-            and x.get("pair") == token["pair"]]
-    return prev[-1] if prev else None
+    """Index unchanged history once per thread; never cache entry decisions."""
+    path = os.path.abspath(MEMORY_FILE)
+    try:
+        stat = os.stat(path)
+        signature = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size,
+                     stat.st_ino, cargar_memoria)
+    except OSError:
+        # Missing history and test readers remain uncached.
+        signature = None
+    cached = MEMORY_INDEX.get(path) if signature is not None else None
+    if cached is not None and cached[0] == signature:
+        index = cached[1]
+    else:
+        index = {}
+        for row in cargar_memoria():
+            index[(row.get("chain"), row.get("address"), row.get("pair"))] = row
+        if signature is not None:
+            if len(MEMORY_INDEX) >= 4 and path not in MEMORY_INDEX:
+                MEMORY_INDEX.clear()
+            MEMORY_INDEX[path] = (signature, index)
+    # Last row in file order, matching the previous implementation. Freshness
+    # and identity checks still run separately on every candidate and wallet.
+    return index.get((token["chain"], token["address"], token["pair"]))
 
 
 def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60, max_pair_age_minutes=60):
