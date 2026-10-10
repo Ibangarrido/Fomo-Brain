@@ -1137,6 +1137,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "unverified_quotes": stale, "valuation_complete": stale == 0,
         "verified_component": known_value, "realized_pnl": realized,
         "indicative_only_equity": indicative_only_equity})
+    from m4_lab import refresh_reference
+    m4_reference = refresh_reference(state, datetime.now(timezone.utc))
+    if m4_reference is not None:
+        state["observations"][-1]["m4_reference_valuation"] = dict(m4_reference)
     state["observations"] = state["observations"][-3000:]
     state["assumptions"] = {
         "initial_eur": 100, "max_trade_eur": 10, "new_entry_budget_eur": entry_budget,
@@ -1193,13 +1197,24 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     print(f"Liquido EUR {state['cash']:.2f} | reserva EUR {state['reserve']:.2f}")
     print(f"Abiertas={len(state['positions'])} | ventas registradas={len(state['closed'])}")
     if stale:
-        print(f"VALORACION INCOMPLETA: ultimo valor contable EUR {equity:.2f}; no es beneficio actual")
+        print("VALORACION INCOMPLETA: patrimonio actual desconocido; marcas historicas excluidas del valor actual")
         print(f"Parte valorada EUR {known_value:.2f}; resto desconocido")
         if indicative_only_equity is not None:
             print(f"VALOR INDICATIVO DE PRECIOS EUR {indicative_only_equity:.2f}; NO liquidable ni patrimonio verificable")
     else:
         print(f"Patrimonio estimado EUR {equity:.2f} | resultado EUR {equity - 100:+.2f}")
     print(f"Resultado realizado virtual EUR {realized:+.2f}")
+    if m4_reference is not None:
+        gross = m4_reference["gross_value_usdc"]
+        if gross is not None:
+            print(f"M4 REFERENCIA RECIENTE: cantidad={m4_reference['quantity']}"
+                  f" | bruto USDC {gross:.6f} | precio USDC {m4_reference['price_usdc']:.12f}"
+                  f" | recibido={m4_reference['received_at']}"
+                  " | neto y EUR desconocidos; NO es venta ni efectivo")
+        else:
+            print("M4 REFERENCIA ACTUAL DESCONOCIDA: sin cotizacion de cantidad exacta recibida en los ultimos 120s")
+        print(f"M4 HISTORICO: {m4_reference['historical_mark']} unidades del modelo"
+              f" | fecha={m4_reference['historical_mark_at']} | NO es valor actual")
     for pos in state["positions"]:
         print(f"POSICION {pos['symbol']} | chain={pos['chain']} | token={pos['address']} | "
               f"estado={pos['quote_status']} | ultima_cotizacion={pos['last_quote_at']}")
@@ -1209,7 +1224,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                   f" | precio_sin_cambio_s={audit['price_unchanged_seconds']:.1f}"
                   f" | snapshot_sin_cambio_s={audit['snapshot_unchanged_seconds']:.1f}"
                   " | recepcion NO demuestra frescura ni ejecucion")
-    print(f"Cotizaciones no verificables={stale}; conservan ultimo valor, NO son liquidez")
+    print(f"Cotizaciones no verificables={stale}; marcas historicas solo para auditoria, NO son liquidez")
     print("Costes supuestos POR LADO: comision 1%, deslizamiento 2%; FX fijo 1:1")
     print("Stops: " + str(state["assumptions"]["exit_monitor"]) + "; NO garantizados")
 
@@ -1843,6 +1858,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 

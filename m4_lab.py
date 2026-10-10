@@ -27,6 +27,7 @@ def m4_diagnostic(state, audit=None, now=None):
               "historical_mark_unit": "paper model units; not USDC",
               "historical_mark_at": pos.get("last_quote_at"),
               "quantity": pos.get("quantity"), "gross_quote_usdc": None,
+              "reference_price_usdc": None, "reference_source": None,
               "net_value_usdc": None, "execution_verified": False,
               "costs_complete": False, "fx_applied": False}
     result["market_blocker"] = pos.get("quote_error") if pos.get("quote_status") != "OK" else None
@@ -52,12 +53,16 @@ def m4_diagnostic(state, audit=None, now=None):
         try:
             if (record.get("kind") != "JUPITER" or record.get("chain") != "solana"
                     or record.get("address") != MINT or record.get("quantity") != pos.get("quantity")
-                    or record.get("status") != "QUOTE_ONLY"):
+                    or record.get("status") != "QUOTE_ONLY"
+                    or record.get("output_mint") != "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"):
                 continue
             received = datetime.fromisoformat(record["received_at"])
             age = (now - received).total_seconds()
             value = record["expected_out_usdc"]
-            if (not 0 <= age <= 120 or type(value) not in (int, float)
+            quantity = pos.get("quantity")
+            if (not 0 <= age <= 120 or type(quantity) not in (int, float)
+                    or not math.isfinite(quantity) or quantity <= 0
+                    or type(value) not in (int, float)
                     or not math.isfinite(value) or value <= 0):
                 continue
             candidates.append((received, age, value))
@@ -66,8 +71,36 @@ def m4_diagnostic(state, audit=None, now=None):
     if candidates:
         received, age, value = max(candidates, key=lambda row: row[0])
         result.update(status="RECENT_GROSS_QUOTE_ONLY", gross_quote_usdc=value,
+                      reference_price_usdc=value / pos["quantity"],
+                      reference_source="Jupiter exact-quantity quote",
                       quote_received_at=received.isoformat(), quote_age_seconds=age)
     return result
+
+
+def refresh_reference(state, now=None):
+    """Replace the report reference, never the mark, cash, risk or fill history."""
+    positions = [p for p in state.get("positions", [])
+                 if p.get("chain") == "solana" and p.get("address") == MINT
+                 and p.get("quote_status") != "OK"]
+    if len(positions) != 1:
+        state.pop("m4_reference_valuation", None)
+        return None
+    diagnostic = m4_diagnostic(state, now=now)
+    # Recompute each time: expired evidence must not remain a current reference.
+    state["m4_reference_valuation"] = {
+        "version": "m4-reference-r1", "gross_value_usdc": diagnostic["gross_quote_usdc"],
+        "price_usdc": diagnostic["reference_price_usdc"],
+        "quantity": diagnostic["quantity"], "source": diagnostic["reference_source"],
+        "received_at": diagnostic.get("quote_received_at"),
+        "receipt_age_seconds": diagnostic.get("quote_age_seconds"),
+        "evaluated_at": (now or datetime.now(timezone.utc)).isoformat(),
+        "status": diagnostic["status"], "net_value_usdc": None,
+        "eur_value": None, "market_data_age_seconds": None,
+        "costs_complete": False, "fx_applied": False, "execution_verified": False,
+        "historical_mark": diagnostic["historical_mark"],
+        "historical_mark_at": diagnostic["historical_mark_at"],
+        "historical_mark_is_current": False}
+    return state["m4_reference_valuation"]
 
 
 def report_snapshot(path):
@@ -151,4 +184,5 @@ def run(ranking, simulator):
     rows["total_equity_advantage"] = None
     print("LAB M4 COMPARACION " + json.dumps(rows, allow_nan=False)
           + " | componente conocido NO es rentabilidad total; M4 permanece abierta")
+
 

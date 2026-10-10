@@ -38,6 +38,7 @@ class M4Tests(unittest.TestCase):
     def diagnostic_record(self, now, **changes):
         return dict({"kind": "JUPITER", "chain": "solana", "address": lab.MINT,
                      "quantity": 100, "status": "QUOTE_ONLY", "expected_out_usdc": .108,
+                     "output_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
                      "received_at": now.isoformat()}, **changes)
 
     def test_recent_quote_does_not_revalue_sell_or_convert_currency(self):
@@ -55,6 +56,7 @@ class M4Tests(unittest.TestCase):
         for changes in ({"received_at": (now-timedelta(seconds=121)).isoformat()},
                         {"received_at": (now+timedelta(seconds=1)).isoformat()},
                         {"address": "other"}, {"quantity": 101},
+                        {"output_mint": "other"},
                         {"expected_out_usdc": float('nan')}, {"expected_out_usdc": True},
                         {"received_at": "2026-10-09T19:00:00"}):
             with self.subTest(changes=changes):
@@ -66,6 +68,49 @@ class M4Tests(unittest.TestCase):
         audit = {"records": [self.diagnostic_record(now, expected_out_usdc=.12),
                              self.diagnostic_record(now-timedelta(seconds=20))]}
         self.assertEqual(lab.m4_diagnostic(self.seed, audit, now)["gross_quote_usdc"], .12)
+
+    def test_reference_reports_exact_quantity_and_expires_without_fabricating_cash(self):
+        now = datetime.now(timezone.utc)
+        with open("fomo_quote_audit.json", "w") as handle:
+            json.dump({"records": [self.diagnostic_record(now)]}, handle)
+        original = copy.deepcopy(self.seed)
+        reference = lab.refresh_reference(self.seed, now)
+        self.assertEqual(reference["gross_value_usdc"], .108)
+        self.assertAlmostEqual(reference["price_usdc"], .00108)
+        self.assertIsNone(reference["net_value_usdc"])
+        self.assertIsNone(reference["eur_value"])
+        self.assertFalse(reference["execution_verified"])
+        for field in original:
+            self.assertEqual(self.seed[field], original[field])
+        expired = lab.refresh_reference(self.seed, now + timedelta(seconds=121))
+        self.assertIsNone(expired["gross_value_usdc"])
+        self.assertEqual(self.seed["positions"][0]["mark_net"], 6.49)
+
+    def test_simulation_persists_reference_and_keeps_unknown_risk_pause(self):
+        now = datetime.now(timezone.utc)
+        with open("fomo_quote_audit.json", "w") as handle:
+            json.dump({"records": [self.diagnostic_record(now)]}, handle)
+        lab.bootstrap()
+        output = io.StringIO()
+        with patch.object(brain, "cotizar_posicion", side_effect=ValueError("No quote")), \
+                contextlib.redirect_stdout(output):
+            brain.simular_cartera([], lab.CONTROL)
+        state = self.read(lab.CONTROL)
+        reference = state["observations"][-1]["m4_reference_valuation"]
+        self.assertEqual(reference["gross_value_usdc"], .108)
+        self.assertEqual(state["cash"], 82)
+        self.assertEqual(state["reserve"], 10)
+        self.assertEqual(state["closed"], [])
+        self.assertIsNone(state["observations"][-1]["estimated_equity"])
+        self.assertTrue(any("ENTRADAS PAUSADAS" in n for n in state["last_run_notes"]))
+        self.assertIn("bruto USDC 0.108000", output.getvalue())
+        self.assertIn("NO es valor actual", output.getvalue())
+
+    def test_verified_or_absent_m4_removes_old_fallback_reference(self):
+        self.seed["m4_reference_valuation"] = {"gross_value_usdc": 1}
+        self.seed["positions"][0]["quote_status"] = "OK"
+        self.assertIsNone(lab.refresh_reference(self.seed))
+        self.assertNotIn("m4_reference_valuation", self.seed)
 
     def test_missing_audit_retains_unknown_value(self):
         result = lab.m4_diagnostic(self.seed)
@@ -177,4 +222,5 @@ class M4Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
