@@ -5,6 +5,7 @@ import urllib.request
 import os
 import math
 import time
+from functools import wraps
 from exit_watchdog import ThreadCache, wallet_transaction, wallet_lock, ExitWatchdog, MarketRateLimiter
 
 # FOMO Brain v9 - DEX + FOMO Trader Radar + simulacion comparativa
@@ -815,6 +816,36 @@ def record_unverified_quote(pos, error, now):
     pos["seconds_since_last_verified_quote"] = pos["quote_age_seconds"]
 
 
+def measure_wallet_latency(function):
+    """Measure wall time including wallet lock waits; never cache decisions."""
+    @wraps(function)
+    def measured(ranking, paper_file=V10_FILE, label="V10 EARLY", *args, **kwargs):
+        started = time.monotonic()
+        ages = []
+        now = datetime.now(timezone.utc)
+        for token in ranking:
+            try:
+                received = datetime.fromisoformat(token["received_at"])
+                age = (now - received).total_seconds()
+                if age >= 0:
+                    ages.append(age)
+            except (KeyError, ValueError, TypeError):
+                pass
+        try:
+            return function(ranking, paper_file, label, *args, **kwargs)
+        finally:
+            print("LATENCIA CARTERA " + json.dumps({
+                "label": label, "seconds": round(time.monotonic() - started, 3),
+                "candidates": len(ranking), "exit_only": not bool(ranking),
+                "includes_lock_wait": True,
+                "signal_receipt_age_max_seconds_at_call": round(max(ages), 3) if ages else None,
+                "signal_receipts_measured": len(ages),
+                "provider_market_age": None,
+            }, ensure_ascii=False), flush=True)
+    return measured
+
+
+@measure_wallet_latency
 @wallet_transaction
 def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False):
     from m4_lab import RECOVERY, is_quarantined
@@ -1039,7 +1070,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             price, entry_liquidity, fresh_pair = cotizar_posicion(token)
             fresh = analizar_par(fresh_pair)
             if fresh is None:
-                notes.append(f"DESCARTE {key} | par fresco no supera filtros")
+                reasons = [item["reason"] for item in REJECTIONS
+                           if item.get("chain") == token["chain"]
+                           and item.get("address") == token["address"]
+                           and item.get("pair") == fresh_pair.get("pairAddress")]
+                detail = reasons[-1] if reasons else "motivo no disponible"
+                notes.append(f"DESCARTE {key} | par fresco no supera filtros: {detail}")
                 continue
             # No perseguir una cotizacion que ya se alejo de la señal del radar.
             drift = variacion(price, token.get("price"))
@@ -1538,7 +1574,9 @@ def main(refresh_events=True):
 
     candidatos = {}
 
+    discovery_started = time.monotonic()
     pairs, sources = descubrir_pares()
+    print(f"LATENCIA DESCUBRIMIENTO seconds={time.monotonic() - discovery_started:.3f}", flush=True)
     for pool_key, pair in pairs.items():
         service_discovery_exits()
         resultado = analizar_par(pair)
@@ -1589,7 +1627,7 @@ def main(refresh_events=True):
     )
 
     service_discovery_exits()
-    print("V10 EARLY: edad del PAR 2-60m; no equivale a edad del token ni a graduacion FOMO. Subida1h >150% es aviso.")
+    print("V10 EARLY: edad del PAR 2-60m; no equivale a edad del token ni a graduacion FOMO. Subida1h >150% bloquea nuevas entradas EARLY.")
     simular_cartera(ranking, V10_FILE, "V10 EARLY", confirm=True)
     try:
         from candle_lab import guard as candle_guard
@@ -1866,7 +1904,17 @@ def run_session(cycles=1, interval_seconds=60):
             JSON_CACHE.clear()
             REJECTIONS.clear()
             print(f"V10 LECTURA {index + 1}/{cycles}", flush=True)
-            main(refresh_events=index == 0)
+            cycle_started = time.monotonic()
+            try:
+                main(refresh_events=index == 0)
+            finally:
+                elapsed = time.monotonic() - cycle_started
+                print("LATENCIA CICLO " + json.dumps({
+                    "cycle": index + 1, "requested": cycles,
+                    "seconds": round(elapsed, 3),
+                    "over_interval_seconds": round(max(0, elapsed - interval_seconds), 3),
+                    "session_elapsed_seconds": round(time.monotonic() - started, 3),
+                }), flush=True)
             if EXIT_WATCHDOG is not None and EXIT_WATCHDOG.error is not None:
                 raise RuntimeError("Vigilante de salidas fallo") from EXIT_WATCHDOG.error
             if index + 1 < cycles:
