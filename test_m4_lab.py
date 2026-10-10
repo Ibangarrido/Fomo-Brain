@@ -27,6 +27,29 @@ class M4Tests(unittest.TestCase):
         self.assertIsNone(result["net_value_usdc"])
         self.assertEqual(self.seed, before)
 
+    def test_raydium_receipt_expires_after_30_seconds_without_changing_balances(self):
+        now = datetime.now(timezone.utc)
+        before = copy.deepcopy(self.seed)
+        ray = self.diagnostic_record(now, kind="RAYDIUM")
+        for age, valid in ((30, True), (31, False)):
+            result = lab.m4_diagnostic(self.seed, {"records": [ray]},
+                                       now + timedelta(seconds=age))
+            self.assertEqual(result["gross_quote_usdc"] is not None, valid)
+            self.assertEqual(result["provider_diagnostics"]["RAYDIUM"]
+                             ["evidence_current"], valid)
+        self.assertEqual(self.seed, before)
+
+    def test_expired_raydium_does_not_hide_valid_jupiter_reference(self):
+        now = datetime.now(timezone.utc)
+        ray = self.diagnostic_record(now - timedelta(seconds=31), kind="RAYDIUM",
+                                     expected_out_usdc=.2)
+        jup = self.diagnostic_record(now - timedelta(seconds=60))
+        result = lab.m4_diagnostic(self.seed, {"records": [ray, jup]}, now)
+        self.assertEqual(result["gross_quote_usdc"], .108)
+        self.assertEqual(result["recent_quote_providers"], ["JUPITER"])
+        self.assertEqual(result["quote_receipt_ttl_seconds"], 120)
+        self.assertIsNone(result["net_value_usdc"])
+
     def test_complete_provider_fee_fields_still_require_conversion_and_execution(self):
         now = datetime.now(timezone.utc)
         record = self.diagnostic_record(now, fee_evidence={
@@ -324,6 +347,7 @@ class M4Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

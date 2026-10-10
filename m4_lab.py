@@ -21,6 +21,10 @@ ISOLATION_FILES = {
 }
 INHERITED_QUANTITY = 52777.58285257178
 
+# Raydium documents ~30s validity. Jupiter retains the existing local
+# receipt-age ceiling; neither ceiling verifies market freshness or execution.
+QUOTE_RECEIPT_TTL = {"RAYDIUM": 30, "JUPITER": 120}
+
 
 def quote_failure(record):
     """Evidence-based failure class; never infer no liquidity from an HTTP error."""
@@ -133,7 +137,9 @@ def m4_diagnostic(state, audit=None, now=None):
         received, age, latest = max(attempts, key=lambda item: item[0])
         result['latest_attempt'] = {
             'at': received.isoformat(), 'age_seconds': age,
-            'evidence_current': age <= 120, 'provider_status': latest.get('status'),
+            'evidence_current': age <= QUOTE_RECEIPT_TTL[latest['kind']],
+            'receipt_ttl_seconds': QUOTE_RECEIPT_TTL[latest['kind']],
+            'provider_status': latest.get('status'),
             'diagnosis': ('QUOTE_ONLY_COSTS_INCOMPLETE' if latest.get('status') == 'QUOTE_ONLY'
                           else quote_failure(latest)),
             'http_status': latest.get('http_status'),
@@ -144,7 +150,8 @@ def m4_diagnostic(state, audit=None, now=None):
         for received, age, record in sorted(attempts, key=lambda item: item[0]):
             result['provider_diagnostics'][record['kind']] = {
                 'at': received.isoformat(), 'age_seconds': age,
-                'evidence_current': age <= 120,
+                'evidence_current': age <= QUOTE_RECEIPT_TTL[record['kind']],
+                'receipt_ttl_seconds': QUOTE_RECEIPT_TTL[record['kind']],
                 'status': record.get('status'),
                 'diagnosis': ('QUOTE_ONLY_COSTS_INCOMPLETE'
                               if record.get('status') == 'QUOTE_ONLY'
@@ -162,7 +169,7 @@ def m4_diagnostic(state, audit=None, now=None):
             age = (now - received).total_seconds()
             value = record["expected_out_usdc"]
             quantity = pos.get("quantity")
-            if (not 0 <= age <= 120 or type(quantity) not in (int, float)
+            if (not 0 <= age <= QUOTE_RECEIPT_TTL[record['kind']] or type(quantity) not in (int, float)
                     or not math.isfinite(quantity) or quantity <= 0
                     or type(value) not in (int, float)
                     or not math.isfinite(value) or value <= 0):
@@ -190,6 +197,7 @@ def m4_diagnostic(state, audit=None, now=None):
                       reference_price_usdc=value / pos["quantity"],
                       reference_source=str(provider) + " exact-quantity quote",
                       quote_received_at=received.isoformat(), quote_age_seconds=age,
+                      quote_receipt_ttl_seconds=QUOTE_RECEIPT_TTL[record["kind"]],
                       quoted_threshold_usdc=threshold,
                       threshold_is_guaranteed=False,
                       missing_network_fee_fields=missing,
@@ -224,6 +232,7 @@ def refresh_reference(state, now=None):
         "quantity": diagnostic["quantity"], "source": diagnostic["reference_source"],
         "received_at": diagnostic.get("quote_received_at"),
         "receipt_age_seconds": diagnostic.get("quote_age_seconds"),
+        "receipt_ttl_seconds": diagnostic.get("quote_receipt_ttl_seconds"),
         "evaluated_at": (now or datetime.now(timezone.utc)).isoformat(),
         "status": diagnostic["status"], "net_value_usdc": None,
         "eur_value": None, "market_data_age_seconds": None,
@@ -315,6 +324,7 @@ def run(ranking, simulator):
     rows["total_equity_advantage"] = None
     print("LAB M4 COMPARACION " + json.dumps(rows, allow_nan=False)
           + " | componente conocido NO es rentabilidad total; M4 permanece abierta")
+
 
 
 
