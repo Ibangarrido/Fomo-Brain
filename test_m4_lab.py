@@ -13,6 +13,28 @@ from test_fomo_v8 import pair
 
 
 class M4Tests(unittest.TestCase):
+    def test_failure_categories_do_not_confuse_api_failure_with_liquidity(self):
+        for record, expected in (({'http_status':429}, 'RATE_LIMIT'),
+                                 ({'http_status':403}, 'AUTH_OR_ACCESS'),
+                                 ({'http_status':503,'error':'no route found'}, 'PROVIDER_FAILURE'),
+                                 ({'error':'TimeoutError: timed out'}, 'TIMEOUT'),
+                                 ({'provider_error':{'error':'COULD_NOT_FIND_ANY_ROUTE'}}, 'NO_ROUTE_REPORTED'),
+                                 ({'error':'bad response'}, 'UNCLASSIFIED_FAILURE')):
+            self.assertEqual(lab.quote_failure(record), expected)
+
+    def test_latest_failure_is_reported_separately_from_older_gross_quote(self):
+        now = datetime.now(timezone.utc)
+        failure = dict(self.diagnostic_record(now), status='UNAVAILABLE', http_status=429)
+        audit = {'records':[failure, self.diagnostic_record(now-timedelta(seconds=10))]}
+        before = copy.deepcopy(self.seed)
+        result = lab.m4_diagnostic(self.seed, audit, now)
+        self.assertEqual(result['latest_attempt']['diagnosis'], 'RATE_LIMIT')
+        self.assertEqual(result['gross_quote_usdc'], .108)
+        stale = lab.m4_diagnostic(self.seed, audit, now+timedelta(seconds=121))
+        self.assertFalse(stale['latest_attempt']['evidence_current'])
+        self.assertIsNone(stale['gross_quote_usdc'])
+        self.assertEqual(self.seed, before)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.previous = os.getcwd()
@@ -222,5 +244,6 @@ class M4Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

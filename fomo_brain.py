@@ -1215,6 +1215,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     print(f"Resultado realizado virtual EUR {realized:+.2f}")
     if m4_reference is not None:
         gross = m4_reference["gross_value_usdc"]
+        attempt = m4_reference.get("latest_attempt")
+        if attempt:
+            print(f"M4 DIAGNOSTICO: {attempt['diagnosis']} | fecha={attempt['at']}"
+                  f" | evidencia_reciente={attempt['evidence_current']} | HTTP={attempt['http_status']}")
         if gross is not None:
             print(f"M4 REFERENCIA RECIENTE: cantidad={m4_reference['quantity']}"
                   f" | bruto USDC {gross:.6f} | precio USDC {m4_reference['price_usdc']:.12f}"

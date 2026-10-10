@@ -22,6 +22,28 @@ ISOLATION_FILES = {
 INHERITED_QUANTITY = 52777.58285257178
 
 
+def quote_failure(record):
+    """Evidence-based failure class; never infer no liquidity from an HTTP error."""
+    status = record.get('http_status')
+    if status == 429:
+        return 'RATE_LIMIT'
+    if status in (401, 403):
+        return 'AUTH_OR_ACCESS'
+    if type(status) is int and status >= 500:
+        return 'PROVIDER_FAILURE'
+    error = str(record.get('error', '')).lower()
+    provider = record.get('provider_error', {})
+    if isinstance(provider, dict):
+        error += ' ' + ' '.join(str(v).lower() for v in provider.values())
+    if any(code in error for code in ('could_not_find_any_route', 'no_routes_found', 'no route found')):
+        return 'NO_ROUTE_REPORTED'
+    if 'timeout' in error or 'timed out' in error:
+        return 'TIMEOUT'
+    if record.get('status') == 'SKIPPED':
+        return 'INPUT_NOT_VALIDATED'
+    return 'UNCLASSIFIED_FAILURE'
+
+
 def isolate_inherited(state, path, now):
     """Migrate only the observed historical M4; keep accounting and risk intact."""
     if os.getenv("BRAIN_M4_ISOLATION", "0") != "1" or os.path.basename(path) not in ISOLATION_FILES:
@@ -85,9 +107,31 @@ def m4_diagnostic(state, audit=None, now=None):
     if not isinstance(audit, dict):
         return result
     candidates = []
+    attempts = []
     records = audit.get("records")
     if not isinstance(records, list):
         return result
+    for record in records:
+        try:
+            if (record.get('kind') != 'JUPITER' or record.get('chain') != 'solana'
+                    or record.get('address') != MINT or record.get('quantity') != pos.get('quantity')):
+                continue
+            received = datetime.fromisoformat(record.get('received_at') or record['snapshot_at'])
+            age = (now - received).total_seconds()
+            if age < 0:
+                continue
+            attempts.append((received, age, record))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+    if attempts:
+        received, age, latest = max(attempts, key=lambda item: item[0])
+        result['latest_attempt'] = {
+            'at': received.isoformat(), 'age_seconds': age,
+            'evidence_current': age <= 120, 'provider_status': latest.get('status'),
+            'diagnosis': ('QUOTE_ONLY_COSTS_INCOMPLETE' if latest.get('status') == 'QUOTE_ONLY'
+                          else quote_failure(latest)),
+            'http_status': latest.get('http_status'),
+            'execution_verified': False}
     for record in records:
         try:
             if (record.get("kind") != "JUPITER" or record.get("chain") != "solana"
@@ -128,6 +172,7 @@ def refresh_reference(state, now=None):
     # Recompute each time: expired evidence must not remain a current reference.
     state["m4_reference_valuation"] = {
         "version": "m4-reference-r1", "gross_value_usdc": diagnostic["gross_quote_usdc"],
+        "latest_attempt": diagnostic.get("latest_attempt"),
         "price_usdc": diagnostic["reference_price_usdc"],
         "quantity": diagnostic["quantity"], "source": diagnostic["reference_source"],
         "received_at": diagnostic.get("quote_received_at"),

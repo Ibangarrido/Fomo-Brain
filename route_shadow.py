@@ -408,6 +408,7 @@ class RouteShadow:
                         comparison.update(http_diagnostics(exc))
                         comparison.update(status="UNAVAILABLE", error=type(exc).__name__ + ": " + str(exc)[:240])
                     comparison["total_request_seconds"] = time.monotonic() - requested
+                comparison.setdefault("received_at", datetime.now(timezone.utc).isoformat())
                 comparison["position_valuations"] = position_valuations(item, comparison)
                 self.audit.save("JUPITER", comparison)
                 print("JUPITER SHADOW " + json.dumps(comparison, ensure_ascii=False, allow_nan=False), flush=True)
@@ -426,4 +427,5 @@ class RouteShadow:
             except Exception as exc:
                 print(f"ROUTE SHADOW ERROR {type(exc).__name__}: {exc}", flush=True)
             self.stop_event.wait(min(self.interval, max(0, self.duration - (time.monotonic() - started))))
+
 
