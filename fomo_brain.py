@@ -815,10 +815,14 @@ def record_unverified_quote(pos, error, now):
 
 
 @wallet_transaction
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False):
     from m4_lab import RECOVERY, is_quarantined
     rebound_files = {"fomo_lab_rebound_control_r1.json", "fomo_lab_rebound_extended_r1.json"}
     basename = os.path.basename(paper_file)
+    from targets_lab import FILES as targets_files, STAGED, decision as targets_decision
+    targets_lab = basename in targets_files
+    if type(staged_targets) is not bool or (staged_targets and basename != STAGED):
+        raise ValueError("Objetivos escalonados reservados al laboratorio targets")
     if type(quarantine_m4) is not bool or (quarantine_m4 and basename not in rebound_files | {RECOVERY}):
         raise ValueError("Cuarentena M4 reservada al laboratorio aislado")
     if max_pair_age_minutes != 60 and (max_pair_age_minutes != 1440 or basename != "fomo_lab_rebound_extended_r1.json" or entry_mode != "early" or not confirm):
@@ -862,6 +866,13 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             raise ValueError("Falta bifurcacion rebound; no reiniciar")
         if max_pair_age_minutes != (1440 if expected_arm == "extended" else 60):
             raise ValueError("Politica de edad incompatible con cartera rebound")
+    if targets_lab:
+        arm = "staged" if basename == STAGED else "control"
+        if (state.get("targets_experiment") != {"version": "targets-r1", "arm": arm}
+                or staged_targets != (arm == "staged") or not confirm
+                or entry_mode != "early" or profit_protection or quarantine_m4
+                or max_pair_age_minutes != 60 or min_buy_ratio != .60):
+            raise ValueError("Laboratorio targets incompatible; no reiniciar")
     # Preserve the change point; cumulative portfolios mix old and new policies.
     data_policy = {"version": "quote-r2", "early_entry_version": "early-r5",
                    "early_max_change1h_pct": 150, "crosscheck_drop_pct": 30,
@@ -961,6 +972,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         if partial:
             reason = "PARCIAL +30%"
         fraction = 0.5 if partial else 1.0
+        next_stage = pos.get("targets_stage", 0)
+        if staged_targets:
+            reason, partial, fraction, next_stage = targets_decision(pos, pnl_pct, age)
         if reason:
             proceeds = pos["mark_net"] * fraction
             allocated_cost = pos["budget"] * fraction
@@ -977,9 +991,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                                         exit_risk_policy_version=V10_RISK_VERSION,
                                         stop_overshoot_pct=max(0, -15 - pnl_pct) if reason == "STOP -15%" else None))
             if partial:
-                pos["quantity"] *= 0.5
-                pos["budget"] *= 0.5
-                pos["mark_net"] *= 0.5
+                pos["quantity"] *= 1 - fraction
+                pos["budget"] *= 1 - fraction
+                pos["mark_net"] *= 1 - fraction
+                if staged_targets:
+                    pos["targets_stage"] = next_stage
                 pos["partial_taken"] = True
                 pos["peak_price"] = price
             else:
@@ -1156,6 +1172,13 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         state["assumptions"]["age_experiment"] = "age-r1; only age ceiling differs; no proof of rebound structure"
     state["assumptions"]["profit_protection"] = {"enabled": profit_protection, "arm_net_pct": 12, "exit_net_pct": 2,
                                                 "fills": "Precio observado, no garantiza +2%"}
+    if targets_lab:
+        state["assumptions"]["targets_experiment"] = state["targets_experiment"]
+        state["assumptions"]["comparison_scope"] = "same entry rules; fills/cash/risk may diverge; not guaranteed matched entries"
+        if staged_targets:
+            state["assumptions"].update(partial_target_net_pct=15, trailing_peak_pct=None,
+                targets_net_pct=[15, 30, 45], targets_original_fractions=[.5, .25, .25],
+                protection_after_tp1_net_pct=2)
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -1558,6 +1581,12 @@ def main(refresh_events=True):
             run_rebound_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB REBOUND ERROR: " + str(exc) + "; historiales conservados")
+    if os.getenv("BRAIN_TARGETS_LAB", "0") == "1" and os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
+        try:
+            from targets_lab import run as run_targets
+            run_targets(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB TARGETS ERROR: " + str(exc) + "; no reiniciar carteras")
     if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         try:
             from opportunity_audit import observe
@@ -1711,6 +1740,10 @@ def refresh_open_positions(stop_event=None):
         for arm in ("control", "volume"):
             wallets.append((f"fomo_lab_volume_impulse_{arm}_r1.json",
                             f"LAB VOLUME IMPULSE {arm.upper()} r1", "impulse", .60, False))
+    if os.getenv("BRAIN_TARGETS_LAB", "0") == "1":
+        from targets_lab import FILES
+        for path in FILES:
+            wallets.append((path, "LAB TARGETS " + path, "early", .60, False))
     for path, label, mode, ratio, protect in wallets:
         if stop_event is not None and stop_event.is_set():
             break
@@ -1727,7 +1760,8 @@ def refresh_open_positions(stop_event=None):
             simular_cartera([], path, label, confirm=True, entry_mode=mode,
                             min_buy_ratio=ratio, profit_protection=protect,
                             quarantine_m4=os.path.basename(path) in {"fomo_lab_m4_recovery_r1.json", "fomo_lab_rebound_control_r1.json", "fomo_lab_rebound_extended_r1.json"},
-                            max_pair_age_minutes=1440 if os.path.basename(path) == "fomo_lab_rebound_extended_r1.json" else 60)
+                            max_pair_age_minutes=1440 if os.path.basename(path) == "fomo_lab_rebound_extended_r1.json" else 60,
+                            staged_targets=os.path.basename(path) == "fomo_lab_targets_staged_r1.json")
         except FileNotFoundError:
             continue
         except Exception as exc:
@@ -1809,6 +1843,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 
