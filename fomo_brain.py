@@ -1220,6 +1220,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             print(f"M4 DIAGNOSTICO: {attempt['diagnosis']} | fecha={attempt['at']}"
                   f" | evidencia_reciente={attempt['evidence_current']} | HTTP={attempt['http_status']}")
         if gross is not None:
+            print(f"M4 COSTES PENDIENTES: {m4_reference.get('net_value_blockers')}"
+                  f" | campos_red={m4_reference.get('missing_network_fee_fields')}"
+                  f" | conversion={m4_reference.get('eur_value_blockers')}"
+                  f" | umbral_cotizado_USDC={m4_reference.get('quoted_threshold_usdc')}"
+                  " | umbral NO garantizado"
+                  f" | fuente={m4_reference['source']}")
             print(f"M4 REFERENCIA RECIENTE: cantidad={m4_reference['quantity']}"
                   f" | bruto USDC {gross:.6f} | precio USDC {m4_reference['price_usdc']:.12f}"
                   f" | recibido={m4_reference['received_at']}"
@@ -1871,6 +1877,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 

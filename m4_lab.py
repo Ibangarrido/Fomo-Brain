@@ -113,7 +113,7 @@ def m4_diagnostic(state, audit=None, now=None):
         return result
     for record in records:
         try:
-            if (record.get('kind') != 'JUPITER' or record.get('chain') != 'solana'
+            if (record.get('kind') not in ('JUPITER', 'RAYDIUM') or record.get('chain') != 'solana'
                     or record.get('address') != MINT or record.get('quantity') != pos.get('quantity')):
                 continue
             received = datetime.fromisoformat(record.get('received_at') or record['snapshot_at'])
@@ -131,10 +131,11 @@ def m4_diagnostic(state, audit=None, now=None):
             'diagnosis': ('QUOTE_ONLY_COSTS_INCOMPLETE' if latest.get('status') == 'QUOTE_ONLY'
                           else quote_failure(latest)),
             'http_status': latest.get('http_status'),
+            'provider': latest.get('provider') or latest.get('kind'),
             'execution_verified': False}
     for record in records:
         try:
-            if (record.get("kind") != "JUPITER" or record.get("chain") != "solana"
+            if (record.get("kind") not in ("JUPITER", "RAYDIUM") or record.get("chain") != "solana"
                     or record.get("address") != MINT or record.get("quantity") != pos.get("quantity")
                     or record.get("status") != "QUOTE_ONLY"
                     or record.get("output_mint") != "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"):
@@ -148,15 +149,33 @@ def m4_diagnostic(state, audit=None, now=None):
                     or type(value) not in (int, float)
                     or not math.isfinite(value) or value <= 0):
                 continue
-            candidates.append((received, age, value))
+            candidates.append((received, age, value, record))
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
     if candidates:
-        received, age, value = max(candidates, key=lambda row: row[0])
+        received, age, value, record = max(candidates, key=lambda row: row[0])
+        provider = record.get("provider") or record["kind"]
+        threshold = record.get("threshold_usdc")
+        if (type(threshold) not in (int, float) or not math.isfinite(threshold)
+                or not 0 <= threshold <= value):
+            threshold = None
+        fees = record.get("fee_evidence")
+        fees = fees if isinstance(fees, dict) else {}
+        network_fields = ("signatureFeeLamports", "prioritizationFeeLamports", "rentFeeLamports")
+        declared = fees.get("provider_network_fee_lamports")
+        declared = declared if isinstance(declared, dict) else {}
+        missing = [key for key in network_fields
+                   if type(declared.get(key)) is not int or declared[key] < 0]
         result.update(status="RECENT_GROSS_QUOTE_ONLY", gross_quote_usdc=value,
                       reference_price_usdc=value / pos["quantity"],
-                      reference_source="Jupiter exact-quantity quote",
-                      quote_received_at=received.isoformat(), quote_age_seconds=age)
+                      reference_source=str(provider) + " exact-quantity quote",
+                      quote_received_at=received.isoformat(), quote_age_seconds=age,
+                      quoted_threshold_usdc=threshold,
+                      threshold_is_guaranteed=False,
+                      missing_network_fee_fields=missing,
+                      net_value_blockers=(["NETWORK_FEE_FIELDS_MISSING"] if missing else [])
+                          + ["NETWORK_FEE_CONVERSION_UNVERIFIED", "EXECUTION_COSTS_UNVERIFIED"],
+                      eur_value_blockers=["USDC_EUR_CONVERSION_UNVERIFIED"])
     return result
 
 
@@ -173,6 +192,11 @@ def refresh_reference(state, now=None):
     state["m4_reference_valuation"] = {
         "version": "m4-reference-r1", "gross_value_usdc": diagnostic["gross_quote_usdc"],
         "latest_attempt": diagnostic.get("latest_attempt"),
+        "quoted_threshold_usdc": diagnostic.get("quoted_threshold_usdc"),
+        "threshold_is_guaranteed": False,
+        "missing_network_fee_fields": diagnostic.get("missing_network_fee_fields"),
+        "net_value_blockers": diagnostic.get("net_value_blockers"),
+        "eur_value_blockers": diagnostic.get("eur_value_blockers"),
         "price_usdc": diagnostic["reference_price_usdc"],
         "quantity": diagnostic["quantity"], "source": diagnostic["reference_source"],
         "received_at": diagnostic.get("quote_received_at"),
@@ -268,6 +292,7 @@ def run(ranking, simulator):
     rows["total_equity_advantage"] = None
     print("LAB M4 COMPARACION " + json.dumps(rows, allow_nan=False)
           + " | componente conocido NO es rentabilidad total; M4 permanece abierta")
+
 
 
 

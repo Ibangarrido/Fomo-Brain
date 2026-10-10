@@ -13,6 +13,47 @@ from test_fomo_v8 import pair
 
 
 class M4Tests(unittest.TestCase):
+    def test_raydium_fallback_reports_actual_source_without_changing_accounting(self):
+        now = datetime.now(timezone.utc)
+        before = copy.deepcopy(self.seed)
+        record = self.diagnostic_record(now, kind="RAYDIUM",
+            provider="Raydium Trade API", threshold_usdc=.105)
+        result = lab.m4_diagnostic(self.seed, {"records": [record]}, now)
+        self.assertEqual(result["gross_quote_usdc"], .108)
+        self.assertIn("Raydium", result["reference_source"])
+        self.assertEqual(result["quoted_threshold_usdc"], .105)
+        self.assertEqual(len(result["missing_network_fee_fields"]), 3)
+        self.assertFalse(result["threshold_is_guaranteed"])
+        self.assertIsNone(result["net_value_usdc"])
+        self.assertEqual(self.seed, before)
+
+    def test_complete_provider_fee_fields_still_require_conversion_and_execution(self):
+        now = datetime.now(timezone.utc)
+        record = self.diagnostic_record(now, fee_evidence={
+            "provider_network_fee_lamports": {
+                "signatureFeeLamports": 5000, "prioritizationFeeLamports": 0,
+                "rentFeeLamports": 0}})
+        result = lab.m4_diagnostic(self.seed, {"records": [record]}, now)
+        self.assertEqual(result["missing_network_fee_fields"], [])
+        self.assertIn("NETWORK_FEE_CONVERSION_UNVERIFIED", result["net_value_blockers"])
+        self.assertIsNone(result["net_value_usdc"])
+
+    def test_bad_threshold_cannot_be_reported_as_minimum_proceeds(self):
+        now = datetime.now(timezone.utc)
+        for value in (True, -.1, .109, float("nan")):
+            result = lab.m4_diagnostic(self.seed, {"records": [
+                self.diagnostic_record(now, threshold_usdc=value)]}, now)
+            self.assertIsNone(result["quoted_threshold_usdc"])
+
+    def test_latest_valid_source_wins_and_expired_raydium_is_rejected(self):
+        now = datetime.now(timezone.utc)
+        ray = self.diagnostic_record(now, kind="RAYDIUM", expected_out_usdc=.11)
+        jup = self.diagnostic_record(now-timedelta(seconds=10))
+        self.assertEqual(lab.m4_diagnostic(self.seed, {"records":[ray, jup]}, now)
+                         ["gross_quote_usdc"], .11)
+        self.assertIsNone(lab.m4_diagnostic(self.seed, {"records":[ray]},
+                         now+timedelta(seconds=121))["gross_quote_usdc"])
+
     def test_failure_categories_do_not_confuse_api_failure_with_liquidity(self):
         for record, expected in (({'http_status':429}, 'RATE_LIMIT'),
                                  ({'http_status':403}, 'AUTH_OR_ACCESS'),
@@ -244,6 +285,7 @@ class M4Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
