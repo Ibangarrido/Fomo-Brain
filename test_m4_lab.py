@@ -61,6 +61,21 @@ class M4Tests(unittest.TestCase):
         self.assertIn("NETWORK_FEE_CONVERSION_UNVERIFIED", result["net_value_blockers"])
         self.assertIsNone(result["net_value_usdc"])
 
+    def test_zero_fees_without_wallet_cannot_certify_free_m4_exit(self):
+        now = datetime.now(timezone.utc)
+        record = self.diagnostic_record(now, threshold_usdc=.105, fee_evidence={
+            "provider_network_fee_lamports": {
+                "signatureFeeLamports": 0, "prioritizationFeeLamports": 0,
+                "rentFeeLamports": 0}, "wallet_context_present": False})
+        before = copy.deepcopy(self.seed)
+        result = lab.m4_diagnostic(self.seed, {"records": [record]}, now)
+        self.assertIn("WALLET_CONTEXT_MISSING", result["net_value_blockers"])
+        self.assertFalse(result["wallet_costs_verified"])
+        self.assertEqual(result["cost_ceiling_usdc_for_positive_proceeds"], .108)
+        self.assertEqual(result["threshold_cost_ceiling_usdc"], .105)
+        self.assertIsNone(result["net_value_usdc"])
+        self.assertEqual(self.seed, before)
+
     def test_bad_threshold_cannot_be_reported_as_minimum_proceeds(self):
         now = datetime.now(timezone.utc)
         for value in (True, -.1, .109, float("nan")):

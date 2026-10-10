@@ -28,6 +28,8 @@ def fee_evidence(data):
             and data["feeBps"] >= 0 else None,
             "cost_status": "PROVIDER_ESTIMATE_ONLY" if all(v is not None for v in amounts.values())
             else "NETWORK_COST_UNKNOWN",
+            "wallet_context_present": bool(data.get("taker")),
+            "wallet_costs_verified": False,
             "net_liquidation_value_usdc": None,
             "execution_verified": False}
 
@@ -427,5 +429,6 @@ class RouteShadow:
             except Exception as exc:
                 print(f"ROUTE SHADOW ERROR {type(exc).__name__}: {exc}", flush=True)
             self.stop_event.wait(min(self.interval, max(0, self.duration - (time.monotonic() - started))))
+
 
 

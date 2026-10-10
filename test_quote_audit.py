@@ -55,6 +55,13 @@ class QuoteAuditTests(unittest.TestCase):
                 with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                     jupiter_pair_quote(mint, USDC, "123", lambda url: {**data, field: value})
 
+    def test_wallet_independent_zero_fees_are_not_wallet_cost_verification(self):
+        evidence = fee_evidence({"signatureFeeLamports": 0,
+                                "prioritizationFeeLamports": 0, "rentFeeLamports": 0})
+        self.assertFalse(evidence["wallet_context_present"])
+        self.assertFalse(evidence["wallet_costs_verified"])
+        self.assertIsNone(evidence["net_liquidation_value_usdc"])
+
     def test_missing_malformed_and_zero_fees_are_distinct(self):
         for value in (None, -1, True, "0", float("nan")):
             evidence = fee_evidence({"signatureFeeLamports": value})
@@ -116,4 +123,5 @@ class QuoteAuditTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

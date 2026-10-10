@@ -201,7 +201,14 @@ def m4_diagnostic(state, audit=None, now=None):
                       quoted_threshold_usdc=threshold,
                       threshold_is_guaranteed=False,
                       missing_network_fee_fields=missing,
+                      wallet_costs_verified=False,
+                      wallet_context_present=fees.get("wallet_context_present") is True,
+                      cost_ceiling_usdc_for_positive_proceeds=value,
+                      threshold_cost_ceiling_usdc=threshold,
+                      cost_ceiling_is_estimate=True,
                       net_value_blockers=(["NETWORK_FEE_FIELDS_MISSING"] if missing else [])
+                          + (["WALLET_CONTEXT_MISSING"]
+                             if fees.get("wallet_context_present") is not True else [])
                           + ["NETWORK_FEE_CONVERSION_UNVERIFIED", "EXECUTION_COSTS_UNVERIFIED"],
                       eur_value_blockers=["USDC_EUR_CONVERSION_UNVERIFIED"])
     return result
@@ -227,6 +234,11 @@ def refresh_reference(state, now=None):
         "threshold_is_guaranteed": False,
         "missing_network_fee_fields": diagnostic.get("missing_network_fee_fields"),
         "net_value_blockers": diagnostic.get("net_value_blockers"),
+        "wallet_context_present": diagnostic.get("wallet_context_present", False),
+        "wallet_costs_verified": False,
+        "cost_ceiling_usdc_for_positive_proceeds": diagnostic.get("cost_ceiling_usdc_for_positive_proceeds"),
+        "threshold_cost_ceiling_usdc": diagnostic.get("threshold_cost_ceiling_usdc"),
+        "cost_ceiling_is_estimate": True,
         "eur_value_blockers": diagnostic.get("eur_value_blockers"),
         "price_usdc": diagnostic["reference_price_usdc"],
         "quantity": diagnostic["quantity"], "source": diagnostic["reference_source"],
