@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 FILE = "fomo_opportunity_audit_r1.json"
 LIMIT = 500
 HORIZON_SECONDS = 72 * 3600
+MAX_TRACKING_SECONDS = HORIZON_SECONDS + 24 * 3600
 MANUAL = {
     ("solana", "EcZndAERfzNhLirHwfsy44dAyPSZazjDU83pa6RApump"),
     ("solana", "HwJyyniKKDRLXxjRSzyLtpvxzqecqrhrbcSbKRm7STNK"),
@@ -46,6 +47,28 @@ def number(value):
         return None
 
 
+def retire_finished(state, now):
+    """Keep active study cases; retain only IDs and counts for finished cases."""
+    finished = state.setdefault('finished_tokens', {})
+    if not isinstance(finished, dict):
+        raise ValueError('Resumen de oportunidades incompatible; no reiniciar')
+    totals = state.setdefault('retired_counts', {'horizon_observed': 0, 'horizon_unknown': 0})
+    for key, row in list(state['tokens'].items()):
+        if (row['chain'], row['address']) in MANUAL:
+            continue
+        age = (now - datetime.fromisoformat(row['first']['received_at'])).total_seconds()
+        if not row.get('complete') and age < MAX_TRACKING_SECONDS:
+            continue
+        # Minimal IDs prevent restarting the same prospective cohort. No price
+        # history, balances or supposed final price are copied into this summary.
+        reason = 'horizon_observed' if row.get('complete') else 'horizon_unknown'
+        if key not in finished:
+            finished[key] = {'retired_at': now.isoformat(), 'reason': reason}
+            totals[reason] += 1
+        del state['tokens'][key]
+    return finished
+
+
 def market_screen(snapshot, age_minutes, max_age):
     """Independent EARLY market gates, not full eligibility or a buy signal."""
     checks = [
@@ -79,6 +102,7 @@ def watch_targets(now=None):
 def observe(pairs, sources, now=None, discovery_rejections=()):
     now = now or datetime.now(timezone.utc)
     state = read()
+    finished = retire_finished(state, now)
     rows = state["tokens"]
     selected = {}
     for pair in pairs.values():
@@ -89,6 +113,10 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         if not chain or not address or not pair.get("pairAddress") or price is None or price <= 0:
             continue
         key = chain + ":" + address
+        # One prospective cohort per contract; a finished case cannot restart
+        # with a favourable new baseline or occupy a monitoring slot again.
+        if key in finished:
+            continue
         old = selected.get(key)
         if old is None or (liquidity or 0) > (number((old.get("liquidity") or {}).get("usd")) or 0):
             selected[key] = pair
@@ -153,13 +181,15 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             row["completion"] = "first received observation after 72h; not exact horizon price"
     state["last_cycle_at"] = now.isoformat()
     state["watch_cursor"] = state.get("watch_cursor", 0) + 10
-    state["limitations"] = "Received market snapshots; freshness unknown; sampled peaks; gaps and pair changes recorded; no trades, costs or net return. Manual cases excluded from automatic cohort. Missing quotes never become zero. Capacity bounded; skips counted."
+    state["limitations"] = "Received market snapshots; freshness unknown; sampled peaks; gaps and pair changes recorded; no trades, costs or net return. Manual cases excluded from automatic cohort. Missing quotes never become zero. Active capacity bounded; skips counted. Completed or 96h-unresolved automatic cases removed from active tracking; only IDs and aggregate completion counts retained; no fabricated final prices."
     with open(FILE + ".tmp", "w") as handle:
         json.dump(state, handle, indent=2, allow_nan=False)
     os.replace(FILE + ".tmp", FILE)
     print("AUDITORIA OPORTUNIDADES " + json.dumps({"tracked": len(rows), "capacity_skips": state["capacity_skips"],
+          "retired": len(state['finished_tokens']),
           "observed_this_cycle": sum(k in selected for k in rows), "no_trading_return": True}))
     for chain, address in sorted(MANUAL):
         row = rows.get(chain + ":" + address)
         if row:
             print("ESTUDIO OPORTUNIDAD " + json.dumps({k: row[k] for k in ("chain", "address", "symbol", "cohort", "first", "last", "observed_price_change_pct", "observed_peak_change_pct", "observed_drawdown_from_peak_pct")}, allow_nan=False))
+

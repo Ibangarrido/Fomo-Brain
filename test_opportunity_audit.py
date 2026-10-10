@@ -95,8 +95,49 @@ class OpportunityTests(unittest.TestCase):
         self.assertTrue(row["complete"])
         self.assertNotIn(("solana", "a"), audit.watch_targets(self.now + timedelta(hours=74)))
         last = row["last"]
-        row = self.observe([pair(price=5)], self.now + timedelta(hours=74))["solana:a"]
-        self.assertEqual(row["last"], last)
+        rows = self.observe([pair(price=5)], self.now + timedelta(hours=74))
+        self.assertNotIn('solana:a', rows)
+        state = audit.read()
+        self.assertEqual(state['retired_counts']['horizon_observed'], 1)
+        self.assertEqual(set(state['finished_tokens']['solana:a']), {'retired_at', 'reason'})
+
+    def test_completed_case_frees_slot_without_restarting_old_cohort(self):
+        with patch.object(audit, 'LIMIT', 1):
+            self.observe([pair(address='a')])
+            self.observe([pair(address='a', price=2)], self.now + timedelta(hours=73))
+            rows = self.observe([pair(address='a', price=7), pair(address='b')],
+                                self.now + timedelta(hours=74))
+        self.assertEqual(set(rows), {'solana:b'})
+        self.assertEqual(audit.read()['retired_counts']['horizon_observed'], 1)
+        self.assertNotIn(('solana', 'a'), audit.watch_targets(self.now + timedelta(hours=74)))
+
+    def test_missing_horizon_quote_retires_without_zero_or_final_price(self):
+        self.observe([pair(address='a', price=3)])
+        self.assertIn('solana:a', self.observe([], self.now + timedelta(hours=95)))
+        self.assertNotIn('solana:a', self.observe([], self.now + timedelta(hours=96)))
+        state = audit.read()
+        self.assertEqual(state['retired_counts']['horizon_unknown'], 1)
+        self.assertEqual(state['finished_tokens']['solana:a']['reason'], 'horizon_unknown')
+        self.assertNotIn('final_price', state['finished_tokens']['solana:a'])
+        self.observe([], self.now + timedelta(hours=97))
+        self.assertEqual(audit.read()['retired_counts']['horizon_unknown'], 1)
+
+    def test_manual_case_is_preserved_after_tracking_horizon(self):
+        chain, mint = next(iter(audit.MANUAL))
+        self.observe([pair(address=mint)])
+        rows = self.observe([], self.now + timedelta(hours=100))
+        self.assertIn(chain+':'+mint, rows)
+        self.assertEqual(audit.read()['finished_tokens'], {})
+
+    def test_corrupt_retirement_summary_does_not_erase_active_cases(self):
+        self.observe([pair()])
+        state = audit.read()
+        state['finished_tokens'] = []
+        with open(audit.FILE, 'w') as handle:
+            json.dump(state, handle)
+        with self.assertRaisesRegex(ValueError, 'incompatible'):
+            self.observe([], self.now + timedelta(hours=96))
+        self.assertIn('solana:a', audit.read()['tokens'])
 
     def test_failed_quotes_do_not_starve_other_monitoring_targets(self):
         self.observe([pair(address=str(i)) for i in range(25)])
@@ -110,3 +151,4 @@ class OpportunityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
