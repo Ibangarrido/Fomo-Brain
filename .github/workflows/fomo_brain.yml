@@ -42,6 +42,7 @@ jobs:
           python -m unittest -v test_exit_watchdog.py
           python -m unittest -v test_quote_audit.py
           python -m unittest -v test_m4_lab.py
+          python -m unittest -v test_m4_isolation.py
           python -m unittest -v test_opportunity_audit.py
           python -m unittest -v test_rebound_lab.py
           python -m unittest -v test_targets_lab.py
@@ -82,6 +83,7 @@ jobs:
           BRAIN_VOLUME_LAB: ${{ steps.volume_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
           BRAIN_QUOTE_GUARD: "1"
           BRAIN_M4_LAB: "1"
+          BRAIN_M4_ISOLATION: "1"
           BRAIN_OPPORTUNITY_AUDIT: "1"
           BRAIN_REBOUND_LAB: "1"
           BRAIN_TARGETS_LAB: "1"
@@ -146,6 +148,7 @@ jobs:
             fomo_lab_volume_impulse_volume_r1.json
           if-no-files-found: ignore
           overwrite: true
+
 
 
 

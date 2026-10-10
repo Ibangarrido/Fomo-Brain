@@ -873,6 +873,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 or entry_mode != "early" or profit_protection or quarantine_m4
                 or max_pair_age_minutes != 60 or min_buy_ratio != .60):
             raise ValueError("Laboratorio targets incompatible; no reiniciar")
+    from m4_lab import isolate_inherited
+    migrated_m4 = isolate_inherited(state, paper_file, now)
+    isolated_m4 = quarantine_m4 or migrated_m4
     # Preserve the change point; cumulative portfolios mix old and new policies.
     data_policy = {"version": "quote-r2", "early_entry_version": "early-r5",
                    "early_max_change1h_pct": 150, "crosscheck_drop_pct": 30,
@@ -1009,23 +1012,24 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                          f" | exceso_stop_pp={max(0, -15-pnl_pct):.2f}")
             notes.append(note)
     quotes_blocked = any(p["quote_status"] != "OK" and not
-                        (quarantine_m4 and is_quarantined(p)) for p in state["positions"])
-    if quarantine_m4:
+                        (isolated_m4 and is_quarantined(p)) for p in state["positions"])
+    if isolated_m4:
         notes.append("LAB M4: posicion heredada aislada; valor desconocido excluido del control de riesgo; no es venta")
     if quotes_blocked:
         notes.append("ENTRADAS PAUSADAS: hay posiciones sin cotizacion verificable")
-    risk_reason = freno_cartera_v10(state, now, conservative_unknown=quarantine_m4)
+    risk_reason = freno_cartera_v10(state, now, conservative_unknown=isolated_m4)
     if risk_reason:
         notes.append("FRENO V10: " + risk_reason)
     # Una sola entrada por token durante este experimento, sin reentradas.
     for token in ranking:
         key = token["chain"] + ":" + token["address"]
-        risk_reason = freno_cartera_v10(state, now, conservative_unknown=quarantine_m4)
+        risk_reason = freno_cartera_v10(state, now, conservative_unknown=isolated_m4)
         reason = (risk_reason if risk_reason else
                   "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
                   "token ya operado" if key in state["seen"] or key in closed_this_run else
-                  "maximo 3 posiciones" if len(state["positions"]) >= 3 else
+                  "maximo 3 posiciones" if sum(not (isolated_m4 and is_quarantined(p)
+                      and p.get("quote_status") != "OK") for p in state["positions"]) >= 3 else
                   f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
             notes.append(f"DESCARTE {key} | {reason}")
@@ -1075,7 +1079,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 if reason:
                     raise ValueError(reason)
                 entry_at = datetime.now(timezone.utc)
-                reason = freno_cartera_v10(state, entry_at, conservative_unknown=quarantine_m4)
+                reason = freno_cartera_v10(state, entry_at, conservative_unknown=isolated_m4)
                 if reason:
                     raise ValueError(reason)
                 final_quote_evidence = {"version": "entry-quote-r1", "after_security_checks": True,
@@ -1183,6 +1187,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             state["assumptions"].update(partial_target_net_pct=15, trailing_peak_pct=None,
                 targets_net_pct=[15, 30, 45], targets_original_fractions=[.5, .25, .25],
                 protection_after_tp1_net_pct=2)
+    if migrated_m4:
+        state["assumptions"]["m4_isolation"] = {
+            "version": "m4-isolation-r1", "unknown_value_for_risk": 0,
+            "count_unknown_m4_in_active_slots": False,
+            "total_equity_known": stale == 0, "historical_mark_is_liquidity": False}
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -1858,6 +1867,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 

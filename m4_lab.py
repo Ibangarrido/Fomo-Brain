@@ -12,6 +12,45 @@ CONTROL = "fomo_lab_m4_control_r1.json"
 RECOVERY = "fomo_lab_m4_recovery_r1.json"
 MARKER = "fomo_lab_m4_fork_r1.json"
 
+# Explicit migration of the five legacy portfolios blocked by the same
+# inherited position. Dedicated M4 CONTROL remains the unchanged comparator.
+ISOLATION_FILES = {
+    "fomo_lab_early_control_r1.json",
+    "fomo_lab_ratio_early_60_r1.json", "fomo_lab_ratio_early_52_r1.json",
+    "fomo_lab_protect_early_control_r1.json", "fomo_lab_protect_early_protect_r1.json",
+}
+INHERITED_QUANTITY = 52777.58285257178
+
+
+def isolate_inherited(state, path, now):
+    """Migrate only the observed historical M4; keep accounting and risk intact."""
+    if os.getenv("BRAIN_M4_ISOLATION", "0") != "1" or os.path.basename(path) not in ISOLATION_FILES:
+        return False
+    matches = [p for p in state.get("positions", []) if p.get("chain") == "solana"
+               and p.get("address") == MINT and p.get("quote_status") != "OK"]
+    if len(matches) != 1:
+        return False
+    pos = matches[0]
+    try:
+        opened = datetime.fromisoformat(pos["opened_at"])
+        valid = (datetime(2026, 10, 6, 23, 11, tzinfo=timezone.utc) <= opened
+                 < datetime(2026, 10, 6, 23, 12, tzinfo=timezone.utc)
+                 and pos.get("quantity") == INHERITED_QUANTITY and pos.get("budget") == 5.)
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        return False
+    pos["m4_quarantine"] = True
+    pos.setdefault("m4_quarantined_at", now.isoformat())
+    epochs = state.setdefault("m4_isolation_history", [])
+    if not epochs:
+        epochs.append({"version": "m4-isolation-r1", "at": now.isoformat(),
+                       "cash": state["cash"], "reserve": state["reserve"],
+                       "closed_legs": len(state["closed"]), "open": len(state["positions"]),
+                       "unknown_risk_value": 0, "not_a_sale": True,
+                       "comparison": "compare results within the same isolation epoch"})
+    return True
+
 
 def m4_diagnostic(state, audit=None, now=None):
     """Explain the inherited mark using recent exact-quantity evidence, never a fill."""
@@ -184,5 +223,6 @@ def run(ranking, simulator):
     rows["total_equity_advantage"] = None
     print("LAB M4 COMPARACION " + json.dumps(rows, allow_nan=False)
           + " | componente conocido NO es rentabilidad total; M4 permanece abierta")
+
 
 
