@@ -76,6 +76,45 @@ class M4Tests(unittest.TestCase):
         self.assertIsNone(stale['gross_quote_usdc'])
         self.assertEqual(self.seed, before)
 
+    def test_raydium_no_route_does_not_hide_jupiter_quantity_quote(self):
+        now = datetime.now(timezone.utc)
+        ray = dict(self.diagnostic_record(now, kind='RAYDIUM'),
+                   status='UNAVAILABLE', provider_message='ROUTE_NOT_FOUND')
+        jup = self.diagnostic_record(now-timedelta(seconds=10))
+        before = copy.deepcopy(self.seed)
+        result = lab.m4_diagnostic(self.seed, {'records': [jup, ray]}, now)
+        self.assertEqual(result['provider_diagnostics']['RAYDIUM']['diagnosis'],
+                         'NO_ROUTE_REPORTED')
+        self.assertEqual(result['provider_diagnostics']['JUPITER']['status'], 'QUOTE_ONLY')
+        self.assertEqual(result['recent_quote_providers'], ['JUPITER'])
+        self.assertEqual(result['gross_quote_usdc'], .108)
+        self.assertEqual(result['next_check'],
+                         'VERIFY_WALLET_SPECIFIC_COSTS_AND_FX_BEFORE_NET_VALUATION')
+        self.assertIsNone(result['net_value_usdc'])
+        self.assertEqual(self.seed, before)
+
+    def test_provider_failures_and_expired_quotes_leave_value_unknown(self):
+        now = datetime.now(timezone.utc)
+        records = [self.diagnostic_record(now-timedelta(seconds=121)),
+                   dict(self.diagnostic_record(now, kind='RAYDIUM'),
+                        status='UNAVAILABLE', http_status=503,
+                        provider_message='ROUTE_NOT_FOUND')]
+        result = lab.m4_diagnostic(self.seed, {'records': records}, now)
+        self.assertEqual(result['provider_diagnostics']['RAYDIUM']['diagnosis'],
+                         'PROVIDER_FAILURE')
+        self.assertFalse(result['provider_diagnostics']['JUPITER']['evidence_current'])
+        self.assertEqual(result['recent_quote_providers'], [])
+        self.assertIsNone(result['gross_quote_usdc'])
+
+    def test_route_failure_classification_preserves_http_precedence(self):
+        self.assertEqual(lab.quote_failure({'provider_message': 'ROUTE_NOT_FOUND'}),
+                         'NO_ROUTE_REPORTED')
+        self.assertEqual(lab.quote_failure({'provider_message': 'Insufficient liquidity'}),
+                         'INSUFFICIENT_LIQUIDITY_REPORTED')
+        self.assertEqual(lab.quote_failure({'http_status': 429,
+                                           'provider_message': 'ROUTE_NOT_FOUND'}), 'RATE_LIMIT')
+        self.assertEqual(lab.quote_failure({'http_status': 400}), 'UNCLASSIFIED_FAILURE')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.previous = os.getcwd()
@@ -285,6 +324,7 @@ class M4Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

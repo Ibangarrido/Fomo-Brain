@@ -31,12 +31,16 @@ def quote_failure(record):
         return 'AUTH_OR_ACCESS'
     if type(status) is int and status >= 500:
         return 'PROVIDER_FAILURE'
-    error = str(record.get('error', '')).lower()
+    error = (str(record.get('error', '')) + ' ' +
+             str(record.get('provider_message', ''))).lower()
     provider = record.get('provider_error', {})
     if isinstance(provider, dict):
         error += ' ' + ' '.join(str(v).lower() for v in provider.values())
-    if any(code in error for code in ('could_not_find_any_route', 'no_routes_found', 'no route found')):
+    if any(code in error for code in ('could_not_find_any_route', 'no_routes_found',
+                                      'route_not_found', 'no route found')):
         return 'NO_ROUTE_REPORTED'
+    if 'insufficient liquidity' in error or 'insufficient_liquidity' in error:
+        return 'INSUFFICIENT_LIQUIDITY_REPORTED'
     if 'timeout' in error or 'timed out' in error:
         return 'TIMEOUT'
     if record.get('status') == 'SKIPPED':
@@ -90,7 +94,9 @@ def m4_diagnostic(state, audit=None, now=None):
               "quantity": pos.get("quantity"), "gross_quote_usdc": None,
               "reference_price_usdc": None, "reference_source": None,
               "net_value_usdc": None, "execution_verified": False,
-              "costs_complete": False, "fx_applied": False}
+              "costs_complete": False, "fx_applied": False,
+              "provider_diagnostics": {}, "recent_quote_providers": [],
+              "next_check": "WAIT_FOR_VALIDATED_EXACT_QUANTITY_QUOTE"}
     result["market_blocker"] = pos.get("quote_error") if pos.get("quote_status") != "OK" else None
     result["indicative_liquidity_usd"] = pos.get("indicative_liquidity")
     try:
@@ -133,6 +139,18 @@ def m4_diagnostic(state, audit=None, now=None):
             'http_status': latest.get('http_status'),
             'provider': latest.get('provider') or latest.get('kind'),
             'execution_verified': False}
+        # Each provider has its own evidence: a later Raydium failure must not
+        # imply that Jupiter also lacks a route. HTTP errors are not liquidity.
+        for received, age, record in sorted(attempts, key=lambda item: item[0]):
+            result['provider_diagnostics'][record['kind']] = {
+                'at': received.isoformat(), 'age_seconds': age,
+                'evidence_current': age <= 120,
+                'status': record.get('status'),
+                'diagnosis': ('QUOTE_ONLY_COSTS_INCOMPLETE'
+                              if record.get('status') == 'QUOTE_ONLY'
+                              else quote_failure(record)),
+                'http_status': record.get('http_status'),
+                'execution_verified': False}
     for record in records:
         try:
             if (record.get("kind") not in ("JUPITER", "RAYDIUM") or record.get("chain") != "solana"
@@ -153,6 +171,7 @@ def m4_diagnostic(state, audit=None, now=None):
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
     if candidates:
+        result['recent_quote_providers'] = sorted({row[3]['kind'] for row in candidates})
         received, age, value, record = max(candidates, key=lambda row: row[0])
         provider = record.get("provider") or record["kind"]
         threshold = record.get("threshold_usdc")
@@ -167,6 +186,7 @@ def m4_diagnostic(state, audit=None, now=None):
         missing = [key for key in network_fields
                    if type(declared.get(key)) is not int or declared[key] < 0]
         result.update(status="RECENT_GROSS_QUOTE_ONLY", gross_quote_usdc=value,
+                      next_check="VERIFY_WALLET_SPECIFIC_COSTS_AND_FX_BEFORE_NET_VALUATION",
                       reference_price_usdc=value / pos["quantity"],
                       reference_source=str(provider) + " exact-quantity quote",
                       quote_received_at=received.isoformat(), quote_age_seconds=age,
@@ -192,6 +212,9 @@ def refresh_reference(state, now=None):
     state["m4_reference_valuation"] = {
         "version": "m4-reference-r1", "gross_value_usdc": diagnostic["gross_quote_usdc"],
         "latest_attempt": diagnostic.get("latest_attempt"),
+        "provider_diagnostics": diagnostic["provider_diagnostics"],
+        "recent_quote_providers": diagnostic["recent_quote_providers"],
+        "next_check": diagnostic["next_check"],
         "quoted_threshold_usdc": diagnostic.get("quoted_threshold_usdc"),
         "threshold_is_guaranteed": False,
         "missing_network_fee_fields": diagnostic.get("missing_network_fee_fields"),
@@ -292,6 +315,7 @@ def run(ranking, simulator):
     rows["total_equity_advantage"] = None
     print("LAB M4 COMPARACION " + json.dumps(rows, allow_nan=False)
           + " | componente conocido NO es rentabilidad total; M4 permanece abierta")
+
 
 
 

@@ -1215,6 +1215,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     print(f"Resultado realizado virtual EUR {realized:+.2f}")
     if m4_reference is not None:
         gross = m4_reference["gross_value_usdc"]
+        for provider, evidence in m4_reference.get("provider_diagnostics", {}).items():
+            print(f"M4 PROVEEDOR {provider}: {evidence['diagnosis']}"
+                  f" | evidencia_reciente={evidence['evidence_current']}"
+                  f" | fecha={evidence['at']} | HTTP={evidence['http_status']}")
+        print(f"M4 SIGUIENTE COMPROBACION: {m4_reference.get('next_check')}"
+              " | cotizacion orientativa; no modifica saldo ni cierra posicion")
         attempt = m4_reference.get("latest_attempt")
         if attempt:
             print(f"M4 DIAGNOSTICO: {attempt['diagnosis']} | fecha={attempt['at']}"
@@ -1877,6 +1883,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 
