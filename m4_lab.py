@@ -325,7 +325,7 @@ def run(ranking, simulator):
         simulator(ranking, path, "LAB M4 " + arm.upper(), confirm=True,
                   entry_mode="early", entry_guard=guard(False, "early", "LAB M4 " + arm),
                   quarantine_m4=arm == "recovery",
-                  min_buy_ratio=.50 if arm == "recovery" else .60)
+                  min_buy_ratio=.75 if arm == "recovery" else .60)
         state = report_snapshot(path)
         obs = state["observations"][-1]
         rows[arm] = {"known_component": obs["verified_component"],

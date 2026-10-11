@@ -863,7 +863,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         raise ValueError("Umbral de compras invalido")
     ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
     recovery_ratio = (basename == RECOVERY and quarantine_m4 and confirm
-                      and entry_mode == "early" and min_buy_ratio == 0.50)
+                      and entry_mode == "early" and min_buy_ratio == 0.75)
     if min_buy_ratio != 0.60 and not (ratio_lab or recovery_ratio):
         raise ValueError("Umbral alternativo reservado al laboratorio ratio")
     protect_lab = os.path.basename(paper_file).startswith("fomo_lab_protect_")
@@ -1840,7 +1840,7 @@ def refresh_open_positions(stop_event=None):
         from m4_lab import CONTROL, RECOVERY
         for path in (CONTROL, RECOVERY):
             wallets.append((path, "LAB M4 " + path, "early",
-                            .50 if path == RECOVERY else .60, False))
+                            .75 if path == RECOVERY else .60, False))
     if os.getenv("BRAIN_REBOUND_LAB", "0") == "1":
         from rebound_lab import CONTROL as rebound_control, EXTENDED
         for path in (rebound_control, EXTENDED):
