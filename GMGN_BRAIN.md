@@ -21,10 +21,15 @@ means `AWAITING_SCHEMA_VALIDATION`, not an activated trading source. Confirm
 actual response schemas, identity, timestamps, units, concentration definitions
 and missing values before adding an adapter and isolated paper comparison.
 
-Existing paper accounts and sources remain active. A GMGN paper account has
-not started and this change cannot trigger entries. The agreed next comparison
-is 100 EUR paper capital, 5 EUR per entry (absolute limit 10 EUR), 50% of profits
-reserved; modeled costs and unverified exits must remain explicit.
+Existing paper accounts and sources remain active. The separate GMGN paper
+ledger starts once from `gmgn_paper_start_r1.json` with 100 EUR cash, no positions,
+no old losses and no imported M4 holding. Subsequent runs restore `gmgn-paper`
+and never reset its cash/history. Corrupt ledgers fail instead of reinitializing.
+Missing keys or schema-only responses do not generate fills or market observations.
+The initial browser snapshot of M4 is historical and explicitly unverified.
+Planned entry size is 5 EUR (absolute limit 10 EUR), with 50% of profits reserved.
+Automatic paper entries remain disabled until source/strategy validation; modeled
+costs and unverified exits must remain explicit.
 
 References checked 2026-10-11:
 - https://docs.gmgn.ai/index/gmgn-agent-api

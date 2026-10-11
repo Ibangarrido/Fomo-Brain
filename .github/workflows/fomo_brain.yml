@@ -163,7 +163,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Validar lector GMGN sin red
-        run: python -m unittest -v test_gmgn_readonly.py
+        run: python -m unittest -v test_gmgn_readonly.py test_gmgn_paper.py
+      - name: Recuperar cartera virtual GMGN
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: fomo_brain.yml
+          name: gmgn-paper
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: ignore
       - name: Comprobar API GMGN sin operar
         env:
           GMGN_API_KEY: ${{ secrets.GMGN_API_KEY }}
@@ -174,4 +182,12 @@ jobs:
           name: gmgn-preflight
           path: gmgn_preflight.json
           retention-days: 7
+      - name: Registrar cartera virtual GMGN
+        run: python gmgn_paper.py
+      - name: Guardar cartera virtual GMGN
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmgn-paper
+          path: gmgn_paper_r1.json
+          retention-days: 30
 

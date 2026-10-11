@@ -1,0 +1,41 @@
+{
+  "version": "gmgn-paper-r1",
+  "started_at": "2026-10-11T05:49:43+00:00",
+  "initial_capital_eur": 100,
+  "cash_eur": 100,
+  "reserve_eur": 0,
+  "positions": [],
+  "closed": [],
+  "observations": [],
+  "source": "GMGN",
+  "status": "AWAITING_VALIDATED_GMGN_DATA",
+  "execution_enabled": false,
+  "paper_entries_enabled": false,
+  "planned_policy": {
+    "entry_budget_eur": 5,
+    "absolute_max_trade_eur": 10,
+    "profit_reinvest_fraction": 0.5,
+    "profit_reserve_fraction": 0.5,
+    "entry_strategy_status": "NOT_ACTIVATED",
+    "costs_and_fx_status": "UNVERIFIED",
+    "old_accounts_imported": false
+  },
+  "browser_observations": [
+    {
+      "observed_at": "2026-10-11T05:44:10+00:00",
+      "source": "GMGN public token page",
+      "url": "https://gmgn.ai/sol/token/HciAVS1urBtboqhLe59HWiMeeN2McEd6y8h4HGkrpump",
+      "chain": "solana",
+      "address": "HciAVS1urBtboqhLe59HWiMeeN2McEd6y8h4HGkrpump",
+      "symbol": "M4",
+      "displayed_liquidity_usd": 188.93,
+      "displayed_holders": 14,
+      "displayed_volume_24h_usd": 0,
+      "last_visible_sell_relative_age": "2d",
+      "connection_label": "Disconnected",
+      "freshness": "UNVERIFIED",
+      "entry_eligible": false,
+      "note": "Historical browser snapshot predates this ledger; not a fresh signal or an executable valuation"
+    }
+  ]
+}
