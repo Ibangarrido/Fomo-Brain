@@ -186,6 +186,52 @@ class RouteShadowTests(unittest.TestCase):
         for forbidden in ("taker", "wallet", "execute", "build", "api-key"):
             self.assertNotIn(forbidden, urls[0])
 
+    def test_jupiter_records_bounded_pool_hops_without_raw_provider_fields(self):
+        data = self.jupiter_response()
+        sol = "So11111111111111111111111111111111111111112"
+        def hop(start, end, amount, output, label):
+            return {"percent": 100, "bps": 10000, "secret": "omit",
+                    "swapInfo": {"ammKey": self.mint, "label": label,
+                                 "inputMint": start, "outputMint": end,
+                                 "inAmount": amount, "outAmount": output,
+                                 "transaction": "omit"}}
+        data["routePlan"] = [hop(self.mint, sol, "1234567", "1000", "Pump.fun AMM"),
+                             hop(sol, USDC, "1000", "900000", "Raydium CLMM")]
+        result = jupiter_quote(self.mint, "1234567", lambda url: data)
+        self.assertEqual(result["route_evidence_status"], "PROVIDER_REPORTED")
+        self.assertEqual([x["label"] for x in result["route_plan"]],
+                         ["Pump.fun AMM", "Raydium CLMM"])
+        self.assertEqual(result["route_plan"][0]["pool"], self.mint)
+        self.assertNotIn("omit", json.dumps(result))
+        self.assertFalse(result["execution_verified"])
+        self.assertIsNone(result["fee_evidence"]["net_liquidation_value_usdc"])
+
+    def test_jupiter_missing_route_is_explicit_and_preserves_quote(self):
+        result = jupiter_quote(self.mint, "1234567", lambda url: self.jupiter_response())
+        self.assertEqual(result["route_evidence_status"], "MISSING")
+        self.assertEqual(result["route_plan"], [])
+        self.assertEqual(result["expected_out_usdc"], .9)
+
+    def test_jupiter_malformed_route_does_not_log_partial_or_raw_evidence(self):
+        info = {"ammKey": self.mint, "label": "Pump.fun AMM", "inputMint": self.mint,
+                "outputMint": USDC, "inAmount": "1234567", "outAmount": "900000"}
+        for field, bad in (("ammKey", "bad"), ("label", "bad\nlog"),
+                           ("outAmount", 1.5), ("inAmount", "1e6")):
+            data = self.jupiter_response()
+            data["routePlan"] = [{"swapInfo": {**info, field: bad}}]
+            result = jupiter_quote(self.mint, "1234567", lambda url: data)
+            self.assertEqual(result["route_evidence_status"], "INVALID_OR_OVERSIZE")
+            self.assertEqual(result["route_plan"], [])
+            self.assertEqual(result["expected_out_usdc"], .9)
+
+    def test_jupiter_oversize_route_preserves_quote_without_truncation(self):
+        data = self.jupiter_response()
+        data["routePlan"] = [{}] * 17
+        result = jupiter_quote(self.mint, "1234567", lambda url: data)
+        self.assertEqual(result["route_evidence_status"], "INVALID_OR_OVERSIZE")
+        self.assertEqual(result["route_plan"], [])
+        self.assertEqual(result["expected_out_usdc"], .9)
+
     def test_jupiter_rejects_identity_transaction_errors_and_outputs(self):
         for field, value in (("inputMint", USDC), ("outputMint", self.mint), ("inAmount", "7"),
                              ("transaction", "unexpected transaction"), ("taker", "wallet"),
@@ -403,5 +449,6 @@ class WatchdogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

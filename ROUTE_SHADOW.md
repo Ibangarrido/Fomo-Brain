@@ -127,6 +127,16 @@ unknown cost fields and rejection of stale outputs. They do not prove live
 provider error codes or actual execution. Live validation needs a subsequent run.
 # Round-trip quote diagnostic r2
 
+Jupiter route evidence (11 October 2026): quantity and round-trip quote records
+now retain an allow-listed provider route description: pool, label, input/output
+mints, raw integer amounts and valid integer allocation weights. At most 16
+entries are accepted. Missing or malformed/oversize plans have an explicit
+status and an empty route list; the independently validated quantity quote is
+preserved. No raw response, transaction or extra provider fields are logged.
+These are provider-reported hops, not verified pool reserves, route continuity,
+wallet-specific costs or executable fills. No additional network request or
+paper accounting change is introduced.
+
 `BRAIN_ROUNDTRIP_SHADOW=1` (default; 0 disables) logs one hypothetical
 5 USDC -> open Solana mint -> USDC quote pair per shadow pass. Both calls
 share Jupiter's minimum 3-second request spacing; the second uses the exact
@@ -158,3 +168,4 @@ output. Jupiter retains its existing stricter string-only quantity validation.
 Malformed observations remain unavailable; there is no wallet valuation, sale,
 route/API change or new financial threshold. Offline tests cover both fields,
 uint64 boundaries and Jupiter regressions.
+

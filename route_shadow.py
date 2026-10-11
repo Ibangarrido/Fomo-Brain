@@ -268,6 +268,46 @@ def jupiter_quote(mint, amount, fetch=get_json):
     return result
 
 
+def jupiter_route_evidence(data):
+    """Bounded provider route description; never proof of executable liquidity."""
+    plan = data.get("routePlan")
+    missing = {"route_plan": [], "route_evidence_status": "MISSING"}
+    invalid = {"route_plan": [], "route_evidence_status": "INVALID_OR_OVERSIZE"}
+    if plan is None or plan == []:
+        return missing
+    if not isinstance(plan, list) or len(plan) > 16:
+        return invalid
+    hops = []
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    for entry in plan:
+        info = entry.get("swapInfo") if isinstance(entry, dict) else None
+        if not isinstance(info, dict):
+            return invalid
+        for field in ("ammKey", "inputMint", "outputMint"):
+            value = info.get(field)
+            if (not isinstance(value, str) or not 32 <= len(value) <= 44
+                    or any(c not in alphabet for c in value)):
+                return invalid
+        label = info.get("label")
+        if (not isinstance(label, str) or not 1 <= len(label) <= 80
+                or any(ord(c) < 32 or ord(c) == 127 for c in label)):
+            return invalid
+        for field in ("inAmount", "outAmount"):
+            value = info.get(field)
+            if (not isinstance(value, str) or not value.isascii() or not value.isdigit()
+                    or len(value) > 20 or not 0 < int(value) < 2 ** 64):
+                return invalid
+        hop = {"pool": info["ammKey"], "label": label,
+               "input_mint": info["inputMint"], "output_mint": info["outputMint"],
+               "input_amount_raw": info["inAmount"], "output_amount_raw": info["outAmount"]}
+        for field, maximum in (("percent", 100), ("bps", 10000)):
+            value = entry.get(field)
+            if type(value) is int and 0 <= value <= maximum:
+                hop[field] = value
+        hops.append(hop)
+    return {"route_plan": hops, "route_evidence_status": "PROVIDER_REPORTED"}
+
+
 def jupiter_pair_quote(mint, output_mint, amount, fetch=get_json):
     """Validate both sides of an ExactIn quote; output remains integer token units."""
     if (not isinstance(mint, str) or not 32 <= len(mint) <= 44 or any(
@@ -297,6 +337,7 @@ def jupiter_pair_quote(mint, output_mint, amount, fetch=get_json):
             "input_amount_raw": amount, "output_mint": output_mint,
             "output_amount_raw": output, "threshold_amount_raw": threshold,
             "router": data["router"], "slippage_bps": data.get("slippageBps"),
+            **jupiter_route_evidence(data),
             "fee_evidence": fee_evidence(data),
             "quote_request_seconds": time.monotonic() - started,
             "received_at": datetime.now(timezone.utc).isoformat(),
@@ -429,6 +470,7 @@ class RouteShadow:
             except Exception as exc:
                 print(f"ROUTE SHADOW ERROR {type(exc).__name__}: {exc}", flush=True)
             self.stop_event.wait(min(self.interval, max(0, self.duration - (time.monotonic() - started))))
+
 
 
 
