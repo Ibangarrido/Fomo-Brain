@@ -1193,7 +1193,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "currency": "Precios USD tratados con EUR/USD=1 constante para la prueba."}
     state["assumptions"]["strategy"] = "confirmacion V10" if confirm else "reglas base"
     state["assumptions"]["exit_monitor"] = {
-        "version": "watchdog-r1" if EXIT_WATCHDOG is not None else "cooperative-15s",
+        "version": "watchdog-r2" if EXIT_WATCHDOG is not None else "cooperative-15s",
         "target_seconds": 3 if EXIT_WATCHDOG is not None else 15,
         "guaranteed": False, "quotes": "indicative market data; not a swap execution",
         "limits": "same-wallet transactions, rate limits, network latency and gaps between runs"}
@@ -1229,6 +1229,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "version": "m4-isolation-r1", "unknown_value_for_risk": 0,
             "count_unknown_m4_in_active_slots": False,
             "total_equity_known": stale == 0, "historical_mark_is_liquidity": False}
+    if ranking:
+        from opportunity_audit import entry_summary
+        state["last_entry_audit"] = dict(entry_summary(len(ranking), notes),
+                                         at=datetime.now(timezone.utc).isoformat())
+        print("ENTRADAS RESUMEN " + json.dumps(dict(state["last_entry_audit"], label=label), ensure_ascii=False))
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
@@ -1897,7 +1902,7 @@ def run_session(cycles=1, interval_seconds=60):
             EXIT_WATCHDOG = ExitWatchdog(refresh_open_positions, interval=3,
                                          duration=SESSION_WINDOW_SECONDS)
             EXIT_WATCHDOG.start()
-            print("WATCHDOG r1 INICIO | objetivo 3s | solo salidas virtuales | sin continuidad entre runs", flush=True)
+            print("WATCHDOG r2 INICIO | objetivo 3s | salta intervalos vencidos | solo salidas virtuales | sin continuidad entre runs", flush=True)
         for index in range(cycles):
             if index and time.monotonic() - started >= SESSION_WINDOW_SECONDS:
                 break
@@ -1951,6 +1956,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 

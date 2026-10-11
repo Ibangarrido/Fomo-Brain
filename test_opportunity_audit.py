@@ -11,6 +11,18 @@ from test_fomo_v8 import pair
 
 
 class OpportunityTests(unittest.TestCase):
+    def test_entry_summary_separates_risk_rejections_omissions_and_entries(self):
+        summary = audit.entry_summary(4, [
+            'DESCARTE solana:a | cartera sin valoracion completa',
+            'DESCARTE solana:b | cartera sin valoracion completa',
+            'ENTRADA OMITIDA solana:c: quote unavailable',
+            'ENTRADA VIRTUAL TEST | EUR 5.00',
+            'SALIDA VIRTUAL OLD | STOP -15%',
+            'M4: sin par verificable'])
+        self.assertEqual((summary['entered'], summary['rejected'], summary['omitted']), (1, 2, 1))
+        self.assertEqual(summary['top_first_blockers'], {'cartera sin valoracion completa': 2})
+        self.assertEqual(audit.entry_summary(0, [])['candidates'], 0)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.old = os.getcwd()
@@ -151,4 +163,5 @@ class OpportunityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

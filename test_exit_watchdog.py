@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import fomo_brain as brain
 from test_roundtrip_shadow import RoundtripTests  # Include diagnostic tests in existing CI entry point.
-from exit_watchdog import ExitWatchdog, ThreadCache, wallet_lock, wallet_transaction, MarketRateLimiter
+from exit_watchdog import ExitWatchdog, ThreadCache, wallet_lock, wallet_transaction, MarketRateLimiter, next_tick_delay
 from route_shadow import RouteShadow, quote, raw_quantity, snapshots, USDC, mint_decimals, token_supply, jupiter_quote, get_json, ProviderHTTPError, position_valuations
 
 
@@ -393,6 +393,32 @@ class WatchdogTests(unittest.TestCase):
             self.assertTrue(tick.wait(1))
             watchdog.stop()
         self.assertFalse(watchdog.thread.is_alive())
+
+    def test_slow_pass_skips_slots_without_full_extra_delay_or_burst(self):
+        clock = [0.0]
+        starts = []
+        class Stop:
+            stopped = False
+            def is_set(self):
+                return self.stopped
+            def wait(self, seconds):
+                clock[0] += seconds
+                if len(starts) == 2:
+                    self.stopped = True
+        def refresh(stop_event):
+            starts.append(clock[0])
+            clock[0] += 8.8
+        watchdog = ExitWatchdog(refresh, interval=3, duration=900)
+        watchdog.stop_event = Stop()
+        with patch('exit_watchdog.time.monotonic', side_effect=lambda: clock[0]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            watchdog._run()
+        self.assertEqual(starts, [0.0, 9.0])
+        self.assertAlmostEqual(next_tick_delay(1, 3), 2)
+        self.assertAlmostEqual(next_tick_delay(9, 3), 3)
+        for elapsed, interval in ((-1, 3), (float('nan'), 3), (1, 0)):
+            with self.assertRaises(ValueError):
+                next_tick_delay(elapsed, interval)
 
     def test_exit_pass_does_not_create_wallets_or_buy(self):
         with patch("builtins.open", side_effect=FileNotFoundError), \

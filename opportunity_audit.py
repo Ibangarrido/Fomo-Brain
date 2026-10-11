@@ -18,6 +18,27 @@ MANUAL = {
 DECISIONS = {}
 
 
+def entry_summary(candidate_count, notes):
+    """First blocking reason per candidate; counts are not independent gates."""
+    reasons = {}
+    entered = omitted = rejected = 0
+    for note in notes:
+        if note.startswith("ENTRADA VIRTUAL "):
+            entered += 1
+        elif note.startswith("ENTRADA OMITIDA "):
+            omitted += 1
+        elif note.startswith("DESCARTE ") and " | " in note:
+            rejected += 1
+            reason = note.split(" | ", 1)[1].split(" | ", 1)[0][:240]
+            reasons[reason] = reasons.get(reason, 0) + 1
+    ordered = sorted(reasons.items(), key=lambda item: (-item[1], item[0]))
+    return {"version": "entry-audit-r1", "candidates": candidate_count,
+            "entered": entered, "rejected": rejected, "omitted": omitted,
+            "top_first_blockers": dict(ordered[:10]),
+            "other_rejections": sum(count for _, count in ordered[10:]),
+            "scope": "first blocking reason per candidate; virtual entries only"}
+
+
 def begin_cycle():
     DECISIONS.clear()
 
@@ -192,4 +213,5 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         row = rows.get(chain + ":" + address)
         if row:
             print("ESTUDIO OPORTUNIDAD " + json.dumps({k: row[k] for k in ("chain", "address", "symbol", "cohort", "first", "last", "observed_price_change_pct", "observed_peak_change_pct", "observed_drawdown_from_peak_pct")}, allow_nan=False))
+
 

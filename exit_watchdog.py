@@ -2,6 +2,7 @@
 import functools
 import contextlib
 import inspect
+import math
 import os
 import threading
 import time
@@ -123,10 +124,19 @@ class ExitWatchdog:
             elapsed = time.monotonic() - at
             gap = None if previous is None else at - previous
             previous = at
+            wait = next_tick_delay(elapsed, self.interval)
             print(f"WATCHDOG TICK | periodo_real_s={gap} | trabajo_s={elapsed:.3f}"
-                  " | objetivo_s=3 | NO es ejecucion real", flush=True)
-            # Fixed delay after a slow pass avoids catch-up bursts and saturation.
-            wait = self.interval if elapsed >= self.interval else self.interval - elapsed
+                  f" | objetivo_s={self.interval} | espera_s={wait:.3f}"
+                  " | NO es ejecucion real", flush=True)
+            # Skip expired slots, never start overlapping passes or replay ticks.
             remaining = self.duration - (time.monotonic() - started)
             self.stop_event.wait(max(0, min(wait, remaining)))
+
+
+def next_tick_delay(elapsed, interval):
+    """Wait for the next future slot relative to this pass's start."""
+    if not math.isfinite(elapsed) or elapsed < 0 or not math.isfinite(interval) or interval <= 0:
+        raise ValueError("Invalid watchdog timing")
+    return (math.floor(elapsed / interval) + 1) * interval - elapsed
+
 
