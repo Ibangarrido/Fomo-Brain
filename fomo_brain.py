@@ -845,6 +845,55 @@ def measure_wallet_latency(function):
     return measured
 
 
+def recovery_signal_reference(state, token, fresh, now):
+    """Re-observe drift; never turn a changed quote into an immediate fill."""
+    key = token["chain"] + ":" + token["address"]
+    pending = state.setdefault("recovery_pending_signals", {})
+    previous = pending.get(key)
+    reference = previous or token
+    identity = ("chain", "address", "pair")
+    renew = any(reference.get(k) != fresh.get(k) for k in identity)
+    if previous:
+        try:
+            at = datetime.fromisoformat(previous["received_at"])
+            renew = renew or at.utcoffset() is None or not 0 <= (now-at).total_seconds() <= 90
+        except (KeyError, ValueError, TypeError):
+            renew = True
+    drift = variacion(fresh["price"], reference.get("price"))
+    if renew or drift is None or abs(drift) > 5:
+        try:
+            at = datetime.fromisoformat(fresh["received_at"])
+            if at.utcoffset() is None or not 0 <= (now-at).total_seconds() <= 30:
+                raise ValueError("invalid receipt")
+        except (KeyError, ValueError, TypeError):
+            pending.pop(key, None)
+            return token, None, "senal nueva sin recepcion reciente verificable"
+        pending[key] = dict(fresh)
+        while len(pending) > 100:
+            pending.pop(next(iter(pending)))
+        return fresh, None, "senal renovada; esperar otra lectura del mismo par en 30-90s"
+    return reference, previous, None
+
+
+def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
+    """Same snapshot and prior observation; policy checks are not fills."""
+    old = previous if previous is not None else ultima_lectura_par(fresh)
+    results = {}
+    for ratio in (.50, .60, .75):
+        reason = motivo_entrada(fresh, True, "early", min_buy_ratio=ratio,
+                                previous_observation=old)
+        if reason is None and entry_guard is not None:
+            reason = entry_guard(fresh)
+        results[str(int(ratio * 100))] = {"policy_pass": reason is None,
+                                        "first_blocker": reason}
+    return {"version": "recovery-same-snapshot-r1", "chain": fresh["chain"],
+            "address": fresh["address"], "symbol": fresh["symbol"], "pair": fresh["pair"],
+            "received_at": fresh.get("received_at"), "price": fresh["price"],
+            "buy_ratio5m": fresh["buyRatio5m"], "trades5m": fresh["trades5m"],
+            "confirmation_blocker": wait_reason, "thresholds": results,
+            "scope": "entry policy only; not wallet eligibility, executable route or profit"}
+
+
 @measure_wallet_latency
 @wallet_transaction
 def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False):
@@ -1088,11 +1137,22 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 notes.append(f"DESCARTE {key} | par fresco no supera filtros: {detail}")
                 continue
             # No perseguir una cotizacion que ya se alejo de la señal del radar.
-            drift = variacion(price, token.get("price"))
+            signal_reference, previous_observation = token, None
+            if recovery_ratio:
+                signal_reference, previous_observation, wait_reason = recovery_signal_reference(
+                    state, token, fresh, datetime.now(timezone.utc))
+                audit = recovery_ratio_audit(fresh, previous_observation, wait_reason, entry_guard)
+                state.setdefault("recovery_ratio_audit", []).append(audit)
+                state["recovery_ratio_audit"] = state["recovery_ratio_audit"][-300:]
+                print("RECOVERY RATIO AUDIT " + json.dumps(audit, ensure_ascii=False))
+                if wait_reason:
+                    notes.append(f"DESCARTE {key} | {wait_reason}")
+                    continue
+            drift = variacion(price, signal_reference.get("price"))
             if confirm and (drift is None or abs(drift) > 5):
                 notes.append(f"DESCARTE {key} | cotizacion se aleja >5% de la señal")
                 continue
-            reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes)
+            reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes, previous_observation=previous_observation)
             if not reason and entry_guard is not None:
                 reason = entry_guard(fresh)
             if reason:
@@ -1117,10 +1177,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 fresh = analizar_par(fresh_pair)
                 if fresh is None:
                     raise ValueError("par final no supera filtros")
-                drift = variacion(price, token.get("price"))
+                drift = variacion(price, signal_reference.get("price"))
                 if confirm and (drift is None or abs(drift) > 5):
                     raise ValueError("precio final se aleja >5% de la señal")
-                reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes)
+                reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes, previous_observation=previous_observation)
                 if not reason and entry_guard is not None:
                     reason = entry_guard(fresh)
                 if reason:
@@ -1140,6 +1200,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         quantity = budget / (price * cost)
         state["cash"] -= budget
         state["seen"].append(key)
+        if recovery_ratio:
+            state.get("recovery_pending_signals", {}).pop(key, None)
         state["positions"].append({
             "symbol": token["symbol"], "address": token["address"],
             "chain": token["chain"], "pair": token["pair"],
@@ -1218,6 +1280,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     state["assumptions"]["risk_policy"] = "capital-r2: nuevas entradas <=5 EUR; perdida total >=25% bloquea entradas hasta revision; 2 posiciones completas perdedoras en 60m pausan 60m desde ultimo cierre; salidas siguen activas"
     state["assumptions"]["experiment"] = label if entry_guard is not None or ratio_lab else None
     state["assumptions"]["min_buy_ratio_5m"] = min_buy_ratio
+    if recovery_ratio:
+        state["assumptions"]["signal_renewal"] = {
+            "version": "recovery-reconfirm-r1", "drift_pct": 5,
+            "confirmation_seconds": [30, 90], "same_pair_required": True,
+            "renewal_is_entry": False, "ratio_audit_is_entry": False}
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "impulse":
         state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"
@@ -1385,7 +1452,7 @@ def ultima_lectura_par(token):
     return index.get((token["chain"], token["address"], token["pair"]))
 
 
-def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60, max_pair_age_minutes=60):
+def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60, max_pair_age_minutes=60, previous_observation=None):
     if max_pair_age_minutes not in (60, 1440):
         raise ValueError("Limite de edad invalido")
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
@@ -1416,7 +1483,7 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60,
     if not 2 <= token["change5m"] <= 60:
         return "comparacion: momentum 5m fuera de 2-60%"
     now = datetime.now(timezone.utc)
-    old = ultima_lectura_par(token)
+    old = previous_observation if previous_observation is not None else ultima_lectura_par(token)
     if old is None:
         return "comparacion: falta lectura previa del mismo par"
     try:

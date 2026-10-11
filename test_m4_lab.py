@@ -12,6 +12,77 @@ import m4_lab as lab
 from test_fomo_v8 import pair
 
 
+class RecoverySignalTests(unittest.TestCase):
+    def setUp(self):
+        self.now = datetime.now(timezone.utc)
+        self.token = brain.analizar_par(pair(address="candidate", pool="pool"))
+        self.token.update(price=1, buyRatio5m=.65, trades5m=100, change5m=10,
+                          change1h=20, ageMinutes=15, liquidity=30000,
+                          vol5m=5000, received_at=self.now.isoformat())
+        self.state = {"cash": 80, "positions": [], "closed": []}
+
+    def test_drift_renews_without_filling_or_mutating_balances(self):
+        fresh = dict(self.token, price=1.10)
+        before = copy.deepcopy(self.state)
+        reference, previous, reason = brain.recovery_signal_reference(
+            self.state, self.token, fresh, self.now)
+        self.assertIn("esperar otra lectura", reason)
+        self.assertIsNone(previous)
+        self.assertEqual(reference["price"], 1.10)
+        for field in before:
+            self.assertEqual(self.state[field], before[field])
+
+    def test_next_independent_read_uses_renewed_price_and_full_filters(self):
+        self.now -= timedelta(seconds=60)
+        self.token["received_at"] = self.now.isoformat()
+        first = dict(self.token, price=1.10)
+        brain.recovery_signal_reference(self.state, self.token, first, self.now)
+        fresh = dict(first, price=1.12, received_at=(self.now+timedelta(seconds=60)).isoformat())
+        ref, previous, reason = brain.recovery_signal_reference(
+            self.state, self.token, fresh, self.now+timedelta(seconds=60))
+        self.assertIsNone(reason)
+        self.assertEqual(ref["price"], 1.10)
+        self.assertIsNone(brain.motivo_entrada(fresh, True, min_buy_ratio=.60,
+                                              previous_observation=previous))
+        self.assertEqual(brain.motivo_entrada(fresh, True, min_buy_ratio=.75,
+                                              previous_observation=previous), "ratio compras < 75%")
+        same = brain.motivo_entrada(first, True, min_buy_ratio=.60,
+                                   previous_observation=previous)
+        self.assertIn("30-90", same)
+
+    def test_pair_change_expiry_and_further_drift_restart_confirmation(self):
+        for change in ({"pair": "other"}, {"price": 1.30}, {}):
+            state = {}
+            first = dict(self.token, price=1.10)
+            brain.recovery_signal_reference(state, self.token, first, self.now)
+            seconds = 91 if not change else 60
+            fresh = dict(first, **change)
+            fresh["received_at"] = (self.now+timedelta(seconds=seconds)).isoformat()
+            _, previous, reason = brain.recovery_signal_reference(
+                state, self.token, fresh, self.now+timedelta(seconds=seconds))
+            self.assertIsNone(previous)
+            self.assertIn("esperar otra lectura", reason)
+
+    def test_unverifiable_receipt_cannot_renew(self):
+        for stamp in (None, "invalid", (self.now+timedelta(seconds=1)).isoformat(),
+                      (self.now-timedelta(seconds=31)).isoformat()):
+            fresh = dict(self.token, price=1.10, received_at=stamp)
+            _, _, reason = brain.recovery_signal_reference({}, self.token, fresh, self.now)
+            self.assertIn("sin recepcion", reason)
+
+    def test_same_snapshot_audit_reports_other_filters_without_orders(self):
+        fresh = dict(self.token, price=1.02)
+        old = dict(self.token, received_at=(self.now-timedelta(seconds=60)).isoformat())
+        with patch.object(brain, "ultima_lectura_par", side_effect=AssertionError("must use same prior")):
+            audit = brain.recovery_ratio_audit(fresh, old, None)
+        self.assertTrue(audit["thresholds"]["50"]["policy_pass"])
+        self.assertTrue(audit["thresholds"]["60"]["policy_pass"])
+        self.assertFalse(audit["thresholds"]["75"]["policy_pass"])
+        fresh["change1h"] = 200
+        audit = brain.recovery_ratio_audit(fresh, old, None)
+        self.assertIn("150%", audit["thresholds"]["50"]["first_blocker"])
+
+
 class M4Tests(unittest.TestCase):
     def test_raydium_fallback_reports_actual_source_without_changing_accounting(self):
         now = datetime.now(timezone.utc)
@@ -353,6 +424,39 @@ class M4Tests(unittest.TestCase):
         self.assertEqual(recovery["positions"][0]["mark_net"], 6.49)
         self.assertEqual(recovery["closed"], [])
         self.assertIsNone(recovery["observations"][-1]["estimated_equity"])
+
+    def test_recovery_drift_waits_then_confirms_using_persisted_new_signal(self):
+        lab.bootstrap()
+        market = pair(address="renewed-token", pool="renewed-pool")
+        market["txns"]["m5"] = {"buys": 75, "sells": 25}
+        market["priceUsd"] = "1.10"
+        market["_brain_received_at"] = datetime.now(timezone.utc).isoformat()
+        token = dict(brain.analizar_par(market), price=1)
+        def quote(position):
+            if position["address"] == lab.MINT:
+                raise ValueError("M4 unavailable")
+            return float(market["priceUsd"]), 20000, market
+        with patch.object(brain, "cotizar_posicion", side_effect=quote), \
+                patch.object(brain, "cargar_memoria", return_value=[]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            brain.simular_cartera([token], lab.RECOVERY, confirm=True,
+                                   quarantine_m4=True, min_buy_ratio=.75)
+            saved = self.read(lab.RECOVERY)
+            self.assertEqual(saved["cash"], 82)
+            self.assertEqual(len(saved["positions"]), 1)
+            self.assertNotIn("solana:renewed-token", saved["seen"])
+            pending = saved["recovery_pending_signals"]["solana:renewed-token"]
+            pending["received_at"] = (datetime.now(timezone.utc)-timedelta(seconds=60)).isoformat()
+            lab.write(lab.RECOVERY, saved)
+            market["priceUsd"] = "1.12"
+            market["_brain_received_at"] = datetime.now(timezone.utc).isoformat()
+            brain.simular_cartera([token], lab.RECOVERY, confirm=True,
+                                   quarantine_m4=True, min_buy_ratio=.75)
+        saved = self.read(lab.RECOVERY)
+        self.assertEqual(saved["cash"], 77)
+        self.assertEqual(len(saved["positions"]), 2)
+        self.assertEqual(saved["positions"][-1]["entry_price"], 1.12)
+        self.assertNotIn("solana:renewed-token", saved["recovery_pending_signals"])
 
     def test_only_inherited_exact_contract_bypasses_pause_and_net_stays_unknown(self):
         lab.bootstrap()
