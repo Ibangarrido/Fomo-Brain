@@ -305,6 +305,22 @@ class M4Tests(unittest.TestCase):
         self.assertEqual(state["positions"], self.seed["positions"])
         self.assertEqual(state["closed"], [])
 
+    def test_recovery_ratio_scope_and_boundary(self):
+        for path, quarantine, ratio in ((lab.SOURCE, False, .50),
+                                        (lab.CONTROL, False, .50),
+                                        (lab.RECOVERY, False, .50),
+                                        (lab.RECOVERY, True, .49)):
+            with self.assertRaises(ValueError):
+                brain.simular_cartera([], path, quarantine_m4=quarantine,
+                                      min_buy_ratio=ratio)
+        token = brain.analizar_par(pair())
+        token["buyRatio5m"] = .499
+        self.assertEqual(brain.motivo_entrada(token, min_buy_ratio=.50),
+                         "ratio compras < 50%")
+        token["buyRatio5m"] = .50
+        self.assertIsNone(brain.motivo_entrada(token, min_buy_ratio=.50))
+        self.assertEqual(brain.motivo_entrada(token), "ratio compras < 60%")
+
     def test_quarantine_cannot_be_enabled_on_original_wallet(self):
         with self.assertRaises(ValueError):
             brain.simular_cartera([], lab.SOURCE, quarantine_m4=True)
@@ -312,6 +328,7 @@ class M4Tests(unittest.TestCase):
     def test_recovery_buys_from_existing_cash_control_stays_paused(self):
         lab.bootstrap()
         market = pair(address="new-token", pool="new-pool")
+        market["txns"]["m5"] = {"buys": 25, "sells": 25}
         token = brain.analizar_par(market)
         previous = dict(token, hora=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
                         price=.95, vol5m=3000)
@@ -323,10 +340,13 @@ class M4Tests(unittest.TestCase):
             with patch.object(brain, "cotizar_posicion", side_effect=quote), \
                     patch.object(brain, "cargar_memoria", return_value=[previous]), \
                     contextlib.redirect_stdout(io.StringIO()):
-                brain.simular_cartera([token], path, confirm=True, quarantine_m4=recovery)
+                brain.simular_cartera([token], path, confirm=True, quarantine_m4=recovery,
+                                       min_buy_ratio=.50 if recovery else .60)
         control, recovery = self.read(lab.CONTROL), self.read(lab.RECOVERY)
         self.assertEqual(control["cash"], 82)
         self.assertEqual(len(control["positions"]), 1)
+        self.assertEqual(recovery["positions"][-1]["entry_min_buy_ratio"], .50)
+        self.assertEqual(len(recovery["recovery_entry_policy_history"]), 1)
         self.assertEqual(recovery["cash"], 77)
         self.assertEqual(recovery["reserve"], 10)
         self.assertEqual(len(recovery["positions"]), 2)

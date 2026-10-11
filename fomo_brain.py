@@ -862,7 +862,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
     ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
-    if min_buy_ratio != 0.60 and not ratio_lab:
+    recovery_ratio = (basename == RECOVERY and quarantine_m4 and confirm
+                      and entry_mode == "early" and min_buy_ratio == 0.50)
+    if min_buy_ratio != 0.60 and not (ratio_lab or recovery_ratio):
         raise ValueError("Umbral alternativo reservado al laboratorio ratio")
     protect_lab = os.path.basename(paper_file).startswith("fomo_lab_protect_")
     if type(profit_protection) is not bool or (profit_protection and not protect_lab):
@@ -917,6 +919,14 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         policy_history.append(dict(data_policy, effective_at=now.isoformat(),
                                    cash=state["cash"], reserve=state["reserve"],
                                    open=len(state["positions"]), closed=len(state["closed"])))
+    if recovery_ratio:
+        history = state.setdefault("recovery_entry_policy_history", [])
+        if not history or history[-1]["min_buy_ratio"] != min_buy_ratio:
+            history.append({"min_buy_ratio": min_buy_ratio, "previous_min_buy_ratio":
+                            history[-1]["min_buy_ratio"] if history else .60,
+                            "effective_at": now.isoformat(), "cash": state["cash"],
+                            "reserve": state["reserve"], "open": len(state["positions"]),
+                            "closed": len(state["closed"])})
     if ratio_lab:
         expected = {"mode": entry_mode, "min_buy_ratio": min_buy_ratio, "version": "ratio-r1"}
         if state.get("ratio_experiment", expected) != expected:
@@ -1829,7 +1839,8 @@ def refresh_open_positions(stop_event=None):
     if os.getenv("BRAIN_M4_LAB", "0") == "1":
         from m4_lab import CONTROL, RECOVERY
         for path in (CONTROL, RECOVERY):
-            wallets.append((path, "LAB M4 " + path, "early", .60, False))
+            wallets.append((path, "LAB M4 " + path, "early",
+                            .50 if path == RECOVERY else .60, False))
     if os.getenv("BRAIN_REBOUND_LAB", "0") == "1":
         from rebound_lab import CONTROL as rebound_control, EXTENDED
         for path in (rebound_control, EXTENDED):
