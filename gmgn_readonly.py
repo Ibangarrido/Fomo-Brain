@@ -24,6 +24,8 @@ DEMO_HOST = "https://papi.gmgn.ai"  # Diagnostic-only, not used by production qu
 def query(kind, api_key, opener=urllib.request.urlopen, host=HOST):
     # Closed endpoint allow-list: callers cannot request trade/account routes.
     path = ENDPOINTS[kind]
+    if host not in (HOST, DEMO_HOST):
+        raise ValueError("Unapproved GMGN host")
     params = {"chain": "sol", "timestamp": int(time.time()), "client_id": str(uuid.uuid4())}
     if kind == "ranking":
         params.update(interval="5m", limit=20, order_by="volume", direction="desc")
