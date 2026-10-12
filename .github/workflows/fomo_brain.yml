@@ -38,6 +38,7 @@ jobs:
       - name: Verificar simulacion V10 sin red
         run: |
           python test_fomo_v8.py
+          python -m unittest -v test_market_data_coverage.py test_jupiter_exit_diagnostic.py
           python -m unittest -v test_quote_safety.py
           python -m unittest -v test_exit_watchdog.py
           python -m unittest -v test_quote_audit.py
