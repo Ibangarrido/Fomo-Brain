@@ -89,32 +89,80 @@ def history_update(previous, rows, observed_at):
 
 
 
-def fetch_tracked(previous, existing_pools, limit=4):
-    """Follow a bounded set of existing pools that disappeared from new_pools."""
+def fetch_tracked(previous, existing_pools, limit=20):
+    """Requote up to 20 previously seen Solana pools in one bounded API call."""
     history = previous.get('history', {}) if isinstance(previous, dict) else {}
     if not isinstance(history, dict):
         return [], 0
-    missing = [p for p in reversed(list(history)) if p not in existing_pools][:limit]
-    found = []
-    errors = 0
-    for pool in missing:
-        try:
-            url = 'https://api.geckoterminal.com/api/v2/networks/solana/pools/' + urllib.parse.quote(pool, safe='')
-            req = urllib.request.Request(url, headers={'Accept': 'application/json;version=20230203', 'User-Agent': 'FomoBrainResearch/1.0'})
-            with urllib.request.urlopen(req, timeout=12) as response:
-                payload = json.load(response)
-            item = payload.get('data') if isinstance(payload, dict) else None
-            if not isinstance(item, dict):
-                errors += 1
+    ordered = sorted(
+        ((pool, record) for pool, record in history.items()
+         if isinstance(pool, str) and pool not in existing_pools and
+         isinstance(record, dict) and isinstance(record.get('samples'), list) and record['samples']),
+        key=lambda item: item[1]['samples'][-1].get('at', '') if isinstance(item[1]['samples'][-1], dict) else '',
+        reverse=True,
+    )
+    missing = [pool for pool, _ in ordered[:limit]]
+    if not missing:
+        return [], 0
+    try:
+        addresses = ','.join(urllib.parse.quote(pool, safe='') for pool in missing)
+        url = 'https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/' + addresses
+        req = urllib.request.Request(url, headers={'Accept': 'application/json;version=20230203',
+                                                   'User-Agent': 'FomoBrainResearch/1.0'})
+        with urllib.request.urlopen(req, timeout=12) as response:
+            payload = json.load(response)
+        rows = evaluate(payload)
+        expected = set(missing)
+        found = {}
+        for row in rows:
+            if row['pool'] in expected:
+                found[row['pool']] = row
+        return list(found.values()), len(expected - set(found))
+    except Exception:
+        return [], len(missing)
+
+
+def performance(history, minutes, tolerance_minutes=8):
+    """Observed price change only; not executable PnL or a backfilled candle."""
+    result = {}
+    for pool, record in history.items():
+        if not isinstance(record, dict):
+            continue
+        samples = record.get('samples')
+        if not isinstance(samples, list) or not samples:
+            continue
+        valid = []
+        for sample in samples:
+            if not isinstance(sample, dict):
                 continue
-            rows = evaluate({'data': [item]})
-            if len(rows) == 1 and rows[0]['pool'] == pool:
-                found.extend(rows)
-            else:
-                errors += 1
-        except Exception:
-            errors += 1
-    return found, errors
+            price = num(sample.get('price_usd'))
+            if price is None or price <= 0:
+                continue
+            try:
+                when = datetime.fromisoformat(sample['at'].replace('Z', '+00:00'))
+                if when.tzinfo is None:
+                    continue
+                valid.append((when, price))
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue
+        valid.sort()
+        if not valid:
+            continue
+        first_time, first_price = valid[0]
+        measurements = {}
+        for horizon in minutes:
+            target = horizon * 60
+            eligible = [(abs((when - first_time).total_seconds() - target), price)
+                        for when, price in valid[1:]
+                        if abs((when - first_time).total_seconds() - target) <= tolerance_minutes * 60]
+            measurements[str(horizon) + 'm_pct'] = (
+                round((min(eligible)[1] / first_price - 1) * 100, 3) if eligible else None
+            )
+        result[pool] = {'first_observed_at': first_time.isoformat(),
+                        'valid_observations': len(valid), 'observed_change_pct': measurements,
+                        'not_trade_pnl': True}
+    return result
+
 
 def run():
     status = 'OK'
@@ -131,11 +179,13 @@ def run():
         previous = {}
     tracked, tracking_errors = fetch_tracked(previous, {row['pool'] for row in rows})
     rows.extend(tracked)
-    report = {'version': 'discovery-watch-r3', 'at': datetime.now(timezone.utc).isoformat(),
+    observed_at = datetime.now(timezone.utc).isoformat()
+    history = history_update(previous, rows, observed_at)
+    report = {'version': 'discovery-watch-r4', 'at': datetime.now(timezone.utc).isoformat(),
               'source': URL, 'status': status, 'snapshot_only': True,
               'not_trade_signals': True, 'watch_thresholds': {'liquidity_usd': WATCH_MIN_LIQUIDITY_USD, 'volume_5m_usd': WATCH_MIN_VOLUME_5M_USD, 'trades_5m': WATCH_MIN_TRADES_5M, 'max_gain_1h_pct': WATCH_MAX_GAIN_1H_PCT}, 'watch_count': sum(x['watch'] for x in rows), 'tracked_refreshed': len(tracked),
               'tracking_errors': tracking_errors, 'candidates': rows,
-              'history': history_update(previous, rows, datetime.now(timezone.utc).isoformat())}
+              'history': history, 'observed_performance': performance(history, (15, 30))}
     with open('discovery_watch.json.tmp', 'w') as f: json.dump(report, f, allow_nan=False, indent=2)
     os.replace('discovery_watch.json.tmp', 'discovery_watch.json')
     print('DISCOVERY WATCH', status, len(rows), 'pools', report['watch_count'], 'watch candidates')
