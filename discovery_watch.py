@@ -3,6 +3,7 @@ import json
 import math
 import os
 import urllib.request
+import urllib.parse
 from datetime import datetime, timezone
 
 URL = 'https://api.geckoterminal.com/api/v2/networks/solana/new_pools'
@@ -74,6 +75,34 @@ def history_update(previous, rows, observed_at):
     return history
 
 
+
+def fetch_tracked(previous, existing_pools, limit=4):
+    """Follow a bounded set of existing pools that disappeared from new_pools."""
+    history = previous.get('history', {}) if isinstance(previous, dict) else {}
+    if not isinstance(history, dict):
+        return [], 0
+    missing = [p for p in reversed(list(history)) if p not in existing_pools][:limit]
+    found = []
+    errors = 0
+    for pool in missing:
+        try:
+            url = 'https://api.geckoterminal.com/api/v2/networks/solana/pools/' + urllib.parse.quote(pool, safe='')
+            req = urllib.request.Request(url, headers={'Accept': 'application/json;version=20230203', 'User-Agent': 'FomoBrainResearch/1.0'})
+            with urllib.request.urlopen(req, timeout=12) as response:
+                payload = json.load(response)
+            item = payload.get('data') if isinstance(payload, dict) else None
+            if not isinstance(item, dict):
+                errors += 1
+                continue
+            rows = evaluate({'data': [item]})
+            if len(rows) == 1 and rows[0]['pool'] == pool:
+                found.extend(rows)
+            else:
+                errors += 1
+        except Exception:
+            errors += 1
+    return found, errors
+
 def run():
     status = 'OK'
     try:
@@ -87,9 +116,12 @@ def run():
             previous = json.load(f)
     except (OSError, ValueError):
         previous = {}
-    report = {'version': 'discovery-watch-r2', 'at': datetime.now(timezone.utc).isoformat(),
+    tracked, tracking_errors = fetch_tracked(previous, {row['pool'] for row in rows})
+    rows.extend(tracked)
+    report = {'version': 'discovery-watch-r3', 'at': datetime.now(timezone.utc).isoformat(),
               'source': URL, 'status': status, 'snapshot_only': True,
-              'not_trade_signals': True, 'watch_count': sum(x['watch'] for x in rows), 'candidates': rows,
+              'not_trade_signals': True, 'watch_count': sum(x['watch'] for x in rows), 'tracked_refreshed': len(tracked),
+              'tracking_errors': tracking_errors, 'candidates': rows,
               'history': history_update(previous, rows, datetime.now(timezone.utc).isoformat())}
     with open('discovery_watch.json.tmp', 'w') as f: json.dump(report, f, allow_nan=False, indent=2)
     os.replace('discovery_watch.json.tmp', 'discovery_watch.json')
