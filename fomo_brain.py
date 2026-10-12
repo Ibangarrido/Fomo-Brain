@@ -845,6 +845,31 @@ def measure_wallet_latency(function):
     return measured
 
 
+def record_confirmation(state, reference, fresh, now, status, reasons, had_previous):
+    """Bounded receipt diagnostics; never price-age evidence or an entry decision."""
+    def seconds_since(snapshot):
+        try:
+            stamp = datetime.fromisoformat(snapshot['received_at'])
+            return (now - stamp).total_seconds() if stamp.utcoffset() is not None else None
+        except (KeyError, ValueError, TypeError):
+            return None
+    old_age, fresh_age = seconds_since(reference), seconds_since(fresh)
+    drift = variacion(fresh.get('price'), reference.get('price'))
+    if drift is not None and not math.isfinite(drift):
+        drift = None
+    row = {'version': 'confirmation-audit-r1', 'at': now.isoformat(),
+           'chain': fresh.get('chain'), 'address': fresh.get('address'),
+           'reference_pair': reference.get('pair'), 'current_pair': fresh.get('pair'),
+           'status': status, 'reasons': list(reasons), 'had_previous': had_previous,
+           'reference_receipt_age_seconds': old_age, 'fresh_receipt_age_seconds': fresh_age,
+           'receipt_gap_seconds': old_age-fresh_age if old_age is not None and fresh_age is not None else None,
+           'price_drift_pct': drift, 'provider_market_age': None,
+           'scope': 'local receipt diagnostics only; not eligibility, a fill or provider freshness'}
+    state.setdefault('confirmation_audit', []).append(row)
+    state['confirmation_audit'] = state['confirmation_audit'][-150:]
+    print('CONFIRMACION AUDIT ' + json.dumps(row, ensure_ascii=False, allow_nan=False))
+
+
 def recovery_signal_reference(state, token, fresh, now):
     """Re-observe drift; never turn a changed quote into an immediate fill."""
     key = token["chain"] + ":" + token["address"]
@@ -853,13 +878,21 @@ def recovery_signal_reference(state, token, fresh, now):
     reference = previous or token
     identity = ("chain", "address", "pair")
     renew = any(reference.get(k) != fresh.get(k) for k in identity)
+    renewal_reasons = ['IDENTITY_CHANGED'] if renew else []
     if previous:
         try:
             at = datetime.fromisoformat(previous["received_at"])
-            renew = renew or at.utcoffset() is None or not 0 <= (now-at).total_seconds() <= 90
+            if at.utcoffset() is None or not 0 <= (now-at).total_seconds() <= 90:
+                renew = True
+                renewal_reasons.append('REFERENCE_EXPIRED_OR_INVALID')
         except (KeyError, ValueError, TypeError):
             renew = True
+            renewal_reasons.append('REFERENCE_EXPIRED_OR_INVALID')
     drift = variacion(fresh["price"], reference.get("price"))
+    if drift is None:
+        renewal_reasons.append('PRICE_DRIFT_UNKNOWN')
+    elif abs(drift) > 5:
+        renewal_reasons.append('PRICE_DRIFT_GT_5PCT')
     if renew or drift is None or abs(drift) > 5:
         try:
             at = datetime.fromisoformat(fresh["received_at"])
@@ -867,10 +900,14 @@ def recovery_signal_reference(state, token, fresh, now):
                 raise ValueError("invalid receipt")
         except (KeyError, ValueError, TypeError):
             pending.pop(key, None)
+            record_confirmation(state, reference, fresh, now, 'INVALID_FRESH_RECEIPT',
+                                renewal_reasons + ['FRESH_RECEIPT_INVALID'], previous is not None)
             return token, None, "senal nueva sin recepcion reciente verificable"
         pending[key] = dict(fresh)
         while len(pending) > 100:
             pending.pop(next(iter(pending)))
+        record_confirmation(state, reference, fresh, now, 'RENEWED', renewal_reasons,
+                            previous is not None)
         return fresh, None, "senal renovada; esperar otra lectura del mismo par en 30-90s"
     if previous:
         # Keep the old snapshot for this decision, but let an independent,
@@ -885,6 +922,7 @@ def recovery_signal_reference(state, token, fresh, now):
                 pending[key] = dict(fresh)
         except (KeyError, ValueError, TypeError):
             pass
+    record_confirmation(state, reference, fresh, now, 'REFERENCE_AVAILABLE', [], previous is not None)
     return reference, previous, None
 
 
@@ -1170,6 +1208,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 if continuation_lab and key not in state.get("recovery_pending_signals", {}):
                     state.setdefault("recovery_pending_signals", {})[key] = dict(fresh)
                     signal_reference, previous_observation, wait_reason = fresh, None, "continuation: primera lectura; esperar confirmacion 30-90s"
+                    record_confirmation(state, fresh, fresh, datetime.now(timezone.utc),
+                                        'FIRST_READ', ['FIRST_READ'], False)
                 else:
                     signal_reference, previous_observation, wait_reason = recovery_signal_reference(
                         state, token, fresh, datetime.now(timezone.utc))

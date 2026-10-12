@@ -1,5 +1,25 @@
 # Prueba prospectiva de continuación — 12 octubre 2026
 
+## Diagnóstico de confirmación
+
+Se registra `confirmation_audit` (máximo 150 muestras por cartera) con motivo
+exacto de renovación: IDENTITY_CHANGED, REFERENCE_EXPIRED_OR_INVALID,
+PRICE_DRIFT_GT_5PCT o PRICE_DRIFT_UNKNOWN. También distingue FIRST_READ,
+INVALID_FRESH_RECEIPT y REFERENCE_AVAILABLE. Este último solo significa que
+existe referencia, no que la confirmación temporal o la entrada haya pasado.
+Registrar antigüedad de recepción de ambas lecturas, distancia temporal y
+variación de precio; provider_market_age sigue desconocido. El registro no
+cambia ninguna decisión ni amplía la ventana de 30–90s o el límite del 5%.
+
+La documentación oficial de DEX Screener permite consulta de uno o varios
+pares (https://docs.dexscreener.com/api/reference); podría reducir llamadas
+duplicadas. La documentación de GeckoTerminal declara caché de un minuto
+(https://api.geckoterminal.com/docs/index.html). Ninguna permite deducir que dos
+peticiones rápidas son dos precios nuevos del proveedor. Antes de acortar el
+intervalo o integrar consultas agrupadas, medir qué proporción de renovaciones
+proviene de caducidad, cambio de par o drift real. Las edades del ranking en los
+logs no son edades de las cotizaciones frescas usadas para confirmar.
+
 ## Corrección de solapamiento r2
 
 La revisión adicional por fotogramas de ALON (11 octubre 15:47:21) y SpaceXSI

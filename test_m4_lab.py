@@ -63,6 +63,40 @@ class RecoverySignalTests(unittest.TestCase):
             self.assertIsNone(previous)
             self.assertIn("esperar otra lectura", reason)
 
+    def test_renewal_diagnostics_distinguish_price_expiry_and_identity(self):
+        cases = [({'price': 1.2}, 60, ['PRICE_DRIFT_GT_5PCT']),
+                 ({}, 91, ['REFERENCE_EXPIRED_OR_INVALID']),
+                 ({'pair': 'other'}, 60, ['IDENTITY_CHANGED']),
+                 ({'pair': 'other', 'price': 1.2}, 91,
+                  ['IDENTITY_CHANGED', 'REFERENCE_EXPIRED_OR_INVALID', 'PRICE_DRIFT_GT_5PCT'])]
+        for changes, seconds, expected in cases:
+            with self.subTest(changes=changes, seconds=seconds):
+                state={'cash':80,'positions':[],'closed':[],
+                       'recovery_pending_signals':{'solana:candidate':dict(self.token)}}
+                fresh=dict(self.token,**changes)
+                at=self.now+timedelta(seconds=seconds);fresh['received_at']=at.isoformat()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    _,previous,reason=brain.recovery_signal_reference(state,self.token,fresh,at)
+                row=state['confirmation_audit'][-1]
+                self.assertEqual(row['reasons'],expected)
+                self.assertEqual(row['reference_receipt_age_seconds'],seconds)
+                self.assertEqual(row['receipt_gap_seconds'],seconds)
+                self.assertIsNone(row['provider_market_age'])
+                self.assertIsNone(previous);self.assertIn('esperar',reason)
+                self.assertEqual(state['cash'],80);self.assertEqual(state['positions'],[])
+
+    def test_diagnostics_bound_memory_and_do_not_treat_short_gap_as_fill(self):
+        state={'cash':80,'recovery_pending_signals':{'solana:candidate':dict(self.token)}}
+        with contextlib.redirect_stdout(io.StringIO()):
+            for i in range(155):
+                fresh=dict(self.token,received_at=(self.now+timedelta(seconds=20)).isoformat())
+                _,old,reason=brain.recovery_signal_reference(state,self.token,fresh,self.now+timedelta(seconds=20))
+        self.assertEqual(len(state['confirmation_audit']),150)
+        self.assertEqual(state['confirmation_audit'][-1]['receipt_gap_seconds'],20)
+        self.assertEqual(state['confirmation_audit'][-1]['status'],'REFERENCE_AVAILABLE')
+        self.assertIn('30-90',brain.motivo_entrada(fresh,True,'continuation',previous_observation=old))
+        self.assertEqual(state['cash'],80)
+
     def test_rejected_read_advances_reference_for_next_confirmation(self):
         self.now -= timedelta(seconds=120)
         self.token["received_at"] = self.now.isoformat()
@@ -524,6 +558,7 @@ class M4Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
