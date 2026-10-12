@@ -45,6 +45,19 @@ class GMGNReadOnlyTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             gmgn.query('swap', 'SECRET', opener=open_request)
 
+    def test_alternate_host_is_opt_in_and_read_only(self):
+        class Response(io.BytesIO):
+            status = 200
+        calls = []
+        def opener(request, timeout):
+            calls.append(request)
+            return Response(b'{"code":0,"data":{"price":1}}')
+        gmgn.query('info', 'SECRET', opener=opener, host=gmgn.DEMO_HOST)
+        self.assertTrue(calls[0].full_url.startswith(gmgn.DEMO_HOST + '/v1/'))
+        self.assertEqual(calls[0].get_method(), 'GET')
+        self.assertNotIn('SECRET', calls[0].full_url)
+        self.assertNotIn('/trade/', calls[0].full_url)
+
     def test_bad_envelope_and_missing_data_are_rejected(self):
         class Response(io.BytesIO):
             status = 200
