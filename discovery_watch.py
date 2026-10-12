@@ -1,6 +1,7 @@
 """Read-only discovery of new Solana pools; never places orders."""
 import json
 import math
+import os
 import urllib.request
 from datetime import datetime, timezone
 
@@ -26,6 +27,7 @@ def evaluate(payload):
             continue
         pool = a.get('address')
         created = a.get('pool_created_at')
+        price_usd = num(a.get('base_token_price_usd'))
         liquidity = num(a.get('reserve_in_usd'))
         volumes = a.get('volume_usd') or {}
         vol = num(volumes.get('m5')) if isinstance(volumes, dict) else None
@@ -40,11 +42,35 @@ def evaluate(payload):
         if vol is None or vol < 5000: reasons.append('volume_5m')
         if buys is None or sells is None or buys + sells < 40: reasons.append('trades_5m')
         elif buys / (buys + sells) < .5: reasons.append('buy_count_ratio')
-        rows.append({'pool': pool, 'pool_created_at': created, 'liquidity_usd': liquidity, 'volume_5m_usd': vol,
+        rows.append({'pool': pool, 'pool_created_at': created, 'price_usd': price_usd, 'liquidity_usd': liquidity, 'volume_5m_usd': vol,
                      'buys_5m': buys, 'sells_5m': sells, 'watch': not reasons,
                      'reasons': reasons, 'buy_volume_usd_verified': False,
                      'price_freshness_verified': False, 'paper_entry': False, 'exit_verified': False})
     return rows
+
+
+
+def history_update(previous, rows, observed_at):
+    """Append actual observations only; never backfill candles or claim fills."""
+    history = previous.get('history', {}) if isinstance(previous, dict) else {}
+    if not isinstance(history, dict):
+        history = {}
+    for row in rows:
+        if not row['watch']:
+            continue
+        pool = row['pool']
+        record = history.get(pool, {'first_seen': observed_at, 'samples': []})
+        if not isinstance(record, dict) or not isinstance(record.get('samples'), list):
+            record = {'first_seen': observed_at, 'samples': []}
+        sample = {'at': observed_at, 'price_usd': row['price_usd'],
+                  'liquidity_usd': row['liquidity_usd'], 'volume_5m_usd': row['volume_5m_usd']}
+        if not record['samples'] or record['samples'][-1].get('at') != observed_at:
+            record['samples'].append(sample)
+        record['samples'] = record['samples'][-96:]
+        history[pool] = record
+    # Bound memory and preserve the most recently observed candidates.
+    history = dict(sorted(history.items(), key=lambda item: item[1].get('samples', [{}])[-1].get('at', ''), reverse=True)[:300])
+    return history
 
 
 def run():
@@ -55,11 +81,16 @@ def run():
             rows = evaluate(json.load(response))
     except Exception as exc:
         rows, status = [], 'UNAVAILABLE:' + type(exc).__name__
-    report = {'version': 'discovery-watch-r1', 'at': datetime.now(timezone.utc).isoformat(),
+    try:
+        with open('discovery_watch.json') as f:
+            previous = json.load(f)
+    except (OSError, ValueError):
+        previous = {}
+    report = {'version': 'discovery-watch-r2', 'at': datetime.now(timezone.utc).isoformat(),
               'source': URL, 'status': status, 'snapshot_only': True,
-              'not_trade_signals': True, 'watch_count': sum(x['watch'] for x in rows), 'candidates': rows}
+              'not_trade_signals': True, 'watch_count': sum(x['watch'] for x in rows), 'candidates': rows,
+              'history': history_update(previous, rows, datetime.now(timezone.utc).isoformat())}
     with open('discovery_watch.json.tmp', 'w') as f: json.dump(report, f, allow_nan=False, indent=2)
-    import os
     os.replace('discovery_watch.json.tmp', 'discovery_watch.json')
     print('DISCOVERY WATCH', status, len(rows), 'pools', report['watch_count'], 'watch candidates')
     return report
