@@ -7,6 +7,10 @@ import urllib.parse
 from datetime import datetime, timezone
 
 URL = 'https://api.geckoterminal.com/api/v2/networks/solana/new_pools'
+WATCH_MIN_LIQUIDITY_USD = 8000
+WATCH_MIN_VOLUME_5M_USD = 1500
+WATCH_MIN_TRADES_5M = 15
+WATCH_MAX_GAIN_1H_PCT = 100
 
 
 def num(v):
@@ -37,13 +41,22 @@ def evaluate(payload):
         buys, sells = (num(tx.get('buys')), num(tx.get('sells'))) if isinstance(tx, dict) else (None, None)
         if not isinstance(pool, str) or not pool:
             continue
+        changes = a.get('price_change_percentage') or {}
+        gain_1h = None
+        if isinstance(changes, dict):
+            try:
+                value = float(changes.get('h1'))
+                if math.isfinite(value): gain_1h = value
+            except (ValueError, TypeError, OverflowError):
+                pass
         reasons = []
+        if gain_1h is not None and gain_1h > WATCH_MAX_GAIN_1H_PCT: reasons.append('gain_1h_over_limit')
         if not isinstance(created, str) or not created: reasons.append('missing_creation_time')
-        if liquidity is None or liquidity < 20000: reasons.append('liquidity')
-        if vol is None or vol < 5000: reasons.append('volume_5m')
-        if buys is None or sells is None or buys + sells < 40: reasons.append('trades_5m')
+        if liquidity is None or liquidity < WATCH_MIN_LIQUIDITY_USD: reasons.append('liquidity')
+        if vol is None or vol < WATCH_MIN_VOLUME_5M_USD: reasons.append('volume_5m')
+        if buys is None or sells is None or buys + sells < WATCH_MIN_TRADES_5M: reasons.append('trades_5m')
         elif buys / (buys + sells) < .5: reasons.append('buy_count_ratio')
-        rows.append({'pool': pool, 'pool_created_at': created, 'price_usd': price_usd, 'liquidity_usd': liquidity, 'volume_5m_usd': vol,
+        rows.append({'pool': pool, 'pool_created_at': created, 'price_usd': price_usd, 'gain_1h_pct': gain_1h, 'liquidity_usd': liquidity, 'volume_5m_usd': vol,
                      'buys_5m': buys, 'sells_5m': sells, 'watch': not reasons,
                      'reasons': reasons, 'buy_volume_usd_verified': False,
                      'price_freshness_verified': False, 'paper_entry': False, 'exit_verified': False})
@@ -120,7 +133,7 @@ def run():
     rows.extend(tracked)
     report = {'version': 'discovery-watch-r3', 'at': datetime.now(timezone.utc).isoformat(),
               'source': URL, 'status': status, 'snapshot_only': True,
-              'not_trade_signals': True, 'watch_count': sum(x['watch'] for x in rows), 'tracked_refreshed': len(tracked),
+              'not_trade_signals': True, 'watch_thresholds': {'liquidity_usd': WATCH_MIN_LIQUIDITY_USD, 'volume_5m_usd': WATCH_MIN_VOLUME_5M_USD, 'trades_5m': WATCH_MIN_TRADES_5M, 'max_gain_1h_pct': WATCH_MAX_GAIN_1H_PCT}, 'watch_count': sum(x['watch'] for x in rows), 'tracked_refreshed': len(tracked),
               'tracking_errors': tracking_errors, 'candidates': rows,
               'history': history_update(previous, rows, datetime.now(timezone.utc).isoformat())}
     with open('discovery_watch.json.tmp', 'w') as f: json.dump(report, f, allow_nan=False, indent=2)
