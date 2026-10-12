@@ -275,6 +275,9 @@ def run(seconds=900):
     global STOP
     signal.signal(signal.SIGTERM, lambda *_: globals().__setitem__('STOP', True))
     state = load()
+    session_events_start = len(state.get('events', []))
+    rejected_at_start = state.get('rejected_alerts', 0)
+    session_monotonic_start = time.monotonic()
     started = time.time()
     deadline = time.monotonic() + seconds
     next_mark = 0
@@ -329,6 +332,27 @@ def run(seconds=900):
             ws.close()
         mark(state, time.time())
         state['watcher_status'] = 'SESION FINALIZADA'
+        # Session diagnostics: cumulative events are not new trades this run.
+        recent = state.get('events', [])[session_events_start:]
+        reasons = {}
+        for event in recent:
+            result = str(event.get('result') or 'SIN RESULTADO')
+            reasons[result] = reasons.get(result, 0) + 1
+        state['last_session_diagnostics'] = {
+            'at': stamp(time.time()),
+            'duration_seconds': round(time.monotonic() - session_monotonic_start, 1),
+            'valid_alerts': len(recent),
+            'buy_alerts': sum(e.get('side') == 'buy' for e in recent),
+            'sell_alerts': sum(e.get('side') == 'sell' for e in recent),
+            'virtual_entries': sum(e.get('result') == 'ENTRADA VIRTUAL' for e in recent),
+            'virtual_exits': sum(e.get('result') == 'SALIDA VIRTUAL' for e in recent),
+            'rejected_raw_alerts': state.get('rejected_alerts', 0) - rejected_at_start,
+            'results': reasons,
+            'feed_status': state.get('feed_status', 'DESCONOCIDO'),
+            'provider_delay_seconds': state.get('provider_delay_seconds'),
+            'scope': 'solo alertas recibidas durante la sesion; no es radar independiente',
+        }
+        print(f"WHALE {TRADER} DIAGNOSTICO SESION " + json.dumps(state['last_session_diagnostics'], ensure_ascii=False), flush=True)
         save(state)
         print(f'WHALE {TRADER} FIN: observacion solo durante esta run; huecos entre runs. Costes 1%+2% por lado; FX 1:1; sin gas/MEV.', flush=True)
 
