@@ -114,11 +114,13 @@ def guard(token, allow_breakout=False):
 def breakout_guard(token):
     return guard(token, allow_breakout=True)
 
-def run(ranking, simulator):
+def run(ranking, simulator, prefetch=None):
     if bootstrap():
         print('LAB CONTINUATION INICIO: tres carteras virtuales de 100 EUR; decisiones desde proxima lectura; NO sumar')
         return
     pattern_started = bootstrap_pattern()
+    if prefetch is not None:
+        prefetch(ranking)  # Use the running engine's thread-local caches, including __main__.
     rows = {}
     for arm, (path, mode, ratio) in ARMS.items():
         if pattern_started and arm in PATTERN_ARMS:

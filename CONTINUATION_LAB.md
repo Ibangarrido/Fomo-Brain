@@ -1,5 +1,31 @@
 # Prueba prospectiva de continuación — 12 octubre 2026
 
+## Consultas agrupadas de confirmación
+
+Antes de evaluar los brazos de continuación, el motor consulta hasta 20
+candidatos, agrupados por cadena y en lotes de hasta 10 pares exactos; máximo
+dos peticiones de precarga por ciclo. La API de
+DEX Screener admite uno o varios pares. Solo se precargan respuestas que coincidan
+en cadena, pool y contrato base, con precio positivo, liquidez mínima y recepción
+local verificable de menos de 3s. Duplicados contradictorios no se precargan.
+Se conserva la hora y reloj monotónico de la respuesta original, sin inventar
+una nueva recepción. El TTL original de 3s y las cachés por hilo se mantienen.
+
+La precarga utiliza callbacks y cachés del motor en ejecución (también cuando
+se lanza como __main__), no una segunda instancia importada. No cambia los
+filtros de entrada ni el requisito de dos lecturas en 30–90s. Tras las consultas
+de seguridad se invalida la cotización individual y se pide de nuevo, igual que
+antes. Respuestas parciales, errores HTTP, expiración o falta de coincidencia
+conservan la consulta individual como respaldo. El watchdog de salidas no recibe
+datos de la caché del hilo de entradas. No se conecta la API CoinGecko ni se
+calcula flujo por importe con datos de número de operaciones.
+
+El log ENTRADAS BATCH permite medir peticiones, pares precargados, errores y
+latencia. La reducción de llamadas está validada con datos sintéticos; verificar
+en las siguientes runs tanto coste de precarga como tiempo total y motivos de
+renovación. No se presupone menor latencia en todas las condiciones ni mejora
+de rentabilidad. Fuente: https://docs.dexscreener.com/api/reference.
+
 ## Diagnóstico de confirmación
 
 Se registra `confirmation_audit` (máximo 150 muestras por cartera) con motivo

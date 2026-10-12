@@ -794,6 +794,66 @@ def cotizar_posicion(pos):
     return price, liquidity, pair
 
 
+def prefetch_entry_pairs(ranking):
+    """Bounded DEX batch reads for continuation; original receipt and 3s TTL survive."""
+    started = time.monotonic()
+    groups = {}
+    for token in ranking[:20]:
+        if not all(isinstance(token.get(k), str) and token[k] for k in ('chain', 'pair', 'address')):
+            continue
+        chain, pool, address = token['chain'], token['pair'], token['address']
+        groups.setdefault(chain, {}).setdefault(pool, set()).add(address)
+    report = {'version': 'entry-batch-r1', 'requests': 0, 'seeded': 0,
+              'errors': 0, 'invalid_receipts': 0, 'ambiguous_pairs': 0,
+              'max_pairs_per_request': 10, 'max_candidates': 20, 'max_requests': 2,
+              'provider_market_age': None, 'execution_verified': False}
+    for chain, wanted in groups.items():
+        pools = [pool for pool, addresses in wanted.items() if len(addresses) == 1]
+        for offset in range(0, len(pools), 10):
+            if report['requests'] >= report['max_requests']:
+                break
+            chunk = pools[offset:offset+10]
+            if len(chunk) < 2:
+                continue  # No saving from an extra one-pair request.
+            root = 'https://api.dexscreener.com/latest/dex/pairs/' + urllib.parse.quote(chain, safe='') + '/'
+            url = root + ','.join(urllib.parse.quote(pool, safe='') for pool in chunk)
+            try:
+                report['requests'] += 1
+                data = pedir_json(url)
+                receipt = JSON_RECEIPTS.get(url)
+                if (receipt is None or receipt[0] is not data
+                        or not 0 <= time.monotonic()-receipt[2] < DEX_CACHE_TTL_SECONDS
+                        or not 0 <= (datetime.now(timezone.utc)-receipt[1]).total_seconds() < DEX_CACHE_TTL_SECONDS):
+                    report['invalid_receipts'] += 1
+                    continue
+                by_pool, ambiguous = {}, set()
+                for row in data.get('pairs') or []:
+                    if not isinstance(row, dict):
+                        continue
+                    pool = row.get('pairAddress')
+                    if (pool not in chunk or row.get('chainId') != chain
+                            or (row.get('baseToken') or {}).get('address') not in wanted[pool]):
+                        continue
+                    if pool in by_pool and by_pool[pool] != row:
+                        ambiguous.add(pool)
+                    by_pool[pool] = row
+                report['ambiguous_pairs'] += len(ambiguous)
+                for pool, row in by_pool.items():
+                    if (pool in ambiguous or numero(row.get('priceUsd')) <= 0
+                            or numero((row.get('liquidity') or {}).get('usd')) < MIN_LIQUIDITY):
+                        continue
+                    single_url = root + urllib.parse.quote(pool, safe='')
+                    payload = {'pairs': [row]}
+                    JSON_CACHE[single_url] = payload
+                    JSON_RECEIPTS[single_url] = (payload, receipt[1], receipt[2])
+                    report['seeded'] += 1
+            except Exception:
+                report['errors'] += 1  # Normal exact-pair reads remain the fallback.
+    report['seconds'] = round(time.monotonic()-started, 3)
+    print('ENTRADAS BATCH ' + json.dumps(report, allow_nan=False))
+    return report
+
+
 def invalidate_entry_quote(token):
     """Discard only this token's cached market responses before final entry checks."""
     chain = urllib.parse.quote(token["chain"], safe="")
@@ -1869,7 +1929,7 @@ def main(refresh_events=True):
     if os.getenv("BRAIN_CONTINUATION_LAB", "0") == "1" and os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
         try:
             from continuation_lab import run as run_continuation
-            run_continuation(ranking, simular_cartera)
+            run_continuation(ranking, simular_cartera, prefetch=prefetch_entry_pairs)
         except Exception as exc:
             print("LAB CONTINUATION ERROR: " + str(exc) + "; no reiniciar carteras")
     if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":

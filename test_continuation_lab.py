@@ -83,6 +83,15 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(len(calls),5)
         self.assertIn((lab.PATTERN_ARMS['pattern_breakout'][0],lab.breakout_guard),calls)
         self.assertIn((lab.PATTERN_ARMS['pattern_pullback'][0],lab.guard),calls)
+    def test_prefetch_uses_injected_running_engine_before_wallet_decisions(self):
+        lab.bootstrap();lab.bootstrap_pattern();events=[]
+        def prefetch(ranking):events.append('prefetch')
+        def simulator(ranking,path,label,**kwargs):
+            events.append(path);state=self.read(path)
+            state['observations'].append({'verified_component':100,'estimated_equity':100,'open':0,'closed':0})
+            with open(path,'w') as f:json.dump(state,f)
+        with contextlib.redirect_stdout(io.StringIO()):lab.run([],simulator,prefetch=prefetch)
+        self.assertEqual(events[0],'prefetch');self.assertEqual(len(events),6)
     def test_continuation_changes_policy_but_not_liquidity_or_confirmation(self):
         _,t,old=self.candidate()
         self.assertIn('75%',brain.motivo_entrada(t,True,min_buy_ratio=.75,previous_observation=old))
