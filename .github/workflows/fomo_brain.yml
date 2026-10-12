@@ -115,6 +115,9 @@ jobs:
             fomo_lab_targets_control_r1.json
             fomo_lab_targets_staged_r1.json
             fomo_lab_targets_start_r1.json
+            fomo_lab_pattern_start_r1.json
+            fomo_lab_pattern_pullback_r1.json
+            fomo_lab_pattern_breakout_r1.json
             fomo_lab_continuation_start_r1.json
             fomo_lab_continuation_control_r1.json
             fomo_lab_continuation_50_r1.json
@@ -202,5 +205,6 @@ jobs:
           name: gmgn-paper
           path: gmgn_paper_r1.json
           retention-days: 30
+
 
 

@@ -31,9 +31,58 @@ class ContinuationTests(unittest.TestCase):
         return p,token,old
     def test_bootstrap_once_and_incomplete_refuses_reset(self):
         self.assertTrue(lab.bootstrap());self.assertFalse(lab.bootstrap())
-        for p in lab.FILES:self.assertEqual(self.read(p)['cash'],100)
+        for p in lab.LEGACY_FILES:self.assertEqual(self.read(p)['cash'],100)
         os.remove(lab.ARMS['50'][0])
         with self.assertRaises(ValueError):lab.bootstrap()
+    def test_pattern_bootstrap_preserves_legacy_and_refuses_partial_reset(self):
+        lab.bootstrap();path=lab.ARMS['50'][0];state=self.read(path);state['cash']=93
+        with open(path,'w') as f:json.dump(state,f)
+        self.assertTrue(lab.bootstrap_pattern());self.assertFalse(lab.bootstrap_pattern())
+        self.assertEqual(self.read(path)['cash'],93)
+        starts=[self.read(spec[0]) for spec in lab.PATTERN_ARMS.values()]
+        self.assertEqual(starts[0]['pattern_baseline'],starts[1]['pattern_baseline'])
+        self.assertTrue(all(s['cash']==100 and not s['positions'] for s in starts))
+        os.remove(lab.PATTERN_ARMS['pattern_breakout'][0])
+        with self.assertRaises(ValueError):lab.bootstrap_pattern()
+    def breakout_bars(self):
+        minute=int(datetime.now(timezone.utc).timestamp()//60)*60
+        values=[(1,1.025,.99,1.02,100),(1.02,1.085,1.01,1.08,180),
+                (1.08,1.09,1.06,1.075,80),(1.075,1.085,1.06,1.08,70),
+                (1.08,1.12,1.07,1.115,220)]
+        return [[minute-300+i*60,*v] for i,v in enumerate(values)]
+    def test_breakout_arm_accepts_confirmed_pause_control_rejects(self):
+        _,token,_=self.candidate();token['price']=1.115
+        result={'bars':self.breakout_bars()}
+        with patch.object(candle_lab,'context',return_value=result):
+            self.assertIsNotNone(lab.guard(token))
+            self.assertIsNone(lab.breakout_guard(token))
+            self.assertEqual(token['continuation_pattern'],'CONSOLIDATION_BREAKOUT_WITH_VOLUME')
+            token['price']=1.09;self.assertIsNotNone(lab.breakout_guard(token))
+            token['price']=1.18;self.assertIsNotNone(lab.breakout_guard(token))
+    def test_breakout_rejects_weak_volume_wick_falling_support_and_incomplete_bars(self):
+        _,token,_=self.candidate();token['price']=1.115
+        for mutate in (lambda b:b[-1].__setitem__(5,20),
+                       lambda b:b[-1].__setitem__(2,1.3),
+                       lambda b:b[-2].__setitem__(3,.98),
+                       lambda b:b[-2].__setitem__(5,200),
+                       lambda b:b[-1].__setitem__(0,b[-1][0]+60)):
+            bars=self.breakout_bars();mutate(bars)
+            with patch.object(candle_lab,'context',return_value={'bars':bars}):
+                self.assertIsNotNone(lab.breakout_guard(token))
+    def test_pattern_arms_skip_initial_cycle_then_use_distinct_guards(self):
+        lab.bootstrap();calls=[]
+        def simulator(ranking,path,label,**kwargs):
+            calls.append((path,kwargs['entry_guard']))
+            state=self.read(path);state['observations'].append({'verified_component':state['cash'],
+                'estimated_equity':state['cash'],'open':0,'closed':0})
+            with open(path,'w') as f:json.dump(state,f)
+        with contextlib.redirect_stdout(io.StringIO()):lab.run([],simulator)
+        self.assertEqual(len(calls),3)
+        calls.clear()
+        with contextlib.redirect_stdout(io.StringIO()):lab.run([],simulator)
+        self.assertEqual(len(calls),5)
+        self.assertIn((lab.PATTERN_ARMS['pattern_breakout'][0],lab.breakout_guard),calls)
+        self.assertIn((lab.PATTERN_ARMS['pattern_pullback'][0],lab.guard),calls)
     def test_continuation_changes_policy_but_not_liquidity_or_confirmation(self):
         _,t,old=self.candidate()
         self.assertIn('75%',brain.motivo_entrada(t,True,min_buy_ratio=.75,previous_observation=old))
@@ -106,3 +155,4 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(self.read(path)['cash'],100)
 
 if __name__=='__main__':unittest.main()
+
