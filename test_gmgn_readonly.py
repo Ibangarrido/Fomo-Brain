@@ -58,6 +58,12 @@ class GMGNReadOnlyTests(unittest.TestCase):
         self.assertNotIn('SECRET', calls[0].full_url)
         self.assertNotIn('/trade/', calls[0].full_url)
 
+    def test_unapproved_host_is_rejected_before_network(self):
+        opener = Mock()
+        with self.assertRaises(ValueError):
+            gmgn.query('info', 'SECRET', opener=opener, host='https://example.invalid')
+        opener.assert_not_called()
+
     def test_bad_envelope_and_missing_data_are_rejected(self):
         class Response(io.BytesIO):
             status = 200
