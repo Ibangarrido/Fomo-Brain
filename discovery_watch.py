@@ -17,23 +17,33 @@ def num(v):
 
 def evaluate(payload):
     rows = []
-    for p in payload.get('data', []):
+    data = payload.get('data', []) if isinstance(payload, dict) else []
+    for p in data if isinstance(data, list) else []:
+        if not isinstance(p, dict):
+            continue
         a = p.get('attributes') or {}
+        if not isinstance(a, dict):
+            continue
         pool = a.get('address')
+        created = a.get('pool_created_at')
         liquidity = num(a.get('reserve_in_usd'))
-        vol = num((a.get('volume_usd') or {}).get('m5'))
-        tx = (a.get('transactions') or {}).get('m5') or {}
-        buys, sells = num(tx.get('buys')), num(tx.get('sells'))
+        volumes = a.get('volume_usd') or {}
+        vol = num(volumes.get('m5')) if isinstance(volumes, dict) else None
+        transactions = a.get('transactions') or {}
+        tx = (transactions.get('m5') or {}) if isinstance(transactions, dict) else {}
+        buys, sells = (num(tx.get('buys')), num(tx.get('sells'))) if isinstance(tx, dict) else (None, None)
         if not isinstance(pool, str) or not pool:
             continue
         reasons = []
+        if not isinstance(created, str) or not created: reasons.append('missing_creation_time')
         if liquidity is None or liquidity < 20000: reasons.append('liquidity')
         if vol is None or vol < 5000: reasons.append('volume_5m')
         if buys is None or sells is None or buys + sells < 40: reasons.append('trades_5m')
         elif buys / (buys + sells) < .5: reasons.append('buy_count_ratio')
-        rows.append({'pool': pool, 'liquidity_usd': liquidity, 'volume_5m_usd': vol,
+        rows.append({'pool': pool, 'pool_created_at': created, 'liquidity_usd': liquidity, 'volume_5m_usd': vol,
                      'buys_5m': buys, 'sells_5m': sells, 'watch': not reasons,
-                     'reasons': reasons, 'paper_entry': False, 'exit_verified': False})
+                     'reasons': reasons, 'buy_volume_usd_verified': False,
+                     'price_freshness_verified': False, 'paper_entry': False, 'exit_verified': False})
     return rows
 
 
