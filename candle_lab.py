@@ -64,6 +64,47 @@ def validate_pool(payload, token, network):
     return pool
 
 
+def pattern_research(bars):
+    """Describe validated closed bars; hypotheses only, never an order gate."""
+    a, b = bars[-2:]
+    prior_high = max(r[2] for r in bars[:-1])
+    prior_low = min(r[3] for r in bars[:-1])
+    baseline_volume = sum(r[5] for r in bars[:3]) / 3
+    upper_wick = ((b[2] - max(b[1], b[4])) / (b[2] - b[3])
+                  if b[2] > b[3] else 0)
+    peak_before_pullback = max(r[2] for r in bars[:3])
+    pullback_pct = 100 * (1 - a[3] / peak_before_pullback)
+    volume_multiple = b[5] / baseline_volume if baseline_volume > 0 else None
+    name = "NO_PATTERN"
+    # Empty intervals cannot establish demand or distribution.
+    if baseline_volume <= 0 or any(r[5] <= 0 for r in bars):
+        name = "INSUFFICIENT_TRADED_VOLUME"
+    elif (b[4] < a[3] and b[4] < b[1]
+          and volume_multiple >= 1.2):
+        name = "BREAKDOWN_WITH_VOLUME"
+    elif (upper_wick > .4 and b[4] < a[4]
+          and volume_multiple >= 1.2):
+        name = "UPPER_REJECTION_WITH_VOLUME"
+    elif (b[4] > prior_high and b[4] > b[1]
+          and upper_wick <= .4 and volume_multiple >= 1.2):
+        name = "BREAKOUT_WITH_VOLUME"
+    elif (1 <= pullback_pct <= 20 and a[4] < a[1]
+          and b[4] > b[1] and b[4] > a[2] and b[3] >= a[3]
+          and upper_wick <= .4 and b[5] >= a[5]
+          and volume_multiple >= 1.2):
+        name = "PULLBACK_RECLAIM_WITH_VOLUME"
+    elif (100 * (prior_high / prior_low - 1) <= 8
+          and prior_low <= b[4] <= prior_high):
+        name = "RANGE"
+    return {"version": "pattern-research-r1", "name": name,
+            "window_closed_bars": len(bars), "timeframe": "1m",
+            "prior_high": prior_high, "prior_low": prior_low,
+            "last_close": b[4], "last_volume_multiple": volume_multiple,
+            "pullback_pct": pullback_pct, "upper_wick_fraction": upper_wick,
+            "scope": "descriptive hypotheses; not entry eligibility, exit instruction or proven edge",
+            "changes_orders": False}
+
+
 def evaluate_rows(payload, now):
     """Five consecutive completed minute bars; no forward data or empty intervals."""
     rows = {}
@@ -104,7 +145,8 @@ def evaluate_rows(payload, now):
     return {"status": "RECHAZA" if reason else "PASA", "reason": reason,
             "bars": bars, "last_closed_at": datetime.fromtimestamp(b[0] + 60, timezone.utc).isoformat(),
             "recent_volume_mean_usd": recent, "previous_volume_mean_usd": previous,
-            "upper_wick_fraction": wick, "policy": "candle-r1"}
+            "upper_wick_fraction": wick, "policy": "candle-r1",
+            "pattern_research": pattern_research(bars)}
 
 
 def context(token, fetcher=request_json, now=None):

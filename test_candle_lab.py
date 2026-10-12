@@ -23,6 +23,55 @@ def rising_rows():
             [840, 1.05, 1.09, 1.04, 1.08, 160]]
 
 
+class PatternResearchTests(unittest.TestCase):
+    def test_breakout_is_descriptive_and_preserves_existing_candle_gate(self):
+        result = lab.evaluate_rows(payload(rising_rows()), 905)
+        self.assertEqual(result["status"], "PASA")
+        research = result["pattern_research"]
+        self.assertEqual(research["name"], "BREAKOUT_WITH_VOLUME")
+        self.assertFalse(research["changes_orders"])
+        rows = rising_rows()
+        rows[-1][5] = 100
+        self.assertNotEqual(lab.evaluate_rows(payload(rows), 905)
+                            ["pattern_research"]["name"], "BREAKOUT_WITH_VOLUME")
+
+    def test_pullback_reclaim_does_not_override_two_green_candle_rule(self):
+        rows = [[600, 1, 1.1, .99, 1.08, 100],
+                [660, 1.08, 1.2, 1.07, 1.18, 100],
+                [720, 1.18, 1.3, 1.16, 1.28, 100],
+                [780, 1.28, 1.28, 1.10, 1.12, 120],
+                [840, 1.12, 1.30, 1.11, 1.29, 150]]
+        result = lab.evaluate_rows(payload(rows), 905)
+        self.assertEqual(result["pattern_research"]["name"], "PULLBACK_RECLAIM_WITH_VOLUME")
+        self.assertEqual(result["status"], "RECHAZA")
+        rows[-1][4] = 1.27
+        self.assertNotEqual(lab.evaluate_rows(payload(rows), 905)
+                            ["pattern_research"]["name"], "PULLBACK_RECLAIM_WITH_VOLUME")
+
+    def test_breakdown_and_upper_rejection(self):
+        rows = rising_rows()
+        rows[-1] = [840, 1.05, 1.06, .98, 1, 160]
+        self.assertEqual(lab.evaluate_rows(payload(rows), 905)
+                         ["pattern_research"]["name"], "BREAKDOWN_WITH_VOLUME")
+        rows[-1] = [840, 1.05, 1.20, 1.03, 1.04, 160]
+        self.assertEqual(lab.evaluate_rows(payload(rows), 905)
+                         ["pattern_research"]["name"], "UPPER_REJECTION_WITH_VOLUME")
+
+    def test_unclosed_future_stale_gapped_and_empty_bars_cannot_signal(self):
+        rows = rising_rows()
+        future = [900, 1.08, 2, 1.07, 1.99, 9000]
+        self.assertEqual(lab.evaluate_rows(payload(rows+[future]), 905)
+                         ["pattern_research"]["last_close"], 1.08)
+        self.assertNotIn("pattern_research", lab.evaluate_rows(payload(rows), 1000))
+        self.assertNotIn("pattern_research", lab.evaluate_rows(payload(rows[1:]), 905))
+        rows[2][0] = 660
+        self.assertNotIn("pattern_research", lab.evaluate_rows(payload(rows), 905))
+        rows = rising_rows()
+        rows[-1][5] = 0
+        self.assertEqual(lab.evaluate_rows(payload(rows), 905)
+                         ["pattern_research"]["name"], "INSUFFICIENT_TRADED_VOLUME")
+
+
 class CandleLabTests(unittest.TestCase):
     def setUp(self):
         lab.CYCLE_CACHE.clear()
