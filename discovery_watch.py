@@ -56,7 +56,8 @@ def history_update(previous, rows, observed_at):
     if not isinstance(history, dict):
         history = {}
     for row in rows:
-        if not row['watch']:
+        # Continue tracking previously discovered pools even if they fail today's filters.
+        if not row['watch'] and row['pool'] not in history:
             continue
         pool = row['pool']
         record = history.get(pool, {'first_seen': observed_at, 'samples': []})
