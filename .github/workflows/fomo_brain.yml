@@ -47,6 +47,7 @@ jobs:
           python -m unittest -v test_rebound_lab.py
           python -m unittest -v test_targets_lab.py
           python -m unittest -v test_social_radar.py
+          python -m unittest -v test_continuation_lab.py
 
       - name: Verificar laboratorio de velas sin red
         id: candle_tests
@@ -87,6 +88,7 @@ jobs:
           BRAIN_OPPORTUNITY_AUDIT: "1"
           BRAIN_REBOUND_LAB: "1"
           BRAIN_TARGETS_LAB: "1"
+          BRAIN_CONTINUATION_LAB: "1"
           BRAIN_EXIT_WATCHDOG: "1"
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
@@ -108,6 +110,10 @@ jobs:
             fomo_lab_targets_control_r1.json
             fomo_lab_targets_staged_r1.json
             fomo_lab_targets_start_r1.json
+            fomo_lab_continuation_start_r1.json
+            fomo_lab_continuation_control_r1.json
+            fomo_lab_continuation_50_r1.json
+            fomo_lab_continuation_60_r1.json
             fomo_memory.json
             fomo_event_memory.json
             fomo_quote_audit.json
@@ -190,4 +196,5 @@ jobs:
           name: gmgn-paper
           path: gmgn_paper_r1.json
           retention-days: 30
+
 

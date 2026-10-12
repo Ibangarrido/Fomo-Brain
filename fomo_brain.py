@@ -911,10 +911,14 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 @wallet_transaction
 def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False):
     from m4_lab import RECOVERY, is_quarantined
+    from continuation_lab import ARMS, FILES as continuation_files
     rebound_files = {"fomo_lab_rebound_control_r1.json", "fomo_lab_rebound_extended_r1.json"}
     basename = os.path.basename(paper_file)
     from targets_lab import FILES as targets_files, STAGED, decision as targets_decision
     targets_lab = basename in targets_files
+    continuation_lab = basename in continuation_files
+    if entry_mode == "continuation" and not continuation_lab:
+        raise ValueError("Continuacion reservada al laboratorio aislado")
     if type(staged_targets) is not bool or (staged_targets and basename != STAGED):
         raise ValueError("Objetivos escalonados reservados al laboratorio targets")
     if type(quarantine_m4) is not bool or (quarantine_m4 and basename not in rebound_files | {RECOVERY}):
@@ -926,7 +930,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
     recovery_ratio = (basename == RECOVERY and quarantine_m4 and confirm
                       and entry_mode == "early" and min_buy_ratio == 0.75)
-    if min_buy_ratio != 0.60 and not (ratio_lab or recovery_ratio):
+    if min_buy_ratio != 0.60 and not (ratio_lab or recovery_ratio or continuation_lab):
         raise ValueError("Umbral alternativo reservado al laboratorio ratio")
     protect_lab = os.path.basename(paper_file).startswith("fomo_lab_protect_")
     if type(profit_protection) is not bool or (profit_protection and not protect_lab):
@@ -969,6 +973,14 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 or entry_mode != "early" or profit_protection or quarantine_m4
                 or max_pair_age_minutes != 60 or min_buy_ratio != .60):
             raise ValueError("Laboratorio targets incompatible; no reiniciar")
+    if continuation_lab:
+        expected_arm = next(arm for arm, spec in ARMS.items() if spec[0] == basename)
+        expected = ARMS[expected_arm]
+        if (state.get("continuation_experiment") != {"version": "continuation-r1", "arm": expected_arm}
+                or entry_mode != expected[1] or min_buy_ratio != expected[2] or not confirm
+                or quarantine_m4 or profit_protection or staged_targets or max_pair_age_minutes != 60
+                or (ranking and entry_mode == "continuation" and entry_guard is None)):
+            raise ValueError("Politica continuation incompatible; no reiniciar")
     from m4_lab import isolate_inherited
     migrated_m4 = isolate_inherited(state, paper_file, now)
     isolated_m4 = quarantine_m4 or migrated_m4
@@ -976,6 +988,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     data_policy = {"version": "quote-r2", "early_entry_version": "early-r5",
                    "early_max_change1h_pct": 150, "crosscheck_drop_pct": 30,
                    "crosscheck_rise_pct": 50, "source_price_timestamp": "UNKNOWN"}
+    if entry_mode == "continuation":
+        data_policy.update(version="continuation-quote-r1", early_entry_version="continuation-r1",
+                           early_max_change1h_pct=None)
     policy_history = state.setdefault("data_policy_history", [])
     if not policy_history or policy_history[-1]["version"] != data_policy["version"]:
         policy_history.append(dict(data_policy, effective_at=now.isoformat(),
@@ -1151,13 +1166,18 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 continue
             # No perseguir una cotizacion que ya se alejo de la señal del radar.
             signal_reference, previous_observation = token, None
-            if recovery_ratio:
-                signal_reference, previous_observation, wait_reason = recovery_signal_reference(
-                    state, token, fresh, datetime.now(timezone.utc))
-                audit = recovery_ratio_audit(fresh, previous_observation, wait_reason, entry_guard)
-                state.setdefault("recovery_ratio_audit", []).append(audit)
-                state["recovery_ratio_audit"] = state["recovery_ratio_audit"][-300:]
-                print("RECOVERY RATIO AUDIT " + json.dumps(audit, ensure_ascii=False))
+            if recovery_ratio or continuation_lab:
+                if continuation_lab and key not in state.get("recovery_pending_signals", {}):
+                    state.setdefault("recovery_pending_signals", {})[key] = dict(fresh)
+                    signal_reference, previous_observation, wait_reason = fresh, None, "continuation: primera lectura; esperar confirmacion 30-90s"
+                else:
+                    signal_reference, previous_observation, wait_reason = recovery_signal_reference(
+                        state, token, fresh, datetime.now(timezone.utc))
+                if recovery_ratio:
+                    audit = recovery_ratio_audit(fresh, previous_observation, wait_reason, entry_guard)
+                    state.setdefault("recovery_ratio_audit", []).append(audit)
+                    state["recovery_ratio_audit"] = state["recovery_ratio_audit"][-300:]
+                    print("RECOVERY RATIO AUDIT " + json.dumps(audit, ensure_ascii=False))
                 if wait_reason:
                     notes.append(f"DESCARTE {key} | {wait_reason}")
                     continue
@@ -1224,7 +1244,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "last_quote_at": fresh.get("received_at") or entry_at.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
-            "entry_policy_version": ("early-r5" if entry_mode == "early" else "impulse-r4") if confirm else "base",
+            "entry_policy_version": ("continuation-r1" if entry_mode == "continuation" else "early-r5" if entry_mode == "early" else "impulse-r4") if confirm else "base",
             "entry_fee_evidence": fee_evidence, "entry_final_quote": final_quote_evidence,
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
@@ -1299,6 +1319,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "confirmation_seconds": [30, 90], "same_pair_required": True,
             "renewal_is_entry": False, "ratio_audit_is_entry": False}
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
+    if entry_mode == "continuation":
+        state["assumptions"]["entry_policy"] = "continuation-r1: edad 2-1440m, liquidez >=20000, 40 trades, compras >=60% por numero; sin techo subida1h; cinco velas 1m cerradas, impulso previo, retroceso 1-20%, recuperacion con volumen >=1.2x, mecha <=40%; precio fresco conserva recuperacion y <=5% del cierre; confirmacion 30-90s, liquidez >=95%; no exige momentum5m positivo; flujo por importe UNKNOWN"
+        state["assumptions"]["quote_quality"]["early_max_change1h_pct"] = None
     if entry_mode == "impulse":
         state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"
     state["assumptions"]["entry_policy"] = state["assumptions"]["entry_policy"].replace("compras >=60%", f"compras >={min_buy_ratio:.0%}")
@@ -1470,7 +1493,7 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60,
         raise ValueError("Limite de edad invalido")
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
-    if entry_mode not in ("early", "impulse"):
+    if entry_mode not in ("early", "impulse", "continuation"):
         raise ValueError("Modo de entrada desconocido")
     checks = [(numero(token["price"]) <= 0, "precio ausente"),
               (token["score"] < 5, "score < 5"),
@@ -1483,6 +1506,29 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60,
             return reason
     if not confirm:
         return None
+    if entry_mode == "continuation":
+        if token["liquidity"] < 20000 or token["trades5m"] < 40:
+            return "continuation: liquidez <20000 o trades5m <40"
+        age = token.get("ageMinutes")
+        if age is None or not math.isfinite(age) or not 2 <= age <= 1440:
+            return "continuation: edad fuera de 2-1440 min"
+        old = previous_observation
+        if old is None or any(token.get(k) != old.get(k) for k in ("chain", "address", "pair")):
+            return "continuation: falta lectura previa del mismo contrato y par"
+        try:
+            current_at = datetime.fromisoformat(token["received_at"])
+            previous_at = datetime.fromisoformat(old["received_at"])
+            now = datetime.now(timezone.utc)
+            if (current_at.utcoffset() is None or previous_at.utcoffset() is None
+                    or not 0 <= (now-current_at).total_seconds() <= 30
+                    or not 30 <= (current_at-previous_at).total_seconds() <= 90
+                    or (now-previous_at).total_seconds() > 90):
+                return "continuation: confirmacion fuera de 30-90s"
+        except (KeyError, ValueError, TypeError):
+            return "continuation: recepcion invalida"
+        if token["liquidity"] < .95 * numero(old.get("liquidity")):
+            return "continuation: liquidez cae mas del 5%"
+        return None  # Closed-candle guard still required by isolated wallet.
     if entry_mode == "early":
         if token["change1h"] > 150:
             return "early r5: subida 1h > 150%"
@@ -1780,6 +1826,12 @@ def main(refresh_events=True):
             run_targets(ranking, simular_cartera)
         except Exception as exc:
             print("LAB TARGETS ERROR: " + str(exc) + "; no reiniciar carteras")
+    if os.getenv("BRAIN_CONTINUATION_LAB", "0") == "1" and os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
+        try:
+            from continuation_lab import run as run_continuation
+            run_continuation(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB CONTINUATION ERROR: " + str(exc) + "; no reiniciar carteras")
     if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         try:
             from opportunity_audit import observe
@@ -1938,6 +1990,10 @@ def refresh_open_positions(stop_event=None):
         from targets_lab import FILES
         for path in FILES:
             wallets.append((path, "LAB TARGETS " + path, "early", .60, False))
+    if os.getenv("BRAIN_CONTINUATION_LAB", "0") == "1":
+        from continuation_lab import ARMS
+        for arm, (path, mode, ratio) in ARMS.items():
+            wallets.append((path, "LAB CONTINUATION " + arm, mode, ratio, False))
     for path, label, mode, ratio, protect in wallets:
         if stop_event is not None and stop_event.is_set():
             break

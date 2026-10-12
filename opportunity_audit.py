@@ -16,6 +16,7 @@ MANUAL = {
     ("solana", "4mbPZzDCWXvTCJbscMWeDD7TT1pra9mkZHGaBxc2jupx"),
 }
 RESEARCH_TARGETS = {
+    ("bsc", "0x8175810d00f9356a8f87a4a7b8ff7660087c7777"),
     ("solana", "GtcZuRzgp8U4qCkF2sBeihrnTsfYUrQiJUs3E81pump"),
     ("robinhood", "0xb0f444a069d9264017610e0674ebf7e1d6e19cbb"),
     ("bsc", "0x7aede49f29bf7bc643853c1136854ea8e4da7777"),
