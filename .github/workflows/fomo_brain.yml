@@ -102,6 +102,10 @@ jobs:
           trap 'kill -TERM "$whale_pid" "$unipcs_pid" 2>/dev/null || true; wait "$whale_pid" || true; wait "$unipcs_pid" || true' EXIT
           python fomo_brain.py
 
+      - name: Descubrir pools Solana para estudio (sin compras)
+        if: always()
+        run: python discovery_watch.py
+
       - name: Guardar memoria FOMO
         if: always()
         uses: actions/upload-artifact@v4
@@ -118,6 +122,7 @@ jobs:
             fomo_memory.json
             fomo_event_memory.json
             fomo_quote_audit.json
+            discovery_watch.json
             fomo_opportunity_audit_r1.json
             fomo_lab_rebound_control_r1.json
             fomo_lab_rebound_extended_r1.json
