@@ -79,7 +79,9 @@ class OpportunityTests(unittest.TestCase):
 
     def test_manual_winner_is_separate_from_automatic_cohort(self):
         chain, mint = next(iter(audit.MANUAL))
-        rows = self.observe([pair(address=mint, liquidity=1), pair(address="loser")])
+        market = pair(address=mint, liquidity=1)
+        market["chainId"] = chain
+        rows = self.observe([market, pair(address="loser")])
         self.assertEqual(rows[chain + ":" + mint]["cohort"], "manual_after_event")
         self.assertEqual(rows["solana:loser"]["cohort"], "automatic_prospective")
         self.assertIn((chain, mint), audit.watch_targets(self.now))
@@ -136,7 +138,9 @@ class OpportunityTests(unittest.TestCase):
 
     def test_manual_case_is_preserved_after_tracking_horizon(self):
         chain, mint = next(iter(audit.MANUAL))
-        self.observe([pair(address=mint)])
+        market = pair(address=mint)
+        market["chainId"] = chain
+        self.observe([market])
         rows = self.observe([], self.now + timedelta(hours=100))
         self.assertIn(chain+':'+mint, rows)
         self.assertEqual(audit.read()['finished_tokens'], {})
@@ -159,6 +163,69 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(len(first), 10)
         self.assertEqual(len(second), 10)
         self.assertGreater(len(first | second), 10)
+
+
+    def test_new_contracts_are_watched_even_without_a_previous_quote(self):
+        self.assertTrue(audit.RESEARCH_TARGETS <= set(audit.watch_targets(self.now)))
+        state = {"tokens": {}}
+        with contextlib.redirect_stdout(io.StringIO()):
+            audit.research_watches(state, {}, self.now, fetch_context=lambda *a, **kw: self.fail("no pair"))
+        self.assertTrue(all(x["status"] == "NO_QUOTE_THIS_CYCLE"
+                            for x in state["research_watch_coverage"]["targets"]))
+        self.assertEqual(state["research_watch_history"][0]["context"]["status"], "SIN DATOS")
+
+    def test_rejected_low_liquidity_token_still_gets_descriptive_research(self):
+        chain, address = sorted(audit.RESEARCH_TARGETS)[0]
+        market = pair(address=address, liquidity=1)
+        market["chainId"] = chain
+        market["txns"] = {"m5": {"buys": 60, "sells": 40}}
+        calls = []
+        def fetch(token, now):
+            calls.append(token)
+            return {"status": "RECHAZA", "reason": "two green bars missing",
+                    "pattern_research": {"name": "PULLBACK_RECLAIM_WITH_VOLUME"}}
+        state = {}
+        with contextlib.redirect_stdout(io.StringIO()):
+            audit.research_watches(state, {chain + ":" + address: market}, self.now, fetch)
+            audit.research_watches(state, {chain + ":" + address: market},
+                                   self.now + timedelta(seconds=20), fetch)
+        self.assertEqual(len(calls), 1)
+        record = state["research_watch_history"][0]
+        self.assertEqual(record["count_thresholds"], {"50": "PASS", "60": "PASS", "75": "FAIL"})
+        self.assertIsNone(record["buy_volume_usd"])
+        self.assertFalse(record["changes_orders"])
+        self.assertNotIn("positions", state)
+
+
+    def test_evm_checksum_addresses_match_without_merging_chains(self):
+        chain, address = sorted(audit.RESEARCH_TARGETS)[0]
+        self.assertEqual(chain, "bsc")
+        market = pair(address=address.upper())
+        market["chainId"] = chain
+        state = {}
+        with contextlib.redirect_stdout(io.StringIO()):
+            audit.research_watches(state, {chain + ":" + address.upper(): market},
+                self.now, lambda token, now: {"status": "PASA"})
+        self.assertEqual(state["research_watch_history"][0]["context"]["status"], "PASA")
+        self.assertTrue(audit.is_manual(chain, address.upper()))
+        self.assertFalse(audit.is_manual("solana", address.upper()))
+
+    def test_watch_rotation_and_unavailable_candles_keep_no_fabricated_pattern(self):
+        state = {}
+        visited = []
+        for i, (chain, address) in enumerate(sorted(audit.RESEARCH_TARGETS)):
+            market = pair(address=address)
+            market["chainId"] = chain
+            def fetch(token, now):
+                visited.append((token["chain"], token["address"]))
+                raise ValueError("provider unavailable")
+            with contextlib.redirect_stdout(io.StringIO()):
+                audit.research_watches(state, {chain + ":" + address: market},
+                                      self.now + timedelta(minutes=i), fetch)
+        self.assertEqual(set(visited), audit.RESEARCH_TARGETS)
+        self.assertTrue(all(r["context"]["status"] == "SIN DATOS"
+                            and "pattern_research" not in r["context"]
+                            for r in state["research_watch_history"]))
 
 
 if __name__ == "__main__":

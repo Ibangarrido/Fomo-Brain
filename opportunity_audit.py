@@ -15,7 +15,23 @@ MANUAL = {
     ("solana", "EkFRff9a2jKztJHML1LG9FRmEkPJDR6XAYp3uCPdpump"),
     ("solana", "4mbPZzDCWXvTCJbscMWeDD7TT1pra9mkZHGaBxc2jupx"),
 }
+RESEARCH_TARGETS = {
+    ("solana", "GtcZuRzgp8U4qCkF2sBeihrnTsfYUrQiJUs3E81pump"),
+    ("robinhood", "0xb0f444a069d9264017610e0674ebf7e1d6e19cbb"),
+    ("bsc", "0x7aede49f29bf7bc643853c1136854ea8e4da7777"),
+    ("solana", "EaqXJVr1aFPhMyTJbDCpwvTeiKc8x4gueFjFKKBvtcWY"),
+}
+MANUAL |= RESEARCH_TARGETS
+
 DECISIONS = {}
+
+
+def same_contract(chain, a, b):
+    return a == b if chain == "solana" else str(a).lower() == str(b).lower()
+
+
+def is_manual(chain, address):
+    return any(c == chain and same_contract(chain, address, a) for c, a in MANUAL)
 
 
 def entry_summary(candidate_count, notes):
@@ -75,7 +91,7 @@ def retire_finished(state, now):
         raise ValueError('Resumen de oportunidades incompatible; no reiniciar')
     totals = state.setdefault('retired_counts', {'horizon_observed': 0, 'horizon_unknown': 0})
     for key, row in list(state['tokens'].items()):
-        if (row['chain'], row['address']) in MANUAL:
+        if is_manual(row['chain'], row['address']):
             continue
         age = (now - datetime.fromisoformat(row['first']['received_at'])).total_seconds()
         if not row.get('complete') and age < MAX_TRACKING_SECONDS:
@@ -115,9 +131,64 @@ def watch_targets(now=None):
     # Rotate regardless of quote failures or performance; dead quotes cannot
     # monopolize every monitoring slot.
     targets = sorted((r["chain"], r["address"]) for r in active
-                     if (r["chain"], r["address"]) not in MANUAL)
+                     if not is_manual(r["chain"], r["address"]))
     start = state.get("watch_cursor", 0) % len(targets) if targets else 0
     return sorted(MANUAL) + (targets[start:] + targets[:start])[:10]
+
+
+def research_watches(state, selected, now, fetch_context=None):
+    """Bounded candle research independent of ranking and entry rejections."""
+    targets = sorted(RESEARCH_TARGETS)
+    quoted = {}
+    for chain, address in targets:
+        matches = [p for p in selected.values() if p.get("chainId") == chain
+                   and same_contract(chain, (p.get("baseToken") or {}).get("address"), address)]
+        if matches:
+            quoted[chain + ":" + address] = max(matches, key=lambda p: number((p.get("liquidity") or {}).get("usd")) or 0)
+    coverage = [{"chain": chain, "address": address,
+                 "status": "RECEIVED" if chain + ":" + address in quoted else "NO_QUOTE_THIS_CYCLE"}
+                for chain, address in targets]
+    state["research_watch_coverage"] = {"at": now.isoformat(), "targets": coverage,
+                                      "scope": "response coverage; not provider market freshness"}
+    print("WATCH COVERAGE " + json.dumps(state["research_watch_coverage"]))
+    if fetch_context is None:
+        if os.getenv("BRAIN_CANDLE_LAB", "0") != "1":
+            return
+        from candle_lab import context
+        fetch_context = context
+    minute = int(now.timestamp() // 60)
+    if state.get("research_watch_minute", -1) >= minute:
+        return
+    state["research_watch_minute"] = minute
+    cursor = state.get("research_watch_cursor", 0)
+    chain, address = targets[cursor % len(targets)]
+    state["research_watch_cursor"] = cursor + 1
+    key = chain + ":" + address
+    pair = quoted.get(key)
+    record = {"at": now.isoformat(), "chain": chain, "address": address,
+              "execution_verified": False, "changes_orders": False,
+              "buy_volume_usd": None, "sell_volume_usd": None,
+              "flow_by_amount": "UNKNOWN: source supplies total volume and transaction counts only"}
+    if pair is None:
+        record["context"] = {"status": "SIN DATOS", "reason": "sin cotizacion del contrato en este ciclo"}
+    else:
+        token = {"chain": chain, "address": address, "pair": pair["pairAddress"]}
+        try:
+            record["context"] = fetch_context(token, now=now.timestamp())
+        except Exception as exc:
+            record["context"] = {"status": "SIN DATOS", "reason": type(exc).__name__}
+        tx = (pair.get("txns") or {}).get("m5") or {}
+        buys, sells = number(tx.get("buys")), number(tx.get("sells"))
+        ratio = buys / (buys + sells) if (buys is not None and sells is not None
+                                        and buys >= 0 and sells >= 0 and buys + sells > 0) else None
+        record["buy_count_ratio5m"] = ratio
+        record["count_thresholds"] = {str(t): "UNKNOWN" if ratio is None else
+                                     "PASS" if ratio >= t / 100 else "FAIL"
+                                     for t in (50, 60, 75)}
+        record["threshold_scope"] = "one count-ratio gate only; not full entry eligibility"
+        record["pair"] = pair["pairAddress"]
+    state["research_watch_history"] = (state.get("research_watch_history", []) + [record])[-120:]
+    print("WATCH PATTERN " + json.dumps(record, allow_nan=False))
 
 
 def observe(pairs, sources, now=None, discovery_rejections=()):
@@ -146,7 +217,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         chain, address = pair["chainId"], pair["baseToken"]["address"]
         liquidity = number((pair.get("liquidity") or {}).get("usd"))
         cap = number(pair.get("marketCap") or pair.get("fdv"))
-        manual = (chain, address) in MANUAL
+        manual = is_manual(chain, address)
         if key not in rows:
             if not manual and not (liquidity is not None and liquidity >= 10000
                                    and cap is not None and 0 < cap <= 2000000):
@@ -200,6 +271,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         if elapsed >= HORIZON_SECONDS:
             row["complete"] = True
             row["completion"] = "first received observation after 72h; not exact horizon price"
+    research_watches(state, selected, now)
     state["last_cycle_at"] = now.isoformat()
     state["watch_cursor"] = state.get("watch_cursor", 0) + 10
     state["limitations"] = "Received market snapshots; freshness unknown; sampled peaks; gaps and pair changes recorded; no trades, costs or net return. Manual cases excluded from automatic cohort. Missing quotes never become zero. Active capacity bounded; skips counted. Completed or 96h-unresolved automatic cases removed from active tracking; only IDs and aggregate completion counts retained; no fabricated final prices."
