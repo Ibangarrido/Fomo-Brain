@@ -64,7 +64,8 @@ def guard(token, allow_breakout=False):
     from candle_lab import context, evaluate_rows
     result = context(token)
     token['candle_context'] = result
-    token['entry_policy_suffix'] = '+consolidation-breakout-r1' if allow_breakout else '+pullback-r1'
+    token['entry_policy_suffix'] = '+consolidation-breakout-r2' if allow_breakout else '+pullback-r2'
+    token.pop('continuation_pattern', None)
     if result.get('status') == 'SIN DATOS' or not result.get('bars'):
         return 'continuation: faltan velas cerradas verificables'
     validated = evaluate_rows({'data': {'attributes': {'ohlcv_list': result['bars']}}},
@@ -73,6 +74,26 @@ def guard(token, allow_breakout=False):
         return 'continuation: ' + validated.get('reason', 'velas invalidas')
     token['candle_context'] = dict(result, continuation_validation=validated)
     bars = validated['bars']
+    # Descriptive labels are mutually exclusive; eligibility predicates are not.
+    # A valid pullback can also close above ALL previous highs, so the classifier
+    # calls it BREAKOUT. Evaluate the original pullback conditions directly first.
+    pause, reclaim = bars[-2:]
+    research = validated['pattern_research']
+    pullback = (all(row[5] > 0 for row in bars)
+                and 1 <= research['pullback_pct'] <= 20
+                and pause[4] < pause[1] and reclaim[4] > reclaim[1]
+                and reclaim[4] > pause[2] and reclaim[3] >= pause[3]
+                and research['upper_wick_fraction'] <= .4
+                and reclaim[5] >= pause[5]
+                and research['last_volume_multiple'] is not None
+                and research['last_volume_multiple'] >= 1.2)
+    if pullback:
+        if bars[2][4] <= bars[0][4]:
+            return 'continuation: falta impulso previo en velas cerradas'
+        if not pause[2] < float(token['price']) <= reclaim[4] * 1.05:
+            return 'continuation: precio fresco pierde recuperacion o se aleja >5%'
+        token['continuation_pattern'] = 'PULLBACK_RECLAIM_WITH_VOLUME'
+        return None
     if allow_breakout and validated['pattern_research']['name'] == 'BREAKOUT_WITH_VOLUME':
         # A pause after an impulse, not an isolated green candle or a falling range.
         a, b, c, pause, breakout = bars
@@ -88,13 +109,7 @@ def guard(token, allow_breakout=False):
             return 'continuation: precio fresco pierde ruptura o se aleja >5%'
         token['continuation_pattern'] = 'CONSOLIDATION_BREAKOUT_WITH_VOLUME'
         return None
-    if validated['pattern_research']['name'] != 'PULLBACK_RECLAIM_WITH_VOLUME':
-        return 'continuation: no hay retroceso recuperado con volumen'
-    if bars[2][4] <= bars[0][4]:
-        return 'continuation: falta impulso previo en velas cerradas'
-    if not bars[-2][2] < float(token['price']) <= bars[-1][4] * 1.05:
-        return 'continuation: precio fresco pierde recuperacion o se aleja >5%'
-    return None
+    return 'continuation: no hay retroceso recuperado con volumen'
 
 def breakout_guard(token):
     return guard(token, allow_breakout=True)

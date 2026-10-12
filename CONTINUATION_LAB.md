@@ -1,5 +1,29 @@
 # Prueba prospectiva de continuación — 12 octubre 2026
 
+## Corrección de solapamiento r2
+
+La revisión adicional por fotogramas de ALON (11 octubre 15:47:21) y SpaceXSI
+(11 octubre 15:51:20) muestra caídas y recuperaciones que motivan revisar cómo
+se evalúan los patrones. No confirma su rentabilidad ni reconstruye OHLCV exacto.
+
+Se encontró un error reproducible: el clasificador descriptivo da prioridad a
+BREAKOUT_WITH_VOLUME frente a PULLBACK_RECLAIM_WITH_VOLUME. Una recuperación
+válida que cierre sobre todos los máximos anteriores recibe la primera etiqueta,
+y el guard antiguo la descarta. El guard r2 comprueba directamente los mismos
+predicados originales de retroceso (1–20%, vela previa roja, recuperación sobre
+su máximo, soporte, impulso previo, volumen y mecha), con independencia de esa
+etiqueta descriptiva. Si no los cumple, solo el brazo adicional puede evaluar
+la ruptura tras pausa. No se cambian los umbrales para conseguir el nuevo pase.
+
+Todos los brazos de continuación que usan ese guard reciben la corrección;
+el control EARLY al 75% conserva su lógica. El registro data_policy_history pasa
+a continuation-quote-r2 con candle_guard_version pullback-overlap-r2, preservando
+hora, caja y posiciones del cambio. Los sufijos de entrada identifican r2.
+Las memorias, salidas y presupuestos se conservan; no se reinician saldos.
+Pruebas sintéticas verifican el solapamiento y los rechazos por soporte perdido,
+retroceso excesivo, volumen insuficiente, mecha y velas antiguas; no prueban
+resultados de mercado. Separar las observaciones antes/después de esta versión.
+
 ## Comparación adicional de patrones: ruptura tras pausa
 
 Se añaden `pattern_pullback` y `pattern_breakout`, dos carteras PAPER de 100 EUR

@@ -989,8 +989,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                    "early_max_change1h_pct": 150, "crosscheck_drop_pct": 30,
                    "crosscheck_rise_pct": 50, "source_price_timestamp": "UNKNOWN"}
     if entry_mode == "continuation":
-        data_policy.update(version="continuation-quote-r1", early_entry_version="continuation-r1",
-                           early_max_change1h_pct=None)
+        data_policy.update(version="continuation-quote-r2", early_entry_version="continuation-r1",
+                           candle_guard_version="pullback-overlap-r2", early_max_change1h_pct=None)
     policy_history = state.setdefault("data_policy_history", [])
     if not policy_history or policy_history[-1]["version"] != data_policy["version"]:
         policy_history.append(dict(data_policy, effective_at=now.isoformat(),
@@ -2103,6 +2103,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 

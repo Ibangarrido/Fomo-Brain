@@ -103,6 +103,27 @@ class ContinuationTests(unittest.TestCase):
         bars=self.bars();bars[-1][0]+=60
         with patch.object(candle_lab,'context',return_value={'bars':bars}):self.assertIsNotNone(lab.guard(t))
         with patch.object(candle_lab,'context',return_value={'status':'SIN DATOS'}):self.assertIsNotNone(lab.guard(t))
+    def test_pullback_above_all_highs_is_not_lost_to_breakout_label(self):
+        _,token,_=self.candidate();bars=self.bars()
+        bars[-1][2]=1.46;bars[-1][4]=1.45;token['price']=1.45
+        result=candle_lab.evaluate_rows({'data':{'attributes':{'ohlcv_list':bars}}},datetime.now(timezone.utc).timestamp())
+        self.assertEqual(result['pattern_research']['name'],'BREAKOUT_WITH_VOLUME')
+        for check in (lab.guard,lab.breakout_guard):
+            with patch.object(candle_lab,'context',return_value=result):
+                self.assertIsNone(check(token))
+                self.assertEqual(token['continuation_pattern'],'PULLBACK_RECLAIM_WITH_VOLUME')
+                token['price']=1.3;self.assertIsNotNone(check(token));token['price']=1.45
+    def test_overlap_reclaim_still_rejects_deep_dip_weak_volume_lost_support_and_stale_bars(self):
+        _,token,_=self.candidate();token['price']=1.45
+        for mutate in (lambda b:b[-2].__setitem__(3,.9),
+                       lambda b:b[-1].__setitem__(5,100),
+                       lambda b:b[-1].__setitem__(3,1.1),
+                       lambda b:b[-1].__setitem__(2,1.7),
+                       lambda b:[row.__setitem__(0,row[0]-180) for row in b]):
+            bars=self.bars();bars[-1][2]=1.46;bars[-1][4]=1.45;mutate(bars)
+            with patch.object(candle_lab,'context',return_value={'bars':bars}):
+                self.assertIsNotNone(lab.guard(token))
+                self.assertIsNotNone(lab.breakout_guard(token))
     def test_isolated_fill_only_50_arm_and_first_read_does_not_fill(self):
         lab.bootstrap();p,t,old=self.candidate();key=t['chain']+':'+t['address']
         result=candle_lab.evaluate_rows({'data':{'attributes':{'ohlcv_list':self.bars()}}},datetime.now(timezone.utc).timestamp())
