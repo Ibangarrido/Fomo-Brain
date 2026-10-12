@@ -18,9 +18,10 @@ ENDPOINTS = {
     "ranking": "/v1/market/rank",
 }
 MAX_BYTES = 2_000_000
+DEMO_HOST = "https://papi.gmgn.ai"  # Diagnostic-only, not used by production queries
 
 
-def query(kind, api_key, opener=urllib.request.urlopen):
+def query(kind, api_key, opener=urllib.request.urlopen, host=HOST):
     # Closed endpoint allow-list: callers cannot request trade/account routes.
     path = ENDPOINTS[kind]
     params = {"chain": "sol", "timestamp": int(time.time()), "client_id": str(uuid.uuid4())}
@@ -30,7 +31,7 @@ def query(kind, api_key, opener=urllib.request.urlopen):
         params["address"] = M4
     if kind == "candles":
         params.update(resolution="1m", **{"from": int(time.time()) - 3600, "to": int(time.time())})
-    request = urllib.request.Request(HOST + path + "?" + urllib.parse.urlencode(params),
+    request = urllib.request.Request(host + path + "?" + urllib.parse.urlencode(params),
         headers={"X-APIKEY": api_key, "Accept": "application/json"}, method="GET")
     with opener(request, timeout=8) as response:
         raw = response.read(MAX_BYTES + 1)
