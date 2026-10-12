@@ -63,6 +63,44 @@ class RecoverySignalTests(unittest.TestCase):
             self.assertIsNone(previous)
             self.assertIn("esperar otra lectura", reason)
 
+    def test_rejected_read_advances_reference_for_next_confirmation(self):
+        self.now -= timedelta(seconds=120)
+        self.token["received_at"] = self.now.isoformat()
+        first = dict(self.token, price=1.10)
+        brain.recovery_signal_reference(self.state, self.token, first, self.now)
+        second_at = self.now + timedelta(seconds=60)
+        second = dict(first, price=1.12, received_at=second_at.isoformat())
+        _, previous, reason = brain.recovery_signal_reference(
+            self.state, self.token, second, second_at)
+        self.assertIsNone(reason)
+        self.assertEqual(brain.motivo_entrada(second, True, min_buy_ratio=.75,
+                          previous_observation=previous), "ratio compras < 75%")
+        third_at = self.now + timedelta(seconds=120)
+        third = dict(second, price=1.14, buyRatio5m=.80,
+                     received_at=third_at.isoformat())
+        ref, previous, reason = brain.recovery_signal_reference(
+            self.state, self.token, third, third_at)
+        self.assertIsNone(reason)
+        self.assertEqual(ref["received_at"], second["received_at"])
+        self.assertIsNone(brain.motivo_entrada(third, True, min_buy_ratio=.75,
+                                              previous_observation=previous))
+        self.assertEqual(self.state["cash"], 80)
+        self.assertEqual(self.state["positions"], [])
+
+    def test_cached_short_stale_or_invalid_read_cannot_advance_reference(self):
+        for stamp in (self.now.isoformat(),
+                      (self.now + timedelta(seconds=20)).isoformat(),
+                      (self.now + timedelta(seconds=29)).isoformat(),
+                      (self.now + timedelta(seconds=61)).isoformat(),
+                      "invalid", None):
+            state = {}
+            first = dict(self.token, price=1.10)
+            brain.recovery_signal_reference(state, self.token, first, self.now)
+            fresh = dict(first, price=1.12, received_at=stamp)
+            brain.recovery_signal_reference(state, self.token, fresh,
+                                            self.now + timedelta(seconds=60))
+            self.assertEqual(state["recovery_pending_signals"]["solana:candidate"], first)
+
     def test_unverifiable_receipt_cannot_renew(self):
         for stamp in (None, "invalid", (self.now+timedelta(seconds=1)).isoformat(),
                       (self.now-timedelta(seconds=31)).isoformat()):

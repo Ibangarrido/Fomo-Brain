@@ -872,6 +872,19 @@ def recovery_signal_reference(state, token, fresh, now):
         while len(pending) > 100:
             pending.pop(next(iter(pending)))
         return fresh, None, "senal renovada; esperar otra lectura del mismo par en 30-90s"
+    if previous:
+        # Keep the old snapshot for this decision, but let an independent,
+        # recent read become the reference for the next cycle. Other entry
+        # filters may reject this read without making it unusable evidence.
+        try:
+            current_at = datetime.fromisoformat(fresh["received_at"])
+            previous_at = datetime.fromisoformat(previous["received_at"])
+            if (current_at.utcoffset() is not None
+                    and 0 <= (now-current_at).total_seconds() <= 30
+                    and 30 <= (current_at-previous_at).total_seconds() <= 90):
+                pending[key] = dict(fresh)
+        except (KeyError, ValueError, TypeError):
+            pass
     return reference, previous, None
 
 
