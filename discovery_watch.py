@@ -1,6 +1,7 @@
 """Read-only discovery of new Solana pools; never places orders."""
 import json
 import math
+from collections import Counter
 import os
 import urllib.request
 import urllib.parse
@@ -50,6 +51,7 @@ def evaluate(payload):
             except (ValueError, TypeError, OverflowError):
                 pass
         reasons = []
+        if price_usd is None or price_usd <= 0: reasons.append('missing_valid_price')
         if gain_1h is not None and gain_1h > WATCH_MAX_GAIN_1H_PCT: reasons.append('gain_1h_over_limit')
         if not isinstance(created, str) or not created: reasons.append('missing_creation_time')
         if liquidity is None or liquidity < WATCH_MIN_LIQUIDITY_USD: reasons.append('liquidity')
@@ -164,6 +166,22 @@ def performance(history, minutes, tolerance_minutes=8):
     return result
 
 
+def diagnostics(rows):
+    """Explain rejected pools without weakening entry gates or claiming trades."""
+    rejected = [row for row in rows if not row['watch']]
+    counts = Counter(reason for row in rejected for reason in row['reasons'])
+    near = [row for row in rejected if len(row['reasons']) == 1 and
+            row['reasons'][0] not in ('missing_valid_price', 'missing_creation_time')]
+    return {'rejected': len(rejected), 'reason_counts': dict(sorted(counts.items())),
+            'near_miss_count': len(near),
+            'near_misses': [{'pool': row['pool'], 'reason': row['reasons'][0],
+                             'liquidity_usd': row['liquidity_usd'],
+                             'volume_5m_usd': row['volume_5m_usd'],
+                             'buys_5m': row['buys_5m'], 'sells_5m': row['sells_5m']}
+                            for row in near[:20]],
+            'near_misses_are_not_trade_signals': True}
+
+
 def run():
     status = 'OK'
     try:
@@ -181,14 +199,17 @@ def run():
     rows.extend(tracked)
     observed_at = datetime.now(timezone.utc).isoformat()
     history = history_update(previous, rows, observed_at)
-    report = {'version': 'discovery-watch-r4', 'at': datetime.now(timezone.utc).isoformat(),
+    report = {'version': 'discovery-watch-r5', 'at': datetime.now(timezone.utc).isoformat(),
               'source': URL, 'status': status, 'snapshot_only': True,
               'not_trade_signals': True, 'watch_thresholds': {'liquidity_usd': WATCH_MIN_LIQUIDITY_USD, 'volume_5m_usd': WATCH_MIN_VOLUME_5M_USD, 'trades_5m': WATCH_MIN_TRADES_5M, 'max_gain_1h_pct': WATCH_MAX_GAIN_1H_PCT}, 'watch_count': sum(x['watch'] for x in rows), 'tracked_refreshed': len(tracked),
               'tracking_errors': tracking_errors, 'candidates': rows,
-              'history': history, 'observed_performance': performance(history, (15, 30))}
+              'history': history, 'observed_performance': performance(history, (15, 30)),
+              'filter_diagnostics': diagnostics(rows)}
     with open('discovery_watch.json.tmp', 'w') as f: json.dump(report, f, allow_nan=False, indent=2)
     os.replace('discovery_watch.json.tmp', 'discovery_watch.json')
-    print('DISCOVERY WATCH', status, len(rows), 'pools', report['watch_count'], 'watch candidates')
+    print('DISCOVERY WATCH', status, len(rows), 'pools', report['watch_count'], 'watch candidates',
+          'near_misses', report['filter_diagnostics']['near_miss_count'],
+          'reasons', json.dumps(report['filter_diagnostics']['reason_counts'], sort_keys=True))
     return report
 
 
