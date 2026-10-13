@@ -73,7 +73,8 @@ def history_update(previous, rows, observed_at):
         history = {}
     for row in rows:
         # Continue tracking previously discovered pools even if they fail today's filters.
-        if not row['watch'] and row['pool'] not in history:
+        eligible_near_miss = len(row['reasons']) == 1 and row['reasons'][0] not in ('missing_valid_price', 'missing_creation_time')
+        if not row['watch'] and not eligible_near_miss and row['pool'] not in history:
             continue
         pool = row['pool']
         record = history.get(pool, {'first_seen': observed_at, 'samples': []})
@@ -199,7 +200,7 @@ def run():
     rows.extend(tracked)
     observed_at = datetime.now(timezone.utc).isoformat()
     history = history_update(previous, rows, observed_at)
-    report = {'version': 'discovery-watch-r5', 'at': datetime.now(timezone.utc).isoformat(),
+    report = {'version': 'discovery-watch-r6', 'at': datetime.now(timezone.utc).isoformat(),
               'source': URL, 'status': status, 'snapshot_only': True,
               'not_trade_signals': True, 'watch_thresholds': {'liquidity_usd': WATCH_MIN_LIQUIDITY_USD, 'volume_5m_usd': WATCH_MIN_VOLUME_5M_USD, 'trades_5m': WATCH_MIN_TRADES_5M, 'max_gain_1h_pct': WATCH_MAX_GAIN_1H_PCT}, 'watch_count': sum(x['watch'] for x in rows), 'tracked_refreshed': len(tracked),
               'tracking_errors': tracking_errors, 'candidates': rows,
