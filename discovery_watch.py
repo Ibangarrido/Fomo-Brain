@@ -243,43 +243,51 @@ def pattern_study(history):
     return output
 
 
-def pattern_outcomes(history, patterns, minutes=(15, 30), tolerance_minutes=8):
-    """Forward-only evaluation: classify at the middle sample, score later quotes."""
+def pattern_outcomes(history, patterns=None, minutes=(15, 30), tolerance_minutes=8):
+    """Historical rolling pattern observations scored only against later actual samples."""
     outcomes = defaultdict(lambda: {'evaluated': 0, 'positive': 0, 'returns_pct': []})
-    for pool, item in patterns.items():
-        samples = history.get(pool, {}).get('samples', [])
-        try:
-            observed = []
-            for sample in samples:
-                price = num(sample.get('price_usd'))
-                if price is None or price <= 0:
-                    continue
-                t = datetime.fromisoformat(sample['at'].replace('Z', '+00:00'))
-                if t.tzinfo is not None:
-                    observed.append((t, price))
-            observed.sort()
-            if len(observed) < 4:
+    for pool, record in history.items():
+        samples = record.get('samples', []) if isinstance(record, dict) else []
+        valid = []
+        for sample in samples if isinstance(samples, list) else []:
+            if not isinstance(sample, dict):
                 continue
-            # Use the latest three pattern samples as the decision point;
-            # only strictly later observations can be outcomes.
-            end = datetime.fromisoformat(item['sample_times'][-1])
-            basis = next((price for t, price in observed if t == end), None)
-            if basis is None:
+            price, liquidity = num(sample.get('price_usd')), num(sample.get('liquidity_usd'))
+            if price is None or price <= 0 or liquidity is None or liquidity < WATCH_MIN_LIQUIDITY_USD:
                 continue
+            try:
+                at = datetime.fromisoformat(sample['at'].replace('Z', '+00:00'))
+                if at.tzinfo is not None:
+                    valid.append((at, price))
+            except (KeyError, ValueError, TypeError, AttributeError):
+                continue
+        valid.sort()
+        distinct = []
+        for item in valid:
+            if not distinct or (item[0] - distinct[-1][0]).total_seconds() >= MIN_OBSERVATION_GAP_SECONDS:
+                distinct.append(item)
+        for i in range(2, len(distinct)):
+            window = distinct[i-2:i+1]
+            if (window[-1][0] - window[0][0]).total_seconds() > 7200:
+                continue
+            a, b, d = [x[1] for x in window]
+            m1, m2 = (b/a-1)*100, (d/b-1)*100
+            label = ('two_rising_observations' if m1 >= 3 and m2 >= 3 else
+                     'two_falling_observations' if m1 <= -3 and m2 <= -3 else
+                     'rise_then_pullback' if m1 >= 5 and m2 <= -3 else
+                     'fall_then_rebound' if m1 <= -5 and m2 >= 3 else 'mixed_or_flat')
+            end = window[-1][0]
             for horizon in minutes:
-                eligible = [(abs((t-end).total_seconds()-horizon*60), price)
-                            for t, price in observed if t > end and
-                            abs((t-end).total_seconds()-horizon*60) <= tolerance_minutes*60]
-                if not eligible:
+                candidates = [(abs((t-end).total_seconds()-horizon*60), price)
+                              for t, price in valid if t > end and
+                              abs((t-end).total_seconds()-horizon*60) <= tolerance_minutes*60]
+                if not candidates:
                     continue
-                price = min(eligible)[1]
-                change = (price/basis-1)*100
-                key = item['pattern'] + ':' + str(horizon) + 'm'
+                change = (min(candidates)[1]/d-1)*100
+                key = label + ':' + str(horizon) + 'm'
                 outcomes[key]['evaluated'] += 1
                 outcomes[key]['positive'] += int(change > 0)
                 outcomes[key]['returns_pct'].append(round(change, 3))
-        except (TypeError, ValueError, KeyError, AttributeError):
-            continue
     return dict(outcomes)
 
 
