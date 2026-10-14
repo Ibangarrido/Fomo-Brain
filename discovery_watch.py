@@ -1,6 +1,7 @@
 """Read-only discovery of new Solana pools; never places orders."""
 import json
 import math
+from collections import defaultdict
 from collections import Counter
 import os
 import urllib.request
@@ -12,6 +13,10 @@ WATCH_MIN_LIQUIDITY_USD = 8000
 WATCH_MIN_VOLUME_5M_USD = 1500
 WATCH_MIN_TRADES_5M = 15
 WATCH_MAX_GAIN_1H_PCT = 100
+MAX_TRACKED = 20
+MAX_HISTORY = 300
+MAX_SAMPLES = 96
+MIN_OBSERVATION_GAP_SECONDS = 600
 
 
 def num(v):
@@ -52,7 +57,8 @@ def evaluate(payload):
                 pass
         reasons = []
         if price_usd is None or price_usd <= 0: reasons.append('missing_valid_price')
-        if gain_1h is not None and gain_1h > WATCH_MAX_GAIN_1H_PCT: reasons.append('gain_1h_over_limit')
+        if gain_1h is None: reasons.append('missing_gain_1h')
+        elif gain_1h > WATCH_MAX_GAIN_1H_PCT: reasons.append('gain_1h_over_limit')
         if not isinstance(created, str) or not created: reasons.append('missing_creation_time')
         if liquidity is None or liquidity < WATCH_MIN_LIQUIDITY_USD: reasons.append('liquidity')
         if vol is None or vol < WATCH_MIN_VOLUME_5M_USD: reasons.append('volume_5m')
@@ -73,26 +79,28 @@ def history_update(previous, rows, observed_at):
         history = {}
     for row in rows:
         # Continue tracking previously discovered pools even if they fail today's filters.
-        eligible_near_miss = len(row['reasons']) == 1 and row['reasons'][0] not in ('missing_valid_price', 'missing_creation_time')
+        eligible_near_miss = len(row['reasons']) == 1 and row['reasons'][0] not in ('missing_valid_price', 'missing_creation_time', 'missing_gain_1h')
         if not row['watch'] and not eligible_near_miss and row['pool'] not in history:
             continue
         pool = row['pool']
         record = history.get(pool, {'first_seen': observed_at, 'samples': []})
         if not isinstance(record, dict) or not isinstance(record.get('samples'), list):
             record = {'first_seen': observed_at, 'samples': []}
+        if row['price_usd'] is None or row['price_usd'] <= 0:
+            continue
         sample = {'at': observed_at, 'price_usd': row['price_usd'],
                   'liquidity_usd': row['liquidity_usd'], 'volume_5m_usd': row['volume_5m_usd']}
         if not record['samples'] or record['samples'][-1].get('at') != observed_at:
             record['samples'].append(sample)
-        record['samples'] = record['samples'][-96:]
+        record['samples'] = record['samples'][-MAX_SAMPLES:]
         history[pool] = record
     # Bound memory and preserve the most recently observed candidates.
-    history = dict(sorted(history.items(), key=lambda item: item[1].get('samples', [{}])[-1].get('at', ''), reverse=True)[:300])
+    history = dict(sorted(history.items(), key=lambda item: item[1].get('samples', [{}])[-1].get('at', ''), reverse=True)[:MAX_HISTORY])
     return history
 
 
 
-def fetch_tracked(previous, existing_pools, limit=20):
+def fetch_tracked(previous, existing_pools, limit=MAX_TRACKED):
     """Requote up to 20 previously seen Solana pools in one bounded API call."""
     history = previous.get('history', {}) if isinstance(previous, dict) else {}
     if not isinstance(history, dict):
@@ -209,7 +217,7 @@ def pattern_study(history):
         # Distinct observations at least 10 minutes apart; avoid treating repeats as candles.
         distinct = []
         for item in valid:
-            if not distinct or (item[0] - distinct[-1][0]).total_seconds() >= 600:
+            if not distinct or (item[0] - distinct[-1][0]).total_seconds()  >= MIN_OBSERVATION_GAP_SECONDS:
                 distinct.append(item)
         if len(distinct) < 3:
             continue
@@ -235,6 +243,59 @@ def pattern_study(history):
     return output
 
 
+def pattern_outcomes(history, patterns, minutes=(15, 30), tolerance_minutes=8):
+    """Forward-only evaluation: classify at the middle sample, score later quotes."""
+    outcomes = defaultdict(lambda: {'evaluated': 0, 'positive': 0, 'returns_pct': []})
+    for pool, item in patterns.items():
+        samples = history.get(pool, {}).get('samples', [])
+        try:
+            observed = []
+            for sample in samples:
+                price = num(sample.get('price_usd'))
+                if price is None or price <= 0:
+                    continue
+                t = datetime.fromisoformat(sample['at'].replace('Z', '+00:00'))
+                if t.tzinfo is not None:
+                    observed.append((t, price))
+            observed.sort()
+            if len(observed) < 4:
+                continue
+            # Use the latest three pattern samples as the decision point;
+            # only strictly later observations can be outcomes.
+            end = datetime.fromisoformat(item['sample_times'][-1])
+            basis = next((price for t, price in observed if t == end), None)
+            if basis is None:
+                continue
+            for horizon in minutes:
+                eligible = [(abs((t-end).total_seconds()-horizon*60), price)
+                            for t, price in observed if t > end and
+                            abs((t-end).total_seconds()-horizon*60) <= tolerance_minutes*60]
+                if not eligible:
+                    continue
+                price = min(eligible)[1]
+                change = (price/basis-1)*100
+                key = item['pattern'] + ':' + str(horizon) + 'm'
+                outcomes[key]['evaluated'] += 1
+                outcomes[key]['positive'] += int(change > 0)
+                outcomes[key]['returns_pct'].append(round(change, 3))
+        except (TypeError, ValueError, KeyError, AttributeError):
+            continue
+    return dict(outcomes)
+
+
+def quality_summary(rows, history, patterns, outcomes, tracking_errors):
+    """No synthetic fills, no return projections, and explicit coverage gaps."""
+    rejected = diagnostics(rows)
+    return {'pool_count': len(rows), 'eligible_now': sum(bool(r['watch']) for r in rows),
+            'near_misses': rejected['near_miss_count'],
+            'tracked_with_history': len(history), 'patterns_observed': len(patterns),
+            'outcome_cohorts': {k: {'evaluated': v['evaluated'],
+                                   'positive': v['positive']} for k, v in outcomes.items()},
+            'tracking_errors': tracking_errors, 'gmgn_authenticated': False,
+            'entry_fills': 0, 'exit_fills': 0,
+            'paper_profit_eur': None, 'profitable_strategy_verified': False}
+
+
 def run():
     status = 'OK'
     try:
@@ -252,12 +313,15 @@ def run():
     rows.extend(tracked)
     observed_at = datetime.now(timezone.utc).isoformat()
     history = history_update(previous, rows, observed_at)
-    report = {'version': 'discovery-watch-r7', 'at': datetime.now(timezone.utc).isoformat(),
+    patterns = pattern_study(history)
+    outcomes = pattern_outcomes(history, patterns)
+    report = {'version': 'discovery-watch-r8', 'at': datetime.now(timezone.utc).isoformat(),
               'source': URL, 'status': status, 'snapshot_only': True,
               'not_trade_signals': True, 'watch_thresholds': {'liquidity_usd': WATCH_MIN_LIQUIDITY_USD, 'volume_5m_usd': WATCH_MIN_VOLUME_5M_USD, 'trades_5m': WATCH_MIN_TRADES_5M, 'max_gain_1h_pct': WATCH_MAX_GAIN_1H_PCT}, 'watch_count': sum(x['watch'] for x in rows), 'tracked_refreshed': len(tracked),
               'tracking_errors': tracking_errors, 'candidates': rows,
               'history': history, 'observed_performance': performance(history, (15, 30)),
-              'pattern_study': pattern_study(history),
+              'pattern_study': patterns, 'pattern_outcomes': outcomes,
+              'quality_summary': quality_summary(rows, history, patterns, outcomes, tracking_errors),
               'filter_diagnostics': diagnostics(rows)}
     with open('discovery_watch.json.tmp', 'w') as f: json.dump(report, f, allow_nan=False, indent=2)
     os.replace('discovery_watch.json.tmp', 'discovery_watch.json')
