@@ -183,6 +183,58 @@ def diagnostics(rows):
             'near_misses_are_not_trade_signals': True}
 
 
+def pattern_study(history):
+    """Prospective price-path labels, never entry signals or evidence of profit."""
+    output = {}
+    for pool, record in history.items():
+        samples = record.get('samples', []) if isinstance(record, dict) else []
+        valid = []
+        for sample in samples if isinstance(samples, list) else []:
+            if not isinstance(sample, dict):
+                continue
+            price = num(sample.get('price_usd'))
+            liquidity = num(sample.get('liquidity_usd'))
+            if price is None or price <= 0 or liquidity is None or liquidity < WATCH_MIN_LIQUIDITY_USD:
+                continue
+            try:
+                at = datetime.fromisoformat(sample['at'].replace('Z', '+00:00'))
+                if at.tzinfo is None:
+                    continue
+                valid.append((at, price))
+            except (KeyError, ValueError, TypeError, AttributeError):
+                continue
+        valid.sort(key=lambda item: item[0])
+        if len(valid) < 3:
+            continue
+        # Distinct observations at least 10 minutes apart; avoid treating repeats as candles.
+        distinct = []
+        for item in valid:
+            if not distinct or (item[0] - distinct[-1][0]).total_seconds() >= 600:
+                distinct.append(item)
+        if len(distinct) < 3:
+            continue
+        recent = distinct[-3:]
+        if (recent[-1][0] - recent[0][0]).total_seconds() > 7200:
+            continue
+        a, b, d = [item[1] for item in recent]
+        move1, move2 = (b / a - 1) * 100, (d / b - 1) * 100
+        if move1 >= 3 and move2 >= 3:
+            label = 'two_rising_observations'
+        elif move1 <= -3 and move2 <= -3:
+            label = 'two_falling_observations'
+        elif move1 >= 5 and move2 <= -3:
+            label = 'rise_then_pullback'
+        elif move1 <= -5 and move2 >= 3:
+            label = 'fall_then_rebound'
+        else:
+            label = 'mixed_or_flat'
+        output[pool] = {'pattern': label, 'moves_pct': [round(move1, 3), round(move2, 3)],
+                        'sample_times': [item[0].isoformat() for item in recent],
+                        'price_path_only': True, 'trade_signal': False,
+                        'gmgn_data': False}
+    return output
+
+
 def run():
     status = 'OK'
     try:
@@ -200,11 +252,12 @@ def run():
     rows.extend(tracked)
     observed_at = datetime.now(timezone.utc).isoformat()
     history = history_update(previous, rows, observed_at)
-    report = {'version': 'discovery-watch-r6', 'at': datetime.now(timezone.utc).isoformat(),
+    report = {'version': 'discovery-watch-r7', 'at': datetime.now(timezone.utc).isoformat(),
               'source': URL, 'status': status, 'snapshot_only': True,
               'not_trade_signals': True, 'watch_thresholds': {'liquidity_usd': WATCH_MIN_LIQUIDITY_USD, 'volume_5m_usd': WATCH_MIN_VOLUME_5M_USD, 'trades_5m': WATCH_MIN_TRADES_5M, 'max_gain_1h_pct': WATCH_MAX_GAIN_1H_PCT}, 'watch_count': sum(x['watch'] for x in rows), 'tracked_refreshed': len(tracked),
               'tracking_errors': tracking_errors, 'candidates': rows,
               'history': history, 'observed_performance': performance(history, (15, 30)),
+              'pattern_study': pattern_study(history),
               'filter_diagnostics': diagnostics(rows)}
     with open('discovery_watch.json.tmp', 'w') as f: json.dump(report, f, allow_nan=False, indent=2)
     os.replace('discovery_watch.json.tmp', 'discovery_watch.json')
