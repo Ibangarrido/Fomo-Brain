@@ -114,6 +114,62 @@ def guard(token, allow_breakout=False):
 def breakout_guard(token):
     return guard(token, allow_breakout=True)
 
+def gradual_guard(token):
+    """Gradual impulse, ordered 12–22% pullback and two-bar reclaim; PAPER only."""
+    from candle_lab import context, evaluate_rows
+    result = context(token)
+    token['entry_policy_suffix'] = '+gradual-pullback-r1'
+    token.pop('continuation_pattern', None)
+    checked = evaluate_rows({'data': {'attributes': {'ohlcv_list':
+        result.get('closed_history', result.get('bars', []))}}},
+        datetime.now(timezone.utc).timestamp())
+    token['candle_context'] = dict(result, gradual_validation=checked)
+    if checked.get('status') == 'SIN DATOS':
+        return 'gradual: ' + checked.get('reason', 'velas invalidas')
+    bars = checked['closed_history']
+    if len(bars) < 10 or any(b[0]-a[0] != 60 for a,b in zip(bars,bars[1:])):
+        return 'gradual: faltan diez velas consecutivas cerradas'
+    if any(r[5] <= 0 for r in bars):
+        return 'gradual: intervalos sin volumen'
+    peak_i = max(range(len(bars)-3), key=lambda i: bars[i][2])
+    if peak_i < 3:
+        return 'gradual: impulso previo demasiado corto'
+    peak = bars[peak_i][2]
+    impulse = (peak/bars[0][1]-1)*100
+    if not 10 <= impulse <= 60 or any(abs(r[4]/r[1]-1)*100 > 15 for r in bars[:peak_i+1]):
+        return 'gradual: impulso ausente o demasiado vertical'
+    pullback = bars[peak_i+1:-2]
+    if not 2 <= len(pullback) <= 8:
+        return 'gradual: retroceso fuera de 2-8 minutos'
+    # A multi-minute total drawdown can hide a single abrupt collapse.
+    # Reject a >=12% low relative to the preceding close within one minute,
+    # including an opening gap or a recovered wick. Never infer a future rug.
+    prior_close = bars[peak_i][4]
+    for bar in bars[peak_i+1:]:
+        if bar[3] <= prior_close * .88:
+            return 'gradual: desplome intraminuto >=12%'
+        prior_close = bar[4]
+    trough = min(r[3] for r in pullback)
+    depth = (1-trough/peak)*100
+    a,b = bars[-2:]
+    baseline = sum(r[5] for r in pullback)/len(pullback)
+    wick = (b[2]-max(b[1],b[4]))/(b[2]-b[3]) if b[2]>b[3] else 0
+    if not 12 <= depth <= 22:
+        return 'gradual: retroceso fuera de 12-22%'
+    if not (a[4]>a[1] and b[4]>b[1] and b[4]>a[2]
+            and a[3]>=trough and b[3]>=a[3] and b[4]>=trough*1.03):
+        return 'gradual: recuperacion no confirmada o pierde soporte'
+    if b[5] < baseline*1.2 or b[5] < a[5] or wick > .4:
+        return 'gradual: recuperacion sin volumen o con rechazo superior'
+    if not a[2] < float(token['price']) <= b[4]*1.05:
+        return 'gradual: precio pierde recuperacion o se aleja >5%'
+    token['continuation_pattern'] = 'GRADUAL_IMPULSE_ORDERED_PULLBACK_RECLAIM'
+    token['gradual_pattern_evidence'] = {'version':'gradual-pullback-r1',
+        'impulse_pct':impulse, 'pullback_pct':depth, 'pullback_minutes':len(pullback),
+        'volume_multiple':b[5]/baseline, 'peak_price':peak, 'support_price':trough,
+        'future_target_verified':False}
+    return None
+
 def candidate_universe(pairs, analyzer):
     """Same discovered pools, without the EARLY momentum veto; bounded to 20.
 
@@ -147,7 +203,8 @@ def run(ranking, simulator, prefetch=None):
             continue  # Both arms begin decisions together on the next cycle.
         simulator(ranking, path, 'LAB CONTINUATION ' + arm, confirm=True,
                   entry_mode=mode, min_buy_ratio=ratio,
-                  entry_guard=(breakout_guard if arm == 'pattern_breakout' else guard) if mode == 'continuation' else None)
+                  entry_guard=(breakout_guard if arm == 'pattern_breakout' else
+                               gradual_guard if arm == 'pattern_pullback' else guard) if mode == 'continuation' else None)
         with open(path) as handle:
             state = json.load(handle)
         obs = state['observations'][-1]

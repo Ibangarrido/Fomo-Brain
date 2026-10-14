@@ -125,7 +125,8 @@ def evaluate_rows(payload, now):
         if ts in rows and rows[ts] != bar:
             return {"status": "SIN DATOS", "reason": "velas duplicadas contradictorias"}
         rows[ts] = bar
-    bars = sorted(rows.values(), key=lambda r: r[0])[-5:]
+    closed_history = sorted(rows.values(), key=lambda r: r[0])[-20:]
+    bars = closed_history[-5:]
     if len(bars) < 5:
         return {"status": "SIN DATOS", "reason": "faltan cinco velas cerradas"}
     if now - (bars[-1][0] + 60) > 90:
@@ -143,7 +144,8 @@ def evaluate_rows(payload, now):
         if previous <= 0 or recent < previous * 1.10 or a[5] <= 0 or b[5] <= 0 else
         "rechazo superior de la ultima vela >40%" if wick > 0.40 else None)
     return {"status": "RECHAZA" if reason else "PASA", "reason": reason,
-            "bars": bars, "last_closed_at": datetime.fromtimestamp(b[0] + 60, timezone.utc).isoformat(),
+            "bars": bars, "closed_history": closed_history,
+            "last_closed_at": datetime.fromtimestamp(b[0] + 60, timezone.utc).isoformat(),
             "recent_volume_mean_usd": recent, "previous_volume_mean_usd": previous,
             "upper_wick_fraction": wick, "policy": "candle-r1",
             "pattern_research": pattern_research(bars)}
@@ -177,7 +179,7 @@ def context(token, fetcher=request_json, now=None):
                 del POOL_CACHE[next(iter(POOL_CACHE))]
         else:
             validate_pool(identity[1], token, network)
-        params = urllib.parse.urlencode({"aggregate": 1, "limit": 8, "currency": "usd",
+        params = urllib.parse.urlencode({"aggregate": 1, "limit": 24, "currency": "usd",
                                          "token": token["address"]})
         result = evaluate_rows(fetcher(pool_url + "/ohlcv/minute?" + params), now)
         result.update(source="GeckoTerminal", chain=token["chain"],

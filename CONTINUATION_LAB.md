@@ -148,3 +148,34 @@ reclaim reaching a simulated entry, its rejection by EARLY, and bounded universe
 selection with liquidity and capitalization rejection. These are synthetic tests;
 they establish pipeline behavior, not profitability or executable prices. Compare
 subsequent operations and net paper results from the recorded change point.
+
+
+## 14 October 2026 — gradual pullback arm
+
+pattern_pullback now tests an ordered multi-minute pattern using up to 20
+completed minute candles from the same identity-checked OHLCV response. The
+old 50/60 reclaim arms and breakout arm retain their guards. This changes the
+pullback arm prospectively, without resetting its 97.57 EUR account or old trades.
+continuation-gradual-r1 records its change point. Earlier pullback/breakout
+comparisons cannot be attributed to this new rule.
+
+Hypothesis from the user's 110K -> 89–90K -> recovery example: initial rise
+10–60% over at least four candles, individual impulse candle bodies <=15%,
+pullback 12–22% over 2–8 minutes, two green recovery candles with rising support,
+last close above the previous high, volume >=1.2x mean pullback volume and
+nondecreasing recovery volume, upper wick <=40%. Live quote must preserve
+reclaim and stay within 5% of the last close. Ten consecutive completed candles
+minimum; missing, empty or stale observations reject. Capitalization milestones
+are examples, not hard-coded predictions or future fills. Candle price ratios
+are measured; historical capitalization is not inferred as verified evidence.
+
+No guaranteed 200–250K target. Existing stops, costs, security, confirmation and
+5 EUR budget still apply. OHLCV request size rises from 8 to 24 bars, with the
+same request budget and cache. Other guards retain their five-bar window.
+
+The gradual arm additionally rejects any candle low >=12% below the preceding
+close between the peak and the recovery. This catches a sudden drop hidden
+inside an otherwise acceptable total pullback, including a gap or recovered
+wick. The threshold is an unvalidated experimental hypothesis, not a predictor
+of future collapses or a guaranteed stop. Regression test preserves a 19.09%
+total drawdown while inserting a single abrupt low and verifies rejection.

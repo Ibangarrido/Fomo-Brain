@@ -69,6 +69,52 @@ class ContinuationTests(unittest.TestCase):
         p['liquidity']['usd']=25000;p['marketCap']=0;p['fdv']=0
         self.assertEqual(lab.candidate_universe({'bad':p},brain.analizar_par),[])
 
+    def gradual_bars(self):
+        minute=int(datetime.now(timezone.utc).timestamp()//60)*60
+        opens=[.78,.82,.88,.95,1.02,1.08,1.07,.99,.94,.90,.91,.94]
+        closes=[.82,.88,.95,1.02,1.08,1.07,.99,.94,.90,.91,.94,.97]
+        bars=[]
+        for i,(o,c) in enumerate(zip(opens,closes)):
+            h=max(o,c)+.01;low=min(o,c)-.01
+            if i==5:h=1.10
+            if i==10:low=.90
+            if i==11:low=.935
+            volume=100 if i<6 else 80 if i<10 else 100 if i==10 else 150
+            bars.append([minute-720+i*60,o,h,low,c,volume])
+        return bars
+
+    def test_gradual_110_to_89_shape_waits_for_supported_volume_reclaim(self):
+        _,token,_=self.candidate();token['price']=.97
+        bars=self.gradual_bars()
+        with patch.object(candle_lab,'context',return_value={'closed_history':bars}):
+            self.assertIsNone(lab.gradual_guard(token))
+            evidence=token['gradual_pattern_evidence']
+            self.assertAlmostEqual(evidence['pullback_pct'],19.09090909)
+            self.assertFalse(evidence['future_target_verified'])
+            token['price']=.93;self.assertIsNotNone(lab.gradual_guard(token))
+
+    def test_gradual_rejects_fast_spike_deep_drop_missing_volume_gap_and_stale(self):
+        _,token,_=self.candidate();token['price']=.97
+        for mutate in (lambda b:b[2].__setitem__(1,.70),
+                       lambda b:b[8].__setitem__(3,.70),
+                       lambda b:b[-1].__setitem__(5,40),
+                       lambda b:b[-1].__setitem__(3,.85),
+                       lambda b:b[1].__setitem__(0,b[1][0]-60),
+                       lambda b:[row.__setitem__(0,row[0]-180) for row in b]):
+            bars=self.gradual_bars();mutate(bars)
+            with patch.object(candle_lab,'context',return_value={'closed_history':bars}):
+                self.assertIsNotNone(lab.gradual_guard(token))
+        with patch.object(candle_lab,'context',return_value={'bars':self.gradual_bars()[-5:]}):
+            self.assertIsNotNone(lab.gradual_guard(token))
+
+    def test_gradual_rejects_abrupt_collapse_even_with_acceptable_total_pullback(self):
+        _,token,_=self.candidate();token['price']=.97
+        bars=self.gradual_bars()
+        # Total peak-to-low remains 19.09%, but a single candle drops abruptly.
+        bars[6][3]=.89
+        with patch.object(candle_lab,'context',return_value={'closed_history':bars}):
+            self.assertIn('desplome',lab.gradual_guard(token))
+
     def test_bootstrap_once_and_incomplete_refuses_reset(self):
         self.assertTrue(lab.bootstrap());self.assertFalse(lab.bootstrap())
         for p in lab.LEGACY_FILES:self.assertEqual(self.read(p)['cash'],100)
@@ -122,7 +168,7 @@ class ContinuationTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):lab.run([],simulator)
         self.assertEqual(len(calls),5)
         self.assertIn((lab.PATTERN_ARMS['pattern_breakout'][0],lab.breakout_guard),calls)
-        self.assertIn((lab.PATTERN_ARMS['pattern_pullback'][0],lab.guard),calls)
+        self.assertIn((lab.PATTERN_ARMS['pattern_pullback'][0],lab.gradual_guard),calls)
     def test_prefetch_uses_injected_running_engine_before_wallet_decisions(self):
         lab.bootstrap();lab.bootstrap_pattern();events=[]
         def prefetch(ranking):events.append('prefetch')

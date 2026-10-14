@@ -1089,6 +1089,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if entry_mode == "continuation":
         data_policy.update(version="continuation-quote-r3", early_entry_version="continuation-r2",
                            candle_guard_version="pullback-overlap-r2", early_max_change1h_pct=None)
+    if continuation_lab and expected_arm == "pattern_pullback":
+        data_policy.update(version="continuation-gradual-r1",
+                           candle_guard_version="gradual-pullback-r1")
     policy_history = state.setdefault("data_policy_history", [])
     if not policy_history or policy_history[-1]["version"] != data_policy["version"]:
         policy_history.append(dict(data_policy, effective_at=now.isoformat(),
@@ -1352,6 +1355,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "signal_price": token.get("price"), "quote_drift_pct": drift,
             "entry_confirmation": ultima_lectura_par(fresh) if confirm else None,
             "entry_candle_context": fresh.get("candle_context"),
+            "entry_gradual_pattern": fresh.get("gradual_pattern_evidence"),
             "entry_experiment": label if entry_guard is not None or ratio_lab or protect_lab else None,
             "entry_protection_policy": "protect-r1" if profit_protection else None,
             "entry_risk_policy_version": V10_RISK_VERSION,
