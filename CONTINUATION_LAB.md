@@ -126,3 +126,25 @@ Blue se añade a la cobertura por contrato junto con CAESAR, MissBean, NOCKAI y 
 
 El workflow restaura y guarda las cuatro memorias del laboratorio. Si falta solo parte del estado, no reiniciar. Inicializar las tres carteras y empezar decisiones en el ciclo siguiente. Validación offline con escenarios sintéticos verifica comportamiento, no beneficios futuros. Evaluar prospectivamente también casos perdedores y ausencias de datos antes de adoptar la estrategia en RECOVERY.
 
+
+
+## 14 October 2026 — continuation-r2 prospective universe correction
+
+The continuation laboratory now examines up to 20 candidates from the same
+discovered pools without the shared EARLY veto on nonpositive 5m AND 1h changes.
+That veto could suppress a closed-candle reclaim while aggregate returns remained
+negative. Both the preliminary and post-security quote use this parsing policy
+only for continuation mode. CONTROL sees the same bounded universe and keeps
+its EARLY entry checks. No new feed or retrospective fills are introduced.
+
+The existing score >=5, capitalization, liquidity and volume gates remain, as do
+closed-candle pattern checks, 30–90 second confirmation, 5% quote drift, security,
+wallet risk, budgets and exit rules. New continuation positions carry
+continuation-r2; continuation-quote-r3 records the prospective change point in
+each experimental wallet. Balances and earlier results are preserved.
+
+Regression tests cover a negative aggregate return with a valid closed-candle
+reclaim reaching a simulated entry, its rejection by EARLY, and bounded universe
+selection with liquidity and capitalization rejection. These are synthetic tests;
+they establish pipeline behavior, not profitability or executable prices. Compare
+subsequent operations and net paper results from the recorded change point.

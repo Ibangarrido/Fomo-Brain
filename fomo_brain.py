@@ -192,7 +192,7 @@ def clasificar_token(token):
     return "NORMAL"
 
 
-def analizar_par(pair):
+def analizar_par(pair, *, allow_nonpositive_momentum=False):
     liquidity = numero(
         (pair.get("liquidity") or {}).get("usd")
     )
@@ -236,7 +236,7 @@ def analizar_par(pair):
     if vol_1h < MIN_VOLUME_1H:
         return descartar(pair, "volumen 1h < 5000 USD")
 
-    if change_5m <= 0 and change_1h <= 0:
+    if not allow_nonpositive_momentum and change_5m <= 0 and change_1h <= 0:
         return descartar(pair, "sin momentum positivo 5m/1h")
 
     score = 0
@@ -1087,7 +1087,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                    "early_max_change1h_pct": 150, "crosscheck_drop_pct": 30,
                    "crosscheck_rise_pct": 50, "source_price_timestamp": "UNKNOWN"}
     if entry_mode == "continuation":
-        data_policy.update(version="continuation-quote-r2", early_entry_version="continuation-r1",
+        data_policy.update(version="continuation-quote-r3", early_entry_version="continuation-r2",
                            candle_guard_version="pullback-overlap-r2", early_max_change1h_pct=None)
     policy_history = state.setdefault("data_policy_history", [])
     if not policy_history or policy_history[-1]["version"] != data_policy["version"]:
@@ -1253,7 +1253,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             continue
         try:
             price, entry_liquidity, fresh_pair = cotizar_posicion(token)
-            fresh = analizar_par(fresh_pair)
+            fresh = analizar_par(fresh_pair, allow_nonpositive_momentum=entry_mode == "continuation")
             if fresh is None:
                 reasons = [item["reason"] for item in REJECTIONS
                            if item.get("chain") == token["chain"]
@@ -1307,7 +1307,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             try:
                 invalidate_entry_quote(token)
                 price, entry_liquidity, fresh_pair = cotizar_posicion(token)
-                fresh = analizar_par(fresh_pair)
+                fresh = analizar_par(fresh_pair, allow_nonpositive_momentum=entry_mode == "continuation")
                 if fresh is None:
                     raise ValueError("par final no supera filtros")
                 drift = variacion(price, signal_reference.get("price"))
@@ -1344,7 +1344,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "last_quote_at": fresh.get("received_at") or entry_at.isoformat(), "quote_status": "OK",
             "entry_score": fresh["score"], "url": token["url"],
             "partial_taken": False, "peak_price": price,
-            "entry_policy_version": ("continuation-r1" if entry_mode == "continuation" else "early-r5" if entry_mode == "early" else "impulse-r4") if confirm else "base",
+            "entry_policy_version": ("continuation-r2" if entry_mode == "continuation" else "early-r5" if entry_mode == "early" else "impulse-r4") if confirm else "base",
             "entry_fee_evidence": fee_evidence, "entry_final_quote": final_quote_evidence,
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
@@ -1420,7 +1420,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "renewal_is_entry": False, "ratio_audit_is_entry": False}
     state["assumptions"]["holders_status"] = "SIN FUENTE VERIFICADA; no se usan para confirmar"
     if entry_mode == "continuation":
-        state["assumptions"]["entry_policy"] = "continuation-r1: edad 2-1440m, liquidez >=20000, 40 trades, compras >=60% por numero; sin techo subida1h; cinco velas 1m cerradas, impulso previo, retroceso 1-20%, recuperacion con volumen >=1.2x, mecha <=40%; precio fresco conserva recuperacion y <=5% del cierre; confirmacion 30-90s, liquidez >=95%; no exige momentum5m positivo; flujo por importe UNKNOWN"
+        state["assumptions"]["entry_policy"] = "continuation-r2: universo sin veto momentum5m/1h; edad 2-1440m, liquidez >=20000, 40 trades, compras >=60% por numero; sin techo subida1h; cinco velas 1m cerradas, impulso previo, retroceso 1-20%, recuperacion con volumen >=1.2x, mecha <=40%; precio fresco conserva recuperacion y <=5% del cierre; confirmacion 30-90s, liquidez >=95%; no exige momentum5m positivo; flujo por importe UNKNOWN"
         state["assumptions"]["quote_quality"]["early_max_change1h_pct"] = None
     if entry_mode == "impulse":
         state["assumptions"]["entry_policy"] = "V10 impulso r4: sin filtro de edad; lectura previa 0.5-1.5m del mismo par; precio +1-20%, volumen5m +10% minimo, liquidez >=95%; momentum5m 2-25% en ambas lecturas, compras >=60%, 20 trades"
@@ -1929,7 +1929,12 @@ def main(refresh_events=True):
     if os.getenv("BRAIN_CONTINUATION_LAB", "0") == "1" and os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
         try:
             from continuation_lab import run as run_continuation
-            run_continuation(ranking, simular_cartera, prefetch=prefetch_entry_pairs)
+            from continuation_lab import candidate_universe
+            continuation_ranking = candidate_universe(pairs, analizar_par)
+            print("CONTINUATION UNIVERSO " + json.dumps({"candidates": len(continuation_ranking),
+                  "nonpositive_5m_and_1h": sum(t["change5m"] <= 0 and t["change1h"] <= 0
+                      for t in continuation_ranking), "paper_only": True}))
+            run_continuation(continuation_ranking, simular_cartera, prefetch=prefetch_entry_pairs)
         except Exception as exc:
             print("LAB CONTINUATION ERROR: " + str(exc) + "; no reiniciar carteras")
     if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":

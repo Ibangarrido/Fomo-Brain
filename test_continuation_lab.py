@@ -29,6 +29,46 @@ class ContinuationTests(unittest.TestCase):
         token=brain.analizar_par(p)
         old=dict(token,received_at=(datetime.now(timezone.utc)-timedelta(seconds=60)).isoformat(),price=1.34)
         return p,token,old
+    def test_negative_aggregate_momentum_reaches_candle_guard_and_can_fill(self):
+        lab.bootstrap()
+        p, _, old = self.candidate()
+        p['priceChange'] = {'h1': -12, 'm5': -3}
+        # Strong observed volume keeps the existing score gate intact.
+        p['volume']['h1'] = 25000
+        p['volume']['m5'] = 5000
+        self.assertIsNone(brain.analizar_par(p))
+        ranking = lab.candidate_universe({'pool': p}, brain.analizar_par)
+        self.assertEqual(len(ranking), 1)
+        token = ranking[0]
+        old = dict(token, received_at=(datetime.now(timezone.utc)-timedelta(seconds=60)).isoformat(), price=1.34)
+        path, mode, ratio = lab.ARMS['50']
+        state = self.read(path)
+        state['recovery_pending_signals'] = {token['chain']+':'+token['address']: old}
+        with open(path, 'w') as f: json.dump(state, f)
+        with patch.object(brain, 'cotizar_posicion', return_value=(1.35,25000,p)), patch.object(candle_lab, 'context', return_value={'bars':self.bars()}), patch.dict(os.environ, {'BRAIN_QUOTE_GUARD':'0'}), contextlib.redirect_stdout(io.StringIO()):
+            brain.simular_cartera(ranking,path,entry_mode=mode,min_buy_ratio=ratio,entry_guard=lab.guard)
+        saved = self.read(path)
+        self.assertEqual(saved['cash'], 95)
+        self.assertEqual(len(saved['positions']), 1)
+        self.assertEqual(saved['positions'][0]['entry_policy_version'], 'continuation-r2')
+        self.assertEqual(saved['data_policy_history'][-1]['version'], 'continuation-quote-r3')
+        self.assertIsNotNone(brain.motivo_entrada(token,True,'early',previous_observation=old))
+
+    def test_expanded_universe_keeps_data_gates_and_is_bounded(self):
+        p, _, _ = self.candidate()
+        p['priceChange']={'h1':-12,'m5':-3}
+        p['volume']['h1']=25000; p['volume']['m5']=5000
+        pools={}
+        for i in range(25):
+            import copy
+            q=copy.deepcopy(p);q['baseToken']['address']='token'+str(i);q['pairAddress']='pool'+str(i)
+            pools[str(i)]=q
+        self.assertEqual(len(lab.candidate_universe(pools,brain.analizar_par)),20)
+        p['liquidity']['usd']=0
+        self.assertEqual(lab.candidate_universe({'bad':p},brain.analizar_par),[])
+        p['liquidity']['usd']=25000;p['marketCap']=0;p['fdv']=0
+        self.assertEqual(lab.candidate_universe({'bad':p},brain.analizar_par),[])
+
     def test_bootstrap_once_and_incomplete_refuses_reset(self):
         self.assertTrue(lab.bootstrap());self.assertFalse(lab.bootstrap())
         for p in lab.LEGACY_FILES:self.assertEqual(self.read(p)['cash'],100)

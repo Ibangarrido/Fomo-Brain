@@ -114,6 +114,26 @@ def guard(token, allow_breakout=False):
 def breakout_guard(token):
     return guard(token, allow_breakout=True)
 
+def candidate_universe(pairs, analyzer):
+    """Same discovered pools, without the EARLY momentum veto; bounded to 20.
+
+    This is eligibility for further checks only. Score, closed-candle guards,
+    confirmation, security and wallet risk still decide every simulated entry.
+    CONTROL receives the same universe and retains its EARLY momentum gates.
+    """
+    candidates = {}
+    for pair in pairs.values():
+        token = analyzer(pair, allow_nonpositive_momentum=True)
+        if token is None or token['score'] < 5:
+            continue
+        key = (token['chain'], token['address'])
+        old = candidates.get(key)
+        if old is None or token['liquidity'] > old['liquidity']:
+            candidates[key] = token
+    return sorted(candidates.values(),
+                  key=lambda t: (t['score'], t['vol5m'], t['liquidity']), reverse=True)[:20]
+
+
 def run(ranking, simulator, prefetch=None):
     if bootstrap():
         print('LAB CONTINUATION INICIO: tres carteras virtuales de 100 EUR; decisiones desde proxima lectura; NO sumar')
