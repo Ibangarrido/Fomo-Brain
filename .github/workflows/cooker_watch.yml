@@ -1,0 +1,42 @@
+name: Cooker wallet observer
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'cooker_watch.py'
+      - 'test_cooker_watch.py'
+      - '.github/workflows/cooker_watch.yml'
+  schedule:
+    - cron: '4,19,34,49 * * * *'
+concurrency:
+  group: cooker-wallet-state
+  cancel-in-progress: false
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate observer without network
+        run: python -m unittest -v test_cooker_watch.py
+      - name: Restore Cooker cursor and history
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: cooker_watch.yml
+          name: cooker-tracking
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: ignore
+      - name: Observe public wallet without orders or paper fills
+        run: python cooker_watch.py
+      - name: Persist observer state and source health
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cooker-tracking
+          path: cooker_tracking_r1.json
+          retention-days: 30
+          if-no-files-found: error
