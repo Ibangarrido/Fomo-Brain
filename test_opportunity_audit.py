@@ -103,6 +103,60 @@ class OpportunityTests(unittest.TestCase):
         with self.assertRaises(json.JSONDecodeError):
             audit.read()
 
+    def test_saturated_cohort_reserves_slots_for_rejected_and_manual_cases(self):
+        with patch.object(audit, "LIMIT", 1), patch.object(audit, "REJECTED_RESERVE", 1):
+            self.observe([pair(address="ordinary")])
+            audit.record_decisions("EARLY", ["DESCARTE solana:blocked | capital brake"])
+            rows = self.observe([pair(address="blocked")])
+            self.assertEqual(rows["solana:blocked"]["cohort"], "automatic_rejected_overflow")
+            first = rows["solana:blocked"]["first"]
+            chain, mint = sorted(audit.MANUAL)[0]
+            market = pair(address=mint); market["chainId"] = chain
+            rows = self.observe([market])
+            self.assertIn(chain + ":" + mint, rows)
+            audit.record_decisions("EARLY", ["DESCARTE solana:blocked2 | capital brake"])
+            rows = self.observe([pair(address="blocked2")])
+            self.assertNotIn("solana:blocked2", rows)
+            self.assertEqual(rows["solana:blocked"]["first"], first)
+            self.assertEqual(audit.read()["capacity_skips_by_pool"], {"rejected_reserve": 1})
+            self.assertEqual(len(rows), 3)
+
+    def test_rejected_watch_rotation_keeps_both_cohorts_within_ten_requests(self):
+        with patch.object(audit, "LIMIT", 10):
+            self.observe([pair(address="normal" + str(i)) for i in range(10)])
+            audit.record_decisions("EARLY", ["DESCARTE solana:blocked" + str(i) + " | capital brake" for i in range(10)])
+            self.observe([pair(address="blocked" + str(i)) for i in range(10)])
+        targets = set(audit.watch_targets(self.now)) - audit.MANUAL
+        self.assertEqual(len(targets), 10)
+        self.assertEqual(sum(a.startswith("blocked") for c, a in targets), 5)
+        self.assertEqual(sum(a.startswith("normal") for c, a in targets), 5)
+
+    def test_cached_receipt_does_not_create_new_baseline_peak_or_horizon(self):
+        market = pair(price=1)
+        market["_brain_received_at"] = self.now.isoformat()
+        self.observe([market])
+        market["priceUsd"] = "10"  # Even a changed payload cannot reuse old receipt.
+        row = self.observe([market], self.now + timedelta(hours=73))["solana:a"]
+        self.assertEqual(row["observations"], 1)
+        self.assertEqual(row["last"]["price"], 1)
+        self.assertNotIn("complete", row)
+        market["_brain_received_at"] = (self.now + timedelta(hours=73)).isoformat()
+        row = self.observe([market], self.now + timedelta(hours=73))["solana:a"]
+        self.assertTrue(row["complete"])
+        self.assertEqual(row["peak"]["price"], 10)
+
+    def test_receipt_time_is_distinct_from_evaluation_and_invalid_receipts_skip(self):
+        market = pair()
+        market["_brain_received_at"] = (self.now - timedelta(seconds=45)).isoformat()
+        row = self.observe([market])["solana:a"]
+        self.assertEqual(row["first"]["received_at"], market["_brain_received_at"])
+        self.assertEqual(row["first"]["evaluated_at"], self.now.isoformat())
+        for stamp in ("broken", "2026-10-09T12:00:00", (self.now + timedelta(seconds=1)).isoformat()):
+            market["_brain_received_at"] = stamp
+            self.observe([market])
+        self.assertEqual(audit.read()["invalid_receipt_skips"], 3)
+        self.assertEqual(audit.read()["tokens"]["solana:a"]["observations"], 1)
+
     def test_horizon_freezes_without_claiming_exact_final_quote(self):
         self.observe([pair()])
         row = self.observe([pair(price=2)], self.now + timedelta(hours=73))["solana:a"]
@@ -230,5 +284,6 @@ class OpportunityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

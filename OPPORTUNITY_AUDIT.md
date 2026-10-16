@@ -43,3 +43,39 @@ starting a separately versioned subsequent cohort.
 fomo_opportunity_audit_r1.json is restored/persisted in the existing artifact.
 Audit errors are reported without changing wallet decisions. Offline tests
 validate identity, state preservation, missing data, limits and sampling only.
+
+
+## Coverage r2 — 16 October 2026
+
+Run 1155 / artifact 12007091179 had 500 active audit rows and 83,444 cumulative
+capacity-skip events (not unique missed tokens). Trump $1 Coin was in general
+memory but absent from this audit. The recovered 21 received samples are in
+`docs/reviews/dollar1_2026-10-15.json`. First available: 20:33:12 UTC, price
+0.0001543 USD, cap 154,380 USD, buys 55.73%, 5m change -14.38%, 1h +232%.
+At 20:53:16 UTC: 0.0005773 USD, cap 577,362 USD, buys 56.71%, 5m +15.67%,
+1h +1140%. The maximum of these samples is NOT the token's ATH. Neither the
+3.5M peak nor its timestamp was recovered. EARLY would also fail hourly and
+momentum gates in these snapshots even with a funded wallet; the first printed
+wallet rejection is not the only reason that can block an entry.
+
+The automatic cohort keeps its 500 slots. Up to 100 additional slots are now
+reserved for candidates actually rejected by a wallet in the current cycle,
+using the same admission liquidity/cap conditions. This is a separately labelled
+`automatic_rejected_overflow` cohort; do not combine its selection-biased outcomes
+with the ordinary cohort. No active row is evicted, reset or relabelled. Manual
+cases have 32 independent slots, including $1 selected after the event. These
+are hard separate limits; skip events per pool remain visible. No limit promises
+complete market coverage. Finished automatic cases keep the existing retirement
+policy and cannot restart a favourable baseline.
+
+Ten automatic watch requests remain the budget: five per cohort when both have
+at least five active cases, with spare slots used by the other cohort. Rotation
+moves by one each cycle, independent of price/performance and failed quotes.
+Manual watches are additional; adding $1 adds one exact-contract request and
+one more target in the existing rotating candle-research queue.
+
+Snapshots now preserve `_brain_received_at` separately from `evaluated_at`.
+Repeated/out-of-order receipts cannot update price, peak, counts or complete a
+horizon; malformed, timezone-free and future receipts are counted and skipped.
+Older records remain intact. The coverage policy change point is recorded.
+This changes research coverage only: wallet brakes and entry thresholds remain.

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 FILE = "fomo_opportunity_audit_r1.json"
 LIMIT = 500
+REJECTED_RESERVE = 100
+MANUAL_RESERVE = 32
 HORIZON_SECONDS = 72 * 3600
 MAX_TRACKING_SECONDS = HORIZON_SECONDS + 24 * 3600
 MANUAL = {
@@ -16,6 +18,7 @@ MANUAL = {
     ("solana", "4mbPZzDCWXvTCJbscMWeDD7TT1pra9mkZHGaBxc2jupx"),
 }
 RESEARCH_TARGETS = {
+    ("solana", "2bCCHQadi4QeHWPKG3w13siCyWWQPgkFtniouTqVpump"),
     ("bsc", "0x8175810d00f9356a8f87a4a7b8ff7660087c7777"),
     ("solana", "GtcZuRzgp8U4qCkF2sBeihrnTsfYUrQiJUs3E81pump"),
     ("robinhood", "0xb0f444a069d9264017610e0674ebf7e1d6e19cbb"),
@@ -131,10 +134,20 @@ def watch_targets(now=None):
             active.append(row)
     # Rotate regardless of quote failures or performance; dead quotes cannot
     # monopolize every monitoring slot.
-    targets = sorted((r["chain"], r["address"]) for r in active
-                     if not is_manual(r["chain"], r["address"]))
-    start = state.get("watch_cursor", 0) % len(targets) if targets else 0
-    return sorted(MANUAL) + (targets[start:] + targets[:start])[:10]
+    def rotate(rows, count):
+        targets = sorted((r["chain"], r["address"]) for r in rows)
+        start = state.get("watch_cursor", 0) % len(targets) if targets else 0
+        return (targets[start:] + targets[:start])[:count]
+    automatic = [r for r in active if not is_manual(r["chain"], r["address"])]
+    rejected = [r for r in automatic if r.get("admission_pool") == "rejected_reserve"]
+    ordinary = [r for r in automatic if r.get("admission_pool") != "rejected_reserve"]
+    # Same ten automatic requests; reserve five for each cohort when both exist.
+    selected = rotate(rejected, 5 if ordinary else 10)
+    selected += rotate(ordinary, 10 - len(selected))
+    if len(selected) < 10:
+        selected += [t for t in rotate(rejected, 10) if t not in selected][:10-len(selected)]
+    return sorted(MANUAL) + selected
+
 
 
 def research_watches(state, selected, now, fetch_context=None):
@@ -223,14 +236,40 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             if not manual and not (liquidity is not None and liquidity >= 10000
                                    and cap is not None and 0 < cap <= 2000000):
                 continue
-            if len(rows) >= LIMIT:
+            if manual:
+                pool, limit = "manual_reserve", MANUAL_RESERVE
+            else:
+                normal_count = sum(not is_manual(r["chain"], r["address"])
+                                   and r.get("admission_pool", "automatic") == "automatic"
+                                   for r in rows.values())
+                pool, limit = (("rejected_reserve", REJECTED_RESERVE)
+                               if normal_count >= LIMIT and DECISIONS.get(key)
+                               else ("automatic", LIMIT))
+            count = sum(("manual_reserve" if is_manual(r["chain"], r["address"])
+                         else r.get("admission_pool", "automatic")) == pool
+                        for r in rows.values())
+            if count >= limit:
                 state["capacity_skips"] += 1
+                skips = state.setdefault("capacity_skips_by_pool", {})
+                skips[pool] = skips.get(pool, 0) + 1
                 continue
+        else:
+            pool = rows[key].get("admission_pool", "automatic")
         m5 = (pair.get("txns") or {}).get("m5") or {}
         buys, sells = number(m5.get("buys")), number(m5.get("sells"))
+        # Cached responses retain their receipt time. Evaluation cannot rejuvenate them.
+        try:
+            received = datetime.fromisoformat(pair.get("_brain_received_at") or now.isoformat())
+            if received.tzinfo is None or received > now:
+                raise ValueError("invalid receipt")
+        except (ValueError, TypeError):
+            state["invalid_receipt_skips"] = state.get("invalid_receipt_skips", 0) + 1
+            continue
+        if key in rows and received <= datetime.fromisoformat(rows[key]["last"]["received_at"]):
+            continue
         created = number(pair.get("pairCreatedAt"))
-        age_minutes = (now.timestamp() - created / 1000) / 60 if created is not None and created > 0 else None
-        snapshot = {"received_at": now.isoformat(), "price": number(pair["priceUsd"]),
+        age_minutes = (received.timestamp() - created / 1000) / 60 if created is not None and created > 0 else None
+        snapshot = {"received_at": received.isoformat(), "evaluated_at": now.isoformat(), "price": number(pair["priceUsd"]),
                     "pair": pair["pairAddress"], "market_cap": cap, "liquidity": liquidity,
                     "buys5m": buys, "sells5m": sells,
                     "trades5m": buys + sells if buys is not None and sells is not None else None,
@@ -250,13 +289,16 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         if key not in rows:
             rows[key] = {"chain": chain, "address": address,
                          "symbol": pair["baseToken"].get("symbol"),
-                         "cohort": "manual_after_event" if manual else "automatic_prospective",
+                         "cohort": ("manual_after_event" if manual else
+                                    "automatic_rejected_overflow" if pool == "rejected_reserve"
+                                    else "automatic_prospective"),
+                         "admission_pool": pool,
                          "first": snapshot, "last": snapshot, "peak": snapshot,
                          "observations": 0, "pair_changes": 0, "max_observation_gap_seconds": 0}
         row = rows[key]
         if row.get("complete"):
             continue
-        gap = (now - datetime.fromisoformat(row["last"]["received_at"])).total_seconds()
+        gap = (received - datetime.fromisoformat(row["last"]["received_at"])).total_seconds()
         if gap < 0:
             raise ValueError("Observaciones fuera de orden; no sobrescribir")
         row["max_observation_gap_seconds"] = max(row["max_observation_gap_seconds"], gap)
@@ -268,23 +310,31 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         row["observed_price_change_pct"] = (snapshot["price"] / row["first"]["price"] - 1) * 100
         row["observed_peak_change_pct"] = (row["peak"]["price"] / row["first"]["price"] - 1) * 100
         row["observed_drawdown_from_peak_pct"] = (snapshot["price"] / row["peak"]["price"] - 1) * 100
-        elapsed = (now - datetime.fromisoformat(row["first"]["received_at"])).total_seconds()
+        elapsed = (received - datetime.fromisoformat(row["first"]["received_at"])).total_seconds()
         if elapsed >= HORIZON_SECONDS:
             row["complete"] = True
             row["completion"] = "first received observation after 72h; not exact horizon price"
     research_watches(state, selected, now)
+    state.setdefault("coverage_policy_history", [])
+    if not state["coverage_policy_history"] or state["coverage_policy_history"][-1]["version"] != "coverage-r2":
+        state["coverage_policy_history"].append({"version": "coverage-r2", "effective_at": now.isoformat(),
+            "automatic_limit": LIMIT, "rejected_reserve": REJECTED_RESERVE,
+            "manual_reserve": MANUAL_RESERVE, "automatic_watch_requests": 10,
+            "scope": "coverage and receipt timing only; no entry-policy change"})
     state["last_cycle_at"] = now.isoformat()
-    state["watch_cursor"] = state.get("watch_cursor", 0) + 10
+    state["watch_cursor"] = state.get("watch_cursor", 0) + 1
     state["limitations"] = "Received market snapshots; freshness unknown; sampled peaks; gaps and pair changes recorded; no trades, costs or net return. Manual cases excluded from automatic cohort. Missing quotes never become zero. Active capacity bounded; skips counted. Completed or 96h-unresolved automatic cases removed from active tracking; only IDs and aggregate completion counts retained; no fabricated final prices."
     with open(FILE + ".tmp", "w") as handle:
         json.dump(state, handle, indent=2, allow_nan=False)
     os.replace(FILE + ".tmp", FILE)
     print("AUDITORIA OPORTUNIDADES " + json.dumps({"tracked": len(rows), "capacity_skips": state["capacity_skips"],
           "retired": len(state['finished_tokens']),
+          "capacity_skips_by_pool": state.get("capacity_skips_by_pool", {}),
           "observed_this_cycle": sum(k in selected for k in rows), "no_trading_return": True}))
     for chain, address in sorted(MANUAL):
         row = rows.get(chain + ":" + address)
         if row:
             print("ESTUDIO OPORTUNIDAD " + json.dumps({k: row[k] for k in ("chain", "address", "symbol", "cohort", "first", "last", "observed_price_change_pct", "observed_peak_change_pct", "observed_drawdown_from_peak_pct")}, allow_nan=False))
+
 
 
