@@ -124,6 +124,26 @@ def market_screen(snapshot, age_minutes, max_age):
             for value, predicate, name in checks}
 
 
+def early_discovery_screen(snapshot, age_minutes):
+    """Research-only pre-spike alert; NEVER a buy signal or eligibility override."""
+    checks = [
+        (snapshot["liquidity"], lambda v: v >= 20000, "liquidity_20000"),
+        (snapshot["trades5m"], lambda v: v >= 40, "trades5m_40"),
+        (snapshot["change5m"], lambda v: 2 <= v <= 60, "momentum5m_2_60"),
+        (age_minutes, lambda v: 2 <= v <= 60, "pair_age_2_60"),
+    ]
+    gates = {name: "UNKNOWN" if value is None else "PASS" if predicate(value)
+             else "FAIL" for value, predicate, name in checks}
+    # Deliberately track rather than waive these two safety constraints.
+    gates["buy_ratio_60pct"] = ("UNKNOWN" if snapshot["buy_ratio5m"] is None
+                               else "PASS" if snapshot["buy_ratio5m"] >= .60 else "FAIL")
+    gates["change1h_max150"] = ("UNKNOWN" if snapshot["change1h"] is None
+                                else "PASS" if snapshot["change1h"] <= 150 else "FAIL")
+    return {"research_candidate": all(gates[k] == "PASS" for k in
+            ("liquidity_20000", "trades5m_40", "momentum5m_2_60", "pair_age_2_60")),
+            "checks": gates, "entry_authorized": False}
+
+
 def watch_targets(now=None):
     now = now or datetime.now(timezone.utc)
     state = read()
@@ -285,6 +305,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                     "data_freshness": "UNKNOWN", "execution_verified": False}
         snapshot["early_market_screens"] = {str(age): market_screen(snapshot, age_minutes, age)
                                             for age in (60, 1440)}
+        snapshot["pre_spike_research"] = early_discovery_screen(snapshot, age_minutes)
         snapshot["screen_scope"] = "Independent market gates only; excludes score, wallet risk, security, confirmation and executable quotes; not entry eligibility."
         if key not in rows:
             rows[key] = {"chain": chain, "address": address,
