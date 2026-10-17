@@ -144,6 +144,7 @@ jobs:
             fomo_paper_whale.json
             fomo_paper_whale_unipcs.json
             fomo_lab_candle_audit_r1.json
+            fomo_lab_liquidity_early_r1.json
             fomo_lab_early_control_r1.json
             fomo_lab_early_velas_r1.json
             fomo_lab_impulse_control_r1.json
