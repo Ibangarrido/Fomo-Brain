@@ -1885,6 +1885,7 @@ def main(refresh_events=True):
                         entry_mode="early", entry_guard=candle_guard(True, "early", "V10-r3 EARLY + VELAS"))
     except Exception as exc:
         print("V10-r3 ERROR: " + str(exc) + "; V10 historicas permanecen separadas")
+    # PAPER-only liquidity experiment; V10-r3 entry rules remain unchanged.
     if os.getenv("BRAIN_LIQUIDITY_LAB", "1") == "1":
         try:
             from candle_lab import guard as candle_guard
