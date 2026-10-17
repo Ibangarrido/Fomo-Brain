@@ -2119,11 +2119,16 @@ def refresh_open_positions(stop_event=None):
         from continuation_lab import ARMS
         for arm, (path, mode, ratio) in ARMS.items():
             wallets.append((path, "LAB CONTINUATION " + arm, mode, ratio, False))
+    watchdog_started = time.monotonic()
+    watchdog_deferred = []
+    watchdog_checked = 0
     for path, label, mode, ratio, protect in wallets:
         if stop_event is not None and stop_event.is_set():
             break
+        watchdog_checked += 1
         lock = wallet_lock(path)
         if not lock.acquire(blocking=False):
+            watchdog_deferred.append(label)
             print(f"WATCHDOG POSPUESTO {label}: transaccion de la misma cartera activa", flush=True)
             continue
         try:
@@ -2143,6 +2148,14 @@ def refresh_open_positions(stop_event=None):
             print(f"V10 SALIDAS ERROR {label}: {exc}", flush=True)
         finally:
             lock.release()
+    print("WATCHDOG APLAZAMIENTOS " + json.dumps({
+        "version": "watchdog-defer-audit-r1",
+        "checked": watchdog_checked,
+        "deferred_count": len(watchdog_deferred),
+        "deferred_labels": watchdog_deferred,
+        "elapsed_seconds": round(time.monotonic() - watchdog_started, 3),
+        "recovered_later": None,
+    }, ensure_ascii=False), flush=True)
 
 
 def finish_exit_window(started):
