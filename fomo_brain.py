@@ -1007,7 +1007,7 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 
 @measure_wallet_latency
 @wallet_transaction
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False, require_liquidity_growth=False):
     from m4_lab import RECOVERY, is_quarantined
     from continuation_lab import ARMS, FILES as continuation_files
     rebound_files = {"fomo_lab_rebound_control_r1.json", "fomo_lab_rebound_extended_r1.json"}
@@ -1289,6 +1289,11 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 notes.append(f"DESCARTE {key} | cotizacion se aleja >5% de la señal")
                 continue
             reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes, previous_observation=previous_observation)
+            if not reason and require_liquidity_growth:
+                old_liq = numero((previous_observation or {}).get("liquidity"))
+                new_liq = numero(fresh.get("liquidity"))
+                if old_liq <= 0 or new_liq < old_liq * 1.05:
+                    reason = "lab liquidity r1: liquidez no crece >=5% entre lecturas"
             if not reason and entry_guard is not None:
                 reason = entry_guard(fresh)
             if reason:
@@ -1880,6 +1885,14 @@ def main(refresh_events=True):
                         entry_mode="early", entry_guard=candle_guard(True, "early", "V10-r3 EARLY + VELAS"))
     except Exception as exc:
         print("V10-r3 ERROR: " + str(exc) + "; V10 historicas permanecen separadas")
+    if os.getenv("BRAIN_LIQUIDITY_LAB", "1") == "1":
+        try:
+            from candle_lab import guard as candle_guard
+            simular_cartera(ranking, "fomo_lab_liquidity_early_r1.json", "LAB EARLY LIQUIDITY +5% r1",
+                            confirm=True, entry_mode="early", require_liquidity_growth=True,
+                            entry_guard=candle_guard(True, "early", "LAB EARLY LIQUIDITY +5% r1"))
+        except Exception as exc:
+            print("LAB LIQUIDITY ERROR: " + str(exc) + "; V10-r3 intacta")
     print("V10 IMPULSO: cartera independiente; no sumar con EARLY. Holders SIN FUENTE VERIFICADA.")
     simular_cartera(ranking, V10_IMPULSE_FILE, "V10 IMPULSO", confirm=True, entry_mode="impulse")
     if os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
@@ -2076,6 +2089,8 @@ def refresh_open_positions(stop_event=None):
             for arm in ("control", "protect"):
                 wallets.append((f"fomo_lab_protect_{mode}_{arm}_r1.json",
                                 f"LAB PROTECT {mode.upper()} {arm.upper()} r1", mode, .60, arm == "protect"))
+    if os.getenv("BRAIN_LIQUIDITY_LAB", "1") == "1":
+        wallets.append(("fomo_lab_liquidity_early_r1.json", "LAB EARLY LIQUIDITY +5% r1", "early", .60, False))
     JSON_CACHE.clear()  # Fresh quotes shared across wallets within this tick only.
     if os.getenv("BRAIN_M4_LAB", "0") == "1":
         from m4_lab import CONTROL, RECOVERY
