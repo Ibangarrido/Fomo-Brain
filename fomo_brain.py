@@ -2134,12 +2134,12 @@ def refresh_open_positions(stop_event=None):
             watchdog_pending.setdefault(path, time.monotonic())
             print(f"WATCHDOG POSPUESTO {label}: transaccion de la misma cartera activa", flush=True)
             continue
-        if path in watchdog_pending:
-            watchdog_recovered.append({"label": label, "delay_seconds": round(max(0, time.monotonic() - watchdog_pending.pop(path)), 3)})
         try:
             with open(path) as handle:
                 state = json.load(handle)
             if not state.get("positions"):
+                if path in watchdog_pending:
+                    watchdog_recovered.append({"label": label, "delay_seconds": round(max(0, time.monotonic() - watchdog_pending.pop(path)), 3), "status": "no_open_positions"})
                 continue
             print(f"V10 SALIDAS {'WATCHDOG 3s objetivo' if EXIT_WATCHDOG is not None else '15s'} | {label}", flush=True)
             simular_cartera([], path, label, confirm=True, entry_mode=mode,
@@ -2147,6 +2147,8 @@ def refresh_open_positions(stop_event=None):
                             quarantine_m4=os.path.basename(path) in {"fomo_lab_m4_recovery_r1.json", "fomo_lab_rebound_control_r1.json", "fomo_lab_rebound_extended_r1.json"},
                             max_pair_age_minutes=1440 if os.path.basename(path) == "fomo_lab_rebound_extended_r1.json" else 60,
                             staged_targets=os.path.basename(path) == "fomo_lab_targets_staged_r1.json")
+            if path in watchdog_pending:
+                watchdog_recovered.append({"label": label, "delay_seconds": round(max(0, time.monotonic() - watchdog_pending.pop(path)), 3), "status": "exit_check_completed_quote_not_verified"})
         except FileNotFoundError:
             continue
         except Exception as exc:
