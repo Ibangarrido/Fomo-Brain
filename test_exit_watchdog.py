@@ -478,3 +478,37 @@ if __name__ == "__main__":
 
 
 
+
+
+class WatchdogRecoveryAuditTests(unittest.TestCase):
+    def test_deferred_wallet_is_not_recovered_when_exit_check_fails(self):
+        import contextlib
+        import io
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            wallet = str(Path(directory) / "wallet.json")
+            Path(wallet).write_text(json.dumps({"positions": [{"address": "fake"}]}))
+            lock = wallet_lock(wallet)
+            with patch.object(brain, "V10_FILE", wallet), patch.object(brain, "V10_IMPULSE_FILE", str(Path(directory) / "missing1")), patch.object(brain, "V10_R3_FILE", str(Path(directory) / "missing2")), patch.dict(os.environ, {"BRAIN_LIQUIDITY_LAB": "0", "BRAIN_CANDLE_LAB": "0", "BRAIN_RATIO_LAB": "0", "BRAIN_PROTECT_LAB": "0", "BRAIN_M4_LAB": "0", "BRAIN_REBOUND_LAB": "0", "BRAIN_VOLUME_LAB": "0", "BRAIN_TARGETS_LAB": "0", "BRAIN_CONTINUATION_LAB": "0"}):
+                if hasattr(brain.refresh_open_positions, "_deferred_since"):
+                    del brain.refresh_open_positions._deferred_since
+                with contextlib.redirect_stdout(io.StringIO()):
+                    lock.acquire()
+                    try:
+                        brain.refresh_open_positions()
+                    finally:
+                        lock.release()
+                with patch.object(brain, "simular_cartera", side_effect=RuntimeError("quote unavailable")):
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        brain.refresh_open_positions()
+                reports = [json.loads(line.split("WATCHDOG APLAZAMIENTOS ", 1)[1]) for line in out.getvalue().splitlines() if "WATCHDOG APLAZAMIENTOS " in line]
+                self.assertEqual(reports[-1]["recovered_count"], 0)
+                self.assertEqual(reports[-1]["pending_count"], 1)
+                with patch.object(brain, "simular_cartera", return_value=None):
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        brain.refresh_open_positions()
+                report = json.loads(next(line.split("WATCHDOG APLAZAMIENTOS ", 1)[1] for line in out.getvalue().splitlines() if "WATCHDOG APLAZAMIENTOS " in line))
+                self.assertEqual(report["recovered_count"], 1)
+                self.assertEqual(report["recovered"][0]["status"], "exit_check_completed_quote_not_verified")
+                del brain.refresh_open_positions._deferred_since
