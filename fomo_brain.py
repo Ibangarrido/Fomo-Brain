@@ -2122,6 +2122,8 @@ def refresh_open_positions(stop_event=None):
     watchdog_started = time.monotonic()
     watchdog_deferred = []
     watchdog_checked = 0
+    watchdog_recovered = []
+    watchdog_pending = getattr(refresh_open_positions, "_deferred_since", {})
     for path, label, mode, ratio, protect in wallets:
         if stop_event is not None and stop_event.is_set():
             break
@@ -2129,8 +2131,11 @@ def refresh_open_positions(stop_event=None):
         lock = wallet_lock(path)
         if not lock.acquire(blocking=False):
             watchdog_deferred.append(label)
+            watchdog_pending.setdefault(path, time.monotonic())
             print(f"WATCHDOG POSPUESTO {label}: transaccion de la misma cartera activa", flush=True)
             continue
+        if path in watchdog_pending:
+            watchdog_recovered.append({"label": label, "delay_seconds": round(max(0, time.monotonic() - watchdog_pending.pop(path)), 3)})
         try:
             with open(path) as handle:
                 state = json.load(handle)
@@ -2148,13 +2153,18 @@ def refresh_open_positions(stop_event=None):
             print(f"V10 SALIDAS ERROR {label}: {exc}", flush=True)
         finally:
             lock.release()
+    refresh_open_positions._deferred_since = watchdog_pending
     print("WATCHDOG APLAZAMIENTOS " + json.dumps({
-        "version": "watchdog-defer-audit-r1",
+        "version": "watchdog-defer-audit-r2",
         "checked": watchdog_checked,
         "deferred_count": len(watchdog_deferred),
         "deferred_labels": watchdog_deferred,
         "elapsed_seconds": round(time.monotonic() - watchdog_started, 3),
-        "recovered_later": None,
+        "recovered_count": len(watchdog_recovered),
+        "recovered": watchdog_recovered,
+        "pending_count": len(watchdog_pending),
+        "pending_labels": [label for path, label, *_ in wallets if path in watchdog_pending],
+        "scope": "in-process only; no evidence of cross-run recovery",
     }, ensure_ascii=False), flush=True)
 
 
