@@ -94,6 +94,7 @@ jobs:
           BRAIN_TARGETS_LAB: "1"
           BRAIN_CONTINUATION_LAB: "1"
           BRAIN_EXIT_WATCHDOG: "1"
+          BRAIN_V11_NET_LAB: "1"
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: |
@@ -146,6 +147,8 @@ jobs:
             fomo_paper_whale_unipcs.json
             fomo_lab_candle_audit_r1.json
             fomo_lab_liquidity_early_r1.json
+            fomo_lab_v11_control_r1.json
+            fomo_lab_v11_net_r1.json
             fomo_lab_early_control_r1.json
             fomo_lab_early_velas_r1.json
             fomo_lab_impulse_control_r1.json
