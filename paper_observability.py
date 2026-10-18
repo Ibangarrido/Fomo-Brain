@@ -8,6 +8,8 @@ from math import isfinite
 
 def _number(value):
     try:
+        if isinstance(value, bool):
+            return None
         result = float(value)
     except (ValueError, TypeError):
         return None
@@ -30,7 +32,7 @@ def observe_rejection(candidate_id, rejected_at, reference_price, observations):
             stamp = observation.get("timestamp")
             price = _number(observation.get("price"))
             if isinstance(stamp, datetime) and stamp.tzinfo is not None and price is not None:
-                if stamp.timestamp() >= target:
+                if target <= stamp.timestamp() <= target + 120:
                     eligible.append((stamp.timestamp(), price))
         if eligible:
             _, price = min(eligible)
@@ -45,6 +47,7 @@ def net_paper_exit(quantity, entry_price, exit_price, entry_fee=0, exit_fee=0, n
     values = [quantity, entry_price, exit_price]
     if any(_number(x) is None for x in values):
         return {"status": "unknown", "net_pnl": None}
+    quantity, entry_price, exit_price = map(float, values)
     costs = [entry_fee, exit_fee, network_cost]
     if any(not isinstance(x, (int, float)) or not isfinite(x) or x < 0 for x in costs):
         return {"status": "unknown", "net_pnl": None}
