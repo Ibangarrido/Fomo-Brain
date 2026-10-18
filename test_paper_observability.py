@@ -17,6 +17,16 @@ class PaperObservabilityTests(unittest.TestCase):
         self.assertIsNone(net_paper_exit(1, 10, None)["net_pnl"])
         self.assertEqual(net_paper_exit(1, 10, 12, 0.5, 0.5, 0.25)["net_pnl"], 0.75)
 
+    def test_stale_forward_quote_is_unknown(self):
+        t = datetime(2026, 10, 18, tzinfo=timezone.utc)
+        r = observe_rejection("mint1", t, 100, [{"timestamp": t + timedelta(minutes=45), "price": 200}])
+        self.assertIsNone(r["forward_returns_pct"]["5"])
+        self.assertIsNone(r["forward_returns_pct"]["15"])
+
+    def test_numeric_string_paper_prices(self):
+        self.assertEqual(net_paper_exit("1", "10", "12")["net_pnl"], 2)
+        self.assertIsNone(net_paper_exit(True, 10, 12)["net_pnl"])
+
     def test_reject_naive_datetime(self):
         with self.assertRaises(ValueError):
             observe_rejection("mint1", datetime(2026, 1, 1), 100, [])
