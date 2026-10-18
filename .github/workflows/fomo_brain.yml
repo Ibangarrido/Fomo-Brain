@@ -9,7 +9,7 @@ on:
     - cron: "7,22,37,52 * * * *"
 
 concurrency:
-  group: fomo-brain-state
+  group: fomo-brain-state-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
