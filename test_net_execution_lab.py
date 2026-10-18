@@ -17,6 +17,15 @@ class NetExecutionLabTests(unittest.TestCase):
     def test_nan_and_negative_cost_rejected(self):
         self.assertFalse(assess_net_entry(10, float("nan"), liquidity_eur=10000)["allowed"])
         self.assertFalse(assess_net_entry(10, 20, fee_per_side=-0.1, liquidity_eur=10000)["allowed"])
+    def test_v10_multiplicative_cost_parity(self):
+        expected = ((1.15 / ((1.01) * (1.02))) * (0.99 * 0.98) - 1) * 100
+        x = assess_net_entry(10, 15, liquidity_eur=10000)
+        self.assertAlmostEqual(x["net_pct"], expected, places=4)
+    def test_independent_scenarios_do_not_mutate_inputs(self):
+        x = assess_net_entry(5, 15, liquidity_eur=10000)
+        y = assess_net_entry(5, 15, liquidity_eur=10000)
+        self.assertEqual(x, y)
+        self.assertFalse(x["execution_verified"])
     def test_net_below_gross(self):
         x = assess_net_entry(10, 20, liquidity_eur=10000)
         self.assertLess(x["net_pct"], 20)
