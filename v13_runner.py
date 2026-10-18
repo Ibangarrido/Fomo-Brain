@@ -1,0 +1,97 @@
+"""V13 scheduled PAPER radar. Public DEX Screener discovery, no wallet or trading."""
+import json
+import os
+import time
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone, timedelta
+from v13_hunter import scan
+
+STATE = "v13_history.json"
+OUTPUT = "v13_report.json"
+SEARCHES = ("pump", "meme", "solana", "graduated")
+WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),)
+MAX_HISTORY = 3000
+
+def fetch(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "Fomo-Brain-V13-Paper/1.0", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=12) as response:
+        return json.load(response)
+
+def discover():
+    pairs, errors = {}, []
+    def add(p, source):
+        if not isinstance(p, dict):
+            return
+        chain, pool = p.get("chainId"), p.get("pairAddress")
+        if chain == "solana" and pool:
+            key = (chain, pool)
+            if key not in pairs:
+                pairs[key] = dict(p, _v13_source=source)
+    for term in SEARCHES:
+        try:
+            url = "https://api.dexscreener.com/latest/dex/search/?q=" + urllib.parse.quote(term)
+            for p in (fetch(url).get("pairs") or []):
+                add(p, "search:" + term)
+        except Exception as exc:
+            errors.append({"source": "search:" + term, "error": type(exc).__name__})
+        time.sleep(.3)
+    for endpoint in ("token-profiles/latest/v1", "token-profiles/recent-updates/v1"):
+        try:
+            profiles = fetch("https://api.dexscreener.com/" + endpoint)
+            for p in profiles[:20] if isinstance(profiles, list) else []:
+                if p.get("chainId") != "solana" or not p.get("tokenAddress"):
+                    continue
+                url = "https://api.dexscreener.com/token-pairs/v1/solana/" + urllib.parse.quote(p["tokenAddress"])
+                for found in fetch(url) or []:
+                    add(found, "profile:" + endpoint)
+                time.sleep(.3)
+        except Exception as exc:
+            errors.append({"source": endpoint, "error": type(exc).__name__})
+    for chain, address in WATCH:
+        try:
+            url = "https://api.dexscreener.com/token-pairs/v1/" + chain + "/" + urllib.parse.quote(address)
+            for found in fetch(url) or []:
+                add(found, "watch")
+        except Exception as exc:
+            errors.append({"source": "watch", "error": type(exc).__name__})
+    return list(pairs.values()), errors
+
+def main():
+    now = datetime.now(timezone.utc)
+    pairs, errors = discover()
+    observations = scan(pairs, now)
+    for row, pair in zip(observations, (p for p in pairs if p.get("chainId") and p.get("pairAddress") and (p.get("baseToken") or {}).get("address"))):
+        row["source"] = pair.get("_v13_source", "unknown")
+    history = []
+    if os.path.exists(STATE):
+        try:
+            with open(STATE) as handle:
+                previous = json.load(handle)
+            if isinstance(previous, list):
+                history = [r for r in previous if isinstance(r, dict) and
+                           isinstance(r.get("received_at"), str) and
+                           datetime.fromisoformat(r["received_at"]) >= now - timedelta(hours=24)]
+        except (OSError, ValueError, TypeError):
+            errors.append({"source": "history", "error": "UNREADABLE"})
+    # Keep all observations, including rejects; never infer a trade from an API receipt.
+    history = (history + observations)[-MAX_HISTORY:]
+    with open(STATE + ".tmp", "w") as f:
+        json.dump(history, f, indent=2, allow_nan=False)
+    os.replace(STATE + ".tmp", STATE)
+    report = {"version": "v13-hunter-r1", "at": now.isoformat(), "paper_only": True,
+              "execution_verified": False, "trades": 0, "pairs_discovered": len(pairs),
+              "observed": len(observations), "alerts": sum(r["discovery_alert"] for r in observations),
+              "market_gate_passes": sum(r["market_gates_pass"] for r in observations),
+              "history_observations_24h": len(history),
+              "source_coverage": "partial: DEX search + token profiles + manual watch; not a full launch stream",
+              "errors": errors,
+              "top_alerts": sorted((r for r in observations if r["discovery_alert"]),
+                                   key=lambda r: (r["market_gates_pass"], r["trades_5m"] or 0),
+                                   reverse=True)[:30]}
+    with open(OUTPUT, "w") as f:
+        json.dump(report, f, indent=2, allow_nan=False)
+    print(json.dumps({k: v for k, v in report.items() if k != "top_alerts"}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    main()
