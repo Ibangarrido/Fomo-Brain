@@ -16,13 +16,13 @@ def assess_net_entry(budget_eur, expected_move_pct, fee_per_side=0.01,
         return {"allowed": False, "reason": "invalid_or_missing_inputs", "net_pct": None}
     if budget_eur <= 0 or fee_per_side < 0 or slippage_per_side < 0 or extra_exit_impact_pct < 0 or max_position_liquidity_pct <= 0:
         return {"allowed": False, "reason": "invalid_cost_or_budget", "net_pct": None}
-    if fee_per_side + slippage_per_side >= 1 or extra_exit_impact_pct >= 100 or expected_move_pct <= -100:
+    if fee_per_side >= 1 or slippage_per_side >= 1 or extra_exit_impact_pct >= 100 or expected_move_pct <= -100:
         return {"allowed": False, "reason": "invalid_execution_scenario", "net_pct": None}
     if liquidity_eur is None or isinstance(liquidity_eur, bool) or not isinstance(liquidity_eur, (int, float)) or not math.isfinite(liquidity_eur) or liquidity_eur <= 0:
         return {"allowed": False, "reason": "liquidity_unverified", "net_pct": None}
     if budget_eur > liquidity_eur * max_position_liquidity_pct:
         return {"allowed": False, "reason": "position_too_large_for_liquidity", "net_pct": None}
-    entry_units_factor = 1 / (1 + fee_per_side + slippage_per_side)
+    entry_units_factor = 1 / ((1 + fee_per_side) * (1 + slippage_per_side))
     exit_factor = (1 - fee_per_side) * (1 - slippage_per_side) * (1 - extra_exit_impact_pct / 100)
     net_pct = ((1 + expected_move_pct / 100) * entry_units_factor * exit_factor - 1) * 100
     return {"allowed": net_pct >= minimum_net_pct, "reason": "passes_net_scenario" if net_pct >= minimum_net_pct else "insufficient_net_edge",
