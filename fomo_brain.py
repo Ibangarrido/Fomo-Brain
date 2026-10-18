@@ -1346,7 +1346,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 slippage_per_side=PAPER_SLIPPAGE,
                 liquidity_eur=entry_liquidity if confirm else token.get("liquidity"))
             if not net_scenario["allowed"]:
-                notes.append(f"DESCARTE V11 NET {key} | {net_scenario['reason']} | "
+                notes.append(f"DESCARTE {key} | V11 NET: {net_scenario['reason']} | "
                              + json.dumps(net_scenario, ensure_ascii=False))
                 continue
         budget = entry_budget
@@ -1473,6 +1473,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     with open(paper_file + ".tmp", "w") as handle:
         json.dump(state, handle, indent=2)
     os.replace(paper_file + ".tmp", paper_file)
+    if (ranking and basename in {"fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json"}
+            and os.getenv("BRAIN_V12_OBSERVABILITY", "0") == "1"):
+        from v12_lab import record_cycle
+        record_cycle(label, ranking, notes)
     if ranking and os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         from opportunity_audit import record_decisions
         record_decisions(label, notes)
@@ -1802,6 +1806,16 @@ def descubrir_pares():
     return pairs, sources
 
 
+def v12_quote(token):
+    """Exact-pair research quote; a provider receipt never proves a recent trade."""
+    original = dict(token)
+    price, _, pair = cotizar_posicion(dict(token))
+    if (pair.get("chainId") != original["chain"] or pair.get("pairAddress") != original["pair"]
+            or (pair.get("baseToken") or {}).get("address") != original["address"]):
+        raise ValueError("V12 rejects pair migration or identity mismatch")
+    return dict(original, price=price, received_at=pair.get("_brain_received_at"))
+
+
 def main(refresh_events=True):
     from candle_lab import begin_cycle
     begin_cycle()
@@ -1985,6 +1999,9 @@ def main(refresh_events=True):
             observe(pairs, sources, discovery_rejections=REJECTIONS)
         except Exception as exc:
             print("AUDITORIA OPORTUNIDADES ERROR: " + str(exc) + "; carteras conservadas")
+    if os.getenv("BRAIN_V12_OBSERVABILITY", "0") == "1":
+        from v12_lab import run as run_v12
+        run_v12(v12_quote)
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
@@ -2116,6 +2133,10 @@ def refresh_open_positions(stop_event=None):
                                 f"LAB PROTECT {mode.upper()} {arm.upper()} r1", mode, .60, arm == "protect"))
     if os.getenv("BRAIN_LIQUIDITY_LAB", "1") == "1":
         wallets.append(("fomo_lab_liquidity_early_r1.json", "LAB EARLY LIQUIDITY +5% r1", "early", .60, False))
+    if os.getenv("BRAIN_V11_NET_LAB", "0") == "1":
+        for path, label in (("fomo_lab_v11_control_r1.json", "V11 CONTROL 100 EUR"),
+                            ("fomo_lab_v11_net_r1.json", "V11 NET 100 EUR")):
+            wallets.append((path, label, "early", .60, False))
     JSON_CACHE.clear()  # Fresh quotes shared across wallets within this tick only.
     if os.getenv("BRAIN_M4_LAB", "0") == "1":
         from m4_lab import CONTROL, RECOVERY
