@@ -5,14 +5,16 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
-from v13_hunter import scan, trend_observation, continuation_observation
+from v13_hunter import scan, trend_observation, continuation_observation, mature_continuation_observation
 
 STATE = "v13_history.json"
 OUTPUT = "v13_report.json"
 SEARCHES = ("pump", "meme", "solana", "graduated")
 WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
          ("solana", "8Vb5f7enGjp2uHuRqh1F5AVoXoXrYVZHwuw2orjepump"),
-         ("solana", "HqmFi85adLD8BQA7en1HfajdAfzVFps5REgQaYuw6Ax8"))
+         ("solana", "HqmFi85adLD8BQA7en1HfajdAfzVFps5REgQaYuw6Ax8"),
+         ("solana", "w16qoALFz66AEdRJM56jAAionWb5FhVyjGjznrYpump"),
+         ("solana", "87sEXKPMBeoryaqFQQnq1Yq6mUvjeNzhiFGxJbRjpump"))
 MAX_HISTORY = 12000
 MAX_REVISIT = 18
 
@@ -76,7 +78,7 @@ def main():
     for r in prior:
         key = (r.get("chain"), r.get("address"))
         if key[0] == "solana" and isinstance(key[1], str) and key[1] and (
-                r.get("discovery_alert") or r.get("trend_watch") or r.get("continuation_watch")):
+                r.get("discovery_alert") or r.get("trend_watch") or r.get("continuation_watch") or r.get("mature_watch")):
             candidates[key] = r.get("received_at", "")
     extra_watch = tuple(k for k, _ in sorted(candidates.items(), key=lambda item: item[1], reverse=True)[:MAX_REVISIT])
     pairs, errors = discover(extra_watch)
@@ -96,18 +98,20 @@ def main():
         except (OSError, ValueError, TypeError):
             errors.append({"source": "history", "error": "UNREADABLE"})
     # Enrich using only PREVIOUS snapshots. No lookahead or invented OHLC candles.
-    observations = [continuation_observation(trend_observation(row, history), history) for row in observations]
+    observations = [mature_continuation_observation(continuation_observation(trend_observation(row, history), history), history) for row in observations]
     # Keep all observations, including rejects; never infer a trade from an API receipt.
     history = (history + observations)[-MAX_HISTORY:]
     with open(STATE + ".tmp", "w") as f:
         json.dump(history, f, indent=2, allow_nan=False)
     os.replace(STATE + ".tmp", STATE)
-    report = {"version": "v13-hunter-r4-persistent-revisit", "at": now.isoformat(), "paper_only": True,
+    report = {"version": "v13-hunter-r5-age-segmented-research", "at": now.isoformat(), "paper_only": True,
               "execution_verified": False, "trades": 0, "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch), "alerts": sum(r["discovery_alert"] for r in observations),
               "market_gate_passes": sum(r["market_gates_pass"] for r in observations),
               "trend_4h_watches": sum(r["trend_watch"] for r in observations),
               "continuation_watches": sum(r["continuation_watch"] for r in observations),
+              "mature_1_6h_watches": sum(r["mature_watch"] for r in observations),
+              "mature_1_6h_sufficient_data": sum(r["mature_data_sufficient"] for r in observations),
               "continuation_sufficient_data": sum(r["continuation_data_sufficient"] for r in observations),
               "research_buy_pressure_55pct": sum(r["continuation_buy_pressure_research"] for r in observations),
               "trend_4h_sufficient_data": sum(r["trend_data_sufficient"] for r in observations),
@@ -115,6 +119,8 @@ def main():
               "history_observations_24h": len(history),
               "source_coverage": "partial: DEX search + token profiles + manual watch; not a full launch stream",
               "errors": errors,
+              "top_mature_continuations": sorted((r for r in observations if r["mature_watch"]),
+                                                 key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
               "top_continuations": sorted((r for r in observations if r["continuation_watch"]),
                                           key=lambda r: r["continuation_relative_volume"] or 0, reverse=True)[:30],
               "top_trends": sorted((r for r in observations if r["trend_watch"]),
@@ -124,7 +130,7 @@ def main():
                                    reverse=True)[:30]}
     with open(OUTPUT, "w") as f:
         json.dump(report, f, indent=2, allow_nan=False)
-    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends")}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations")}, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
