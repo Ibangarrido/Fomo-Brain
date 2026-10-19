@@ -3,7 +3,7 @@ import json
 import math
 from datetime import datetime, timezone
 
-VERSION = "v13-hunter-r3-continuation-observer"
+VERSION = "v13-hunter-r5-age-segmented-research"
 MAX_EXPOSURE_EUR = 10.0
 
 
@@ -179,4 +179,55 @@ def continuation_observation(row, previous=()):
                                       "HISTORIAL_INSUFICIENTE" if not result["continuation_data_sufficient"] else
                                       "SIN_CONFIRMACION")
     result["continuation_entry_authorized"] = False
+    return result
+
+
+def mature_continuation_observation(row, previous=()):
+    """1–6h follow-through watch, NOT an entry signal; independent of launch age gate.
+
+    Use previous sampled prices only. A pump already above +150% in 1h is
+    observed for research but cannot produce a qualified mature watch.
+    """
+    from datetime import datetime, timedelta
+    result = dict(row)
+    now = datetime.fromisoformat(row["received_at"])
+    age = finite(row.get("pair_age_minutes"))
+    price = finite(row.get("price_usd"))
+    cap = finite(row.get("market_cap_usd"))
+    liquidity = finite(row.get("liquidity_usd"))
+    trades = finite(row.get("trades_5m"))
+    ratio = finite(row.get("buy_ratio_5m"))
+    change5 = finite(row.get("change_5m_pct"))
+    change1h = finite(row.get("change_1h_pct"))
+    samples = []
+    for item in previous:
+        if item.get("chain") != row.get("chain") or item.get("address") != row.get("address"):
+            continue
+        try:
+            t = datetime.fromisoformat(item["received_at"])
+            p = finite(item.get("price_usd"))
+            if now-timedelta(minutes=75) <= t <= now-timedelta(minutes=10) and p is not None and p > 0:
+                samples.append((t, p))
+        except (KeyError, TypeError, ValueError):
+            continue
+    samples.sort()
+    prior_high = max((p for _, p in samples), default=None)
+    # At least two separate observations and >=10m time coverage are required.
+    enough = len(samples) >= 2 and (samples[-1][0]-samples[0][0]).total_seconds() >= 600
+    breakout = bool(enough and price is not None and price > prior_high*1.01)
+    age_ok = age is not None and 60 < age <= 360
+    safety = (cap is not None and 0 < cap <= 2000000 and
+              liquidity is not None and liquidity >= 20000 and
+              trades is not None and trades >= 40 and
+              ratio is not None and ratio >= .60 and
+              change5 is not None and 0 < change5 <= 25 and
+              change1h is not None and change1h <= 150)
+    result["mature_strategy"] = "CONTINUACION_1_6H"
+    result["mature_data_sufficient"] = enough
+    result["mature_prior_high_usd"] = prior_high
+    result["mature_watch"] = bool(age_ok and breakout and safety)
+    result["mature_signal"] = ("VIGILAR_CONTINUACION_1_6H" if result["mature_watch"] else
+                               "HISTORIAL_INSUFICIENTE" if not enough else
+                               "SIN_CONFIRMACION")
+    result["mature_entry_authorized"] = False
     return result
