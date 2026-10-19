@@ -3,7 +3,7 @@ import json
 import math
 from datetime import datetime, timezone
 
-VERSION = "v13-hunter-r1"
+VERSION = "v13-hunter-r2-trend-observer"
 MAX_EXPOSURE_EUR = 10.0
 
 
@@ -29,6 +29,7 @@ def observe(pair, now=None):
     volume = finite((pair.get("volume") or {}).get("m5"))
     changes = pair.get("priceChange") or {}
     ch5, ch1h = finite(changes.get("m5")), finite(changes.get("h1"))
+    ch6, ch24 = finite(changes.get("h6")), finite(changes.get("h24"))
     tx = (pair.get("txns") or {}).get("m5") or {}
     buys, sells = finite(tx.get("buys")), finite(tx.get("sells"))
     trades = buys + sells if buys is not None and sells is not None else None
@@ -57,6 +58,7 @@ def observe(pair, now=None):
         "price_usd": finite(pair.get("priceUsd")), "liquidity_usd": liquidity,
         "market_cap_usd": cap, "volume_5m_usd": volume,
         "change_5m_pct": ch5, "change_1h_pct": ch1h,
+        "change_6h_pct": ch6, "change_24h_pct": ch24,
         "trades_5m": trades, "buy_ratio_5m": ratio, "pair_age_minutes": age,
         "discovery_alert": bool(trades is not None and trades >= 10 and
                                 ch5 is not None and ch5 > 0),
@@ -81,3 +83,47 @@ def report(pairs, now=None):
             "observed": len(rows), "discovery_alerts": sum(r["discovery_alert"] for r in rows),
             "market_gate_passes": sum(r["market_gates_pass"] for r in rows),
             "signals": rows}
+
+
+def trend_observation(row, previous=()):
+    """Research-only 4h observation from timestamped snapshots; never fake OHLC candles.
+
+    6h provider change is a *proxy*, not a 4h candle. A 4h direction can only
+    be calculated once >=4 hours of distinct valid historical observations exist.
+    """
+    from datetime import datetime, timedelta
+    result = dict(row)
+    now = datetime.fromisoformat(row["received_at"])
+    mint, chain = row["address"], row["chain"]
+    samples = []
+    for item in previous:
+        if item.get("address") != mint or item.get("chain") != chain:
+            continue
+        try:
+            t = datetime.fromisoformat(item["received_at"])
+            p = finite(item.get("price_usd"))
+            if p is not None and p > 0 and now-timedelta(hours=6) <= t < now:
+                samples.append((t, p))
+        except (KeyError, TypeError, ValueError):
+            continue
+    samples.sort(key=lambda x: x[0])
+    price = finite(row.get("price_usd"))
+    baseline = [(t, p) for t, p in samples if now-timedelta(hours=5) <= t <= now-timedelta(hours=4)]
+    change4h = (price / baseline[-1][1] - 1) * 100 if baseline and price is not None and price > 0 else None
+    # 15m and 5m confirmations require actual observations, not 6h proxies.
+    recent15 = [(t,p) for t,p in samples if now-timedelta(minutes=20) <= t <= now-timedelta(minutes=10)]
+    change15 = (price/recent15[-1][1]-1)*100 if recent15 and price is not None and price > 0 else None
+    rising4h = change4h is not None and change4h > 0
+    confirming15 = change15 is not None and change15 > 0
+    confirming5 = row.get("change_5m_pct") is not None and 0 < row["change_5m_pct"] <= 25
+    result["strategy"] = "TENDENCIA_4H_ENTRADA_5M"
+    result["trend_4h_pct_observed"] = round(change4h, 4) if change4h is not None else None
+    result["confirmation_15m_pct_observed"] = round(change15, 4) if change15 is not None else None
+    result["trend_6h_pct_provider_proxy"] = row.get("change_6h_pct")
+    result["trend_data_sufficient"] = change4h is not None and change15 is not None
+    result["trend_watch"] = bool(rising4h and confirming15 and confirming5)
+    result["trend_signal"] = ("VIGILAR_TENDENCIA" if result["trend_watch"] else
+                              "HISTORIAL_INSUFICIENTE" if not result["trend_data_sufficient"] else
+                              "SIN_CONFIRMACION")
+    result["trend_entry_authorized"] = False
+    return result
