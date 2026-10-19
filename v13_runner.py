@@ -13,14 +13,15 @@ SEARCHES = ("pump", "meme", "solana", "graduated")
 WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
          ("solana", "8Vb5f7enGjp2uHuRqh1F5AVoXoXrYVZHwuw2orjepump"),
          ("solana", "HqmFi85adLD8BQA7en1HfajdAfzVFps5REgQaYuw6Ax8"))
-MAX_HISTORY = 3000
+MAX_HISTORY = 12000
+MAX_REVISIT = 18
 
 def fetch(url):
     req = urllib.request.Request(url, headers={"User-Agent": "Fomo-Brain-V13-Paper/1.0", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=12) as response:
         return json.load(response)
 
-def discover():
+def discover(extra_watch=()):
     pairs, errors = {}, []
     def add(p, source):
         if not isinstance(p, dict):
@@ -50,7 +51,7 @@ def discover():
                 time.sleep(.3)
         except Exception as exc:
             errors.append({"source": endpoint, "error": type(exc).__name__})
-    for chain, address in WATCH:
+    for chain, address in dict.fromkeys((*WATCH, *extra_watch)):
         try:
             url = "https://api.dexscreener.com/token-pairs/v1/" + chain + "/" + urllib.parse.quote(address)
             for found in fetch(url) or []:
@@ -61,7 +62,24 @@ def discover():
 
 def main():
     now = datetime.now(timezone.utc)
-    pairs, errors = discover()
+    # Revisit previous promising tokens even if search no longer returns them.
+    prior = []
+    if os.path.exists(STATE):
+        try:
+            with open(STATE) as handle:
+                data = json.load(handle)
+            if isinstance(data, list):
+                prior = [r for r in data if isinstance(r, dict)]
+        except (OSError, ValueError, TypeError):
+            pass
+    candidates = {}
+    for r in prior:
+        key = (r.get("chain"), r.get("address"))
+        if key[0] == "solana" and isinstance(key[1], str) and key[1] and (
+                r.get("discovery_alert") or r.get("trend_watch") or r.get("continuation_watch")):
+            candidates[key] = r.get("received_at", "")
+    extra_watch = tuple(k for k, _ in sorted(candidates.items(), key=lambda item: item[1], reverse=True)[:MAX_REVISIT])
+    pairs, errors = discover(extra_watch)
     observations = scan(pairs, now)
     sources = {(p.get("chainId"), (p.get("baseToken") or {}).get("address"), p.get("pairAddress")): p.get("_v13_source", "unknown") for p in pairs}
     for row in observations:
@@ -84,9 +102,9 @@ def main():
     with open(STATE + ".tmp", "w") as f:
         json.dump(history, f, indent=2, allow_nan=False)
     os.replace(STATE + ".tmp", STATE)
-    report = {"version": "v13-hunter-r3-continuation-observer", "at": now.isoformat(), "paper_only": True,
+    report = {"version": "v13-hunter-r4-persistent-revisit", "at": now.isoformat(), "paper_only": True,
               "execution_verified": False, "trades": 0, "pairs_discovered": len(pairs),
-              "observed": len(observations), "alerts": sum(r["discovery_alert"] for r in observations),
+              "observed": len(observations), "revisited_tokens_requested": len(extra_watch), "alerts": sum(r["discovery_alert"] for r in observations),
               "market_gate_passes": sum(r["market_gates_pass"] for r in observations),
               "trend_4h_watches": sum(r["trend_watch"] for r in observations),
               "continuation_watches": sum(r["continuation_watch"] for r in observations),
