@@ -1,7 +1,7 @@
 """Offline checks for V13. Run: python -m unittest test_v13_hunter.py"""
 import unittest
 from datetime import datetime, timezone, timedelta
-from v13_hunter import observe, report, trend_observation, continuation_observation
+from v13_hunter import observe, report, trend_observation, continuation_observation, mature_continuation_observation
 
 NOW = datetime(2026, 10, 18, 16, 0, tzinfo=timezone.utc)
 
@@ -96,6 +96,32 @@ class HunterTests(unittest.TestCase):
              (NOW-timedelta(minutes=15)).isoformat(), "price_usd": 0.00025, "volume_5m_usd": 2000},
         ]
         self.assertFalse(continuation_observation(row, history)["continuation_watch"])
+
+    def test_mature_continuation_requires_real_history(self):
+        old = int((NOW-timedelta(hours=4)).timestamp()*1000)
+        row = observe(pair(pairCreatedAt=old, priceUsd="0.0003"), NOW)
+        self.assertFalse(mature_continuation_observation(row, [])["mature_watch"])
+        history = [
+            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0002},
+            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00025},
+        ]
+        result = mature_continuation_observation(row, history)
+        self.assertTrue(result["mature_watch"])
+        self.assertFalse(result["mature_entry_authorized"])
+        self.assertIn("PAIR_AGE_OUT_OF_RANGE", row["blockers"])
+
+    def test_mature_rejects_overextended_and_illiquid(self):
+        old = int((NOW-timedelta(hours=4)).timestamp()*1000)
+        history = [
+            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0002},
+            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00025},
+        ]
+        row = observe(pair(pairCreatedAt=old, priceUsd="0.0003",
+                           priceChange={"m5":12,"h1":200}), NOW)
+        self.assertFalse(mature_continuation_observation(row, history)["mature_watch"])
+        row = observe(pair(pairCreatedAt=old, priceUsd="0.0003",
+                           liquidity={"usd":1000}), NOW)
+        self.assertFalse(mature_continuation_observation(row, history)["mature_watch"])
 
     def test_unknown_market_values_never_pass(self):
         r = observe(pair(txns={"m5": {}}, priceChange={}), NOW)
