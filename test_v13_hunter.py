@@ -1,7 +1,7 @@
 """Offline checks for V13. Run: python -m unittest test_v13_hunter.py"""
 import unittest
 from datetime import datetime, timezone, timedelta
-from v13_hunter import observe, report, trend_observation
+from v13_hunter import observe, report, trend_observation, continuation_observation
 
 NOW = datetime(2026, 10, 18, 16, 0, tzinfo=timezone.utc)
 
@@ -62,6 +62,40 @@ class HunterTests(unittest.TestCase):
              (NOW-timedelta(minutes=15)).isoformat(), "price_usd": 0.00018},
         ]
         self.assertFalse(trend_observation(row, history)["trend_watch"])
+
+    def test_monaka_pressure_is_research_only(self):
+        r = observe(pair(txns={"m5": {"buys": 665, "sells": 480}}), NOW)
+        self.assertIn("BUY_PRESSURE_UNVERIFIED_OR_LOW", r["blockers"])
+        c = continuation_observation(r, [])
+        self.assertTrue(c["continuation_buy_pressure_research"])
+        self.assertFalse(c["continuation_watch"])
+        self.assertFalse(c["continuation_entry_authorized"])
+
+    def test_continuation_needs_real_breakout_and_volume(self):
+        row = observe(pair(priceUsd="0.0003", volume={"m5": 12000},
+                           txns={"m5": {"buys": 60, "sells": 40}}), NOW)
+        history = [
+            {"chain": "solana", "address": "mint", "received_at":
+             (NOW-timedelta(minutes=30)).isoformat(), "price_usd": 0.0002, "volume_5m_usd": 5000},
+            {"chain": "solana", "address": "mint", "received_at":
+             (NOW-timedelta(minutes=15)).isoformat(), "price_usd": 0.00025, "volume_5m_usd": 6000},
+        ]
+        c = continuation_observation(row, history)
+        self.assertTrue(c["continuation_watch"])
+        self.assertGreater(c["continuation_relative_volume"], 1.2)
+        self.assertFalse(c["continuation_entry_authorized"])
+        row["price_usd"] = 0.00024
+        self.assertFalse(continuation_observation(row, history)["continuation_watch"])
+
+    def test_continuation_blocks_illiquid_pump(self):
+        row = observe(pair(priceUsd="0.0003", liquidity={"usd": 3000}), NOW)
+        history = [
+            {"chain": "solana", "address": "mint", "received_at":
+             (NOW-timedelta(minutes=30)).isoformat(), "price_usd": 0.0002, "volume_5m_usd": 1000},
+            {"chain": "solana", "address": "mint", "received_at":
+             (NOW-timedelta(minutes=15)).isoformat(), "price_usd": 0.00025, "volume_5m_usd": 2000},
+        ]
+        self.assertFalse(continuation_observation(row, history)["continuation_watch"])
 
     def test_unknown_market_values_never_pass(self):
         r = observe(pair(txns={"m5": {}}, priceChange={}), NOW)

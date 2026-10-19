@@ -3,7 +3,7 @@ import json
 import math
 from datetime import datetime, timezone
 
-VERSION = "v13-hunter-r2-trend-observer"
+VERSION = "v13-hunter-r3-continuation-observer"
 MAX_EXPOSURE_EUR = 10.0
 
 
@@ -126,4 +126,57 @@ def trend_observation(row, previous=()):
                               "HISTORIAL_INSUFICIENTE" if not result["trend_data_sufficient"] else
                               "SIN_CONFIRMACION")
     result["trend_entry_authorized"] = False
+    return result
+
+
+def continuation_observation(row, previous=()):
+    """Paper-only continuation watch; uses strictly earlier observed snapshots.
+
+    An alert is not a verified entry. 55% buy ratio is only a research gate;
+    it never relaxes the legacy 60% market gate or liquidity safety check.
+    """
+    from datetime import datetime, timedelta
+    result = dict(row)
+    now = datetime.fromisoformat(row["received_at"])
+    samples = []
+    for item in previous:
+        if item.get("chain") != row.get("chain") or item.get("address") != row.get("address"):
+            continue
+        try:
+            t = datetime.fromisoformat(item["received_at"])
+            p = finite(item.get("price_usd"))
+            v = finite(item.get("volume_5m_usd"))
+            if now-timedelta(minutes=90) <= t < now and p is not None and p > 0:
+                samples.append((t, p, v))
+        except (KeyError, TypeError, ValueError):
+            continue
+    samples.sort(key=lambda item: item[0])
+    price = finite(row.get("price_usd"))
+    liquidity = finite(row.get("liquidity_usd"))
+    ratio = finite(row.get("buy_ratio_5m"))
+    trades = finite(row.get("trades_5m"))
+    momentum = finite(row.get("change_5m_pct"))
+    volume = finite(row.get("volume_5m_usd"))
+    prior_prices = [p for _,p,_ in samples]
+    prior_volumes = [v for _,_,v in samples if v is not None and v > 0]
+    prior_high = max(prior_prices) if len(prior_prices) >= 2 else None
+    # Relative volume is meaningful only against observed prior samples.
+    volume_baseline = sum(prior_volumes)/len(prior_volumes) if len(prior_volumes) >= 2 else None
+    relative_volume = volume/volume_baseline if volume_baseline and volume is not None else None
+    breakout = price is not None and prior_high is not None and price > prior_high * 1.01
+    active = trades is not None and trades >= 40 and ratio is not None and ratio >= .55
+    liquid = liquidity is not None and liquidity >= 20000
+    # No late-pump paper entry; high momentum is observed but not recommended.
+    not_extended = momentum is not None and 0 < momentum <= 60
+    result["continuation_strategy"] = "RUPTURA_CONTINUACION_5_15M"
+    result["continuation_prior_high_usd"] = prior_high
+    result["continuation_relative_volume"] = round(relative_volume, 3) if relative_volume is not None else None
+    result["continuation_buy_pressure_research"] = bool(active)
+    result["continuation_data_sufficient"] = prior_high is not None and volume_baseline is not None
+    result["continuation_watch"] = bool(breakout and active and liquid and not_extended and
+                                         relative_volume is not None and relative_volume >= 1.2)
+    result["continuation_signal"] = ("VIGILAR_RUPTURA" if result["continuation_watch"] else
+                                      "HISTORIAL_INSUFICIENTE" if not result["continuation_data_sufficient"] else
+                                      "SIN_CONFIRMACION")
+    result["continuation_entry_authorized"] = False
     return result
