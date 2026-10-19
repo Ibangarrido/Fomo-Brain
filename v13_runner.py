@@ -1,82 +1,3 @@
-"""V13 scheduled PAPER radar. Public DEX Screener discovery, no wallet or trading."""
-import json
-import os
-import time
-import urllib.parse
-import urllib.request
-from datetime import datetime, timezone, timedelta
-from v13_hunter import scan, trend_observation, continuation_observation
-
-STATE = "v13_history.json"
-OUTPUT = "v13_report.json"
-SEARCHES = ("pump", "meme", "solana", "graduated")
-WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
-         ("solana", "8Vb5f7enGjp2uHuRqh1F5AVoXoXrYVZHwuw2orjepump"),
-         ("solana", "HqmFi85adLD8BQA7en1HfajdAfzVFps5REgQaYuw6Ax8"))
-MAX_HISTORY = 3000
-
-def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "Fomo-Brain-V13-Paper/1.0", "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=12) as response:
-        return json.load(response)
-
-def discover():
-    pairs, errors = {}, []
-    def add(p, source):
-        if not isinstance(p, dict):
-            return
-        chain, pool = p.get("chainId"), p.get("pairAddress")
-        if chain == "solana" and pool:
-            key = (chain, pool)
-            if key not in pairs:
-                pairs[key] = dict(p, _v13_source=source)
-    for term in SEARCHES:
-        try:
-            url = "https://api.dexscreener.com/latest/dex/search/?q=" + urllib.parse.quote(term)
-            for p in (fetch(url).get("pairs") or []):
-                add(p, "search:" + term)
-        except Exception as exc:
-            errors.append({"source": "search:" + term, "error": type(exc).__name__})
-        time.sleep(.3)
-    for endpoint in ("token-profiles/latest/v1", "token-profiles/recent-updates/v1"):
-        try:
-            profiles = fetch("https://api.dexscreener.com/" + endpoint)
-            for p in profiles[:20] if isinstance(profiles, list) else []:
-                if p.get("chainId") != "solana" or not p.get("tokenAddress"):
-                    continue
-                url = "https://api.dexscreener.com/token-pairs/v1/solana/" + urllib.parse.quote(p["tokenAddress"])
-                for found in fetch(url) or []:
-                    add(found, "profile:" + endpoint)
-                time.sleep(.3)
-        except Exception as exc:
-            errors.append({"source": endpoint, "error": type(exc).__name__})
-    for chain, address in WATCH:
-        try:
-            url = "https://api.dexscreener.com/token-pairs/v1/" + chain + "/" + urllib.parse.quote(address)
-            for found in fetch(url) or []:
-                add(found, "watch")
-        except Exception as exc:
-            errors.append({"source": "watch", "error": type(exc).__name__})
-    return list(pairs.values()), errors
-
-def main():
-    now = datetime.now(timezone.utc)
-    pairs, errors = discover()
-    observations = scan(pairs, now)
-    sources = {(p.get("chainId"), (p.get("baseToken") or {}).get("address"), p.get("pairAddress")): p.get("_v13_source", "unknown") for p in pairs}
-    for row in observations:
-        row["source"] = sources.get((row["chain"], row["address"], row["pair"]), "unknown")
-    history = []
-    if os.path.exists(STATE):
-        try:
-            with open(STATE) as handle:
-                previous = json.load(handle)
-            if isinstance(previous, list):
-                history = [r for r in previous if isinstance(r, dict) and
-                           isinstance(r.get("received_at"), str) and
-                           datetime.fromisoformat(r["received_at"]) >= now - timedelta(hours=24)]
-        except (OSError, ValueError, TypeError):
-            errors.append({"source": "history", "error": "UNREADABLE"})
     # Enrich using only PREVIOUS snapshots. No lookahead or invented OHLC candles.
     observations = [continuation_observation(trend_observation(row, history), history) for row in observations]
     # Keep all observations, including rejects; never infer a trade from an API receipt.
@@ -84,9 +5,9 @@ def main():
     with open(STATE + ".tmp", "w") as f:
         json.dump(history, f, indent=2, allow_nan=False)
     os.replace(STATE + ".tmp", STATE)
-    report = {"version": "v13-hunter-r3-continuation-observer", "at": now.isoformat(), "paper_only": True,
+    report = {"version": "v13-hunter-r4-persistent-revisit", "at": now.isoformat(), "paper_only": True,
               "execution_verified": False, "trades": 0, "pairs_discovered": len(pairs),
-              "observed": len(observations), "alerts": sum(r["discovery_alert"] for r in observations),
+              "observed": len(observations), "revisited_tokens_requested": len(extra_watch), "alerts": sum(r["discovery_alert"] for r in observations),
               "market_gate_passes": sum(r["market_gates_pass"] for r in observations),
               "trend_4h_watches": sum(r["trend_watch"] for r in observations),
               "continuation_watches": sum(r["continuation_watch"] for r in observations),
