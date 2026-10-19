@@ -61,8 +61,9 @@ def main():
     now = datetime.now(timezone.utc)
     pairs, errors = discover()
     observations = scan(pairs, now)
-    for row, pair in zip(observations, (p for p in pairs if p.get("chainId") and p.get("pairAddress") and (p.get("baseToken") or {}).get("address"))):
-        row["source"] = pair.get("_v13_source", "unknown")
+    sources = {(p.get("chainId"), (p.get("baseToken") or {}).get("address"), p.get("pairAddress")): p.get("_v13_source", "unknown") for p in pairs}
+    for row in observations:
+        row["source"] = sources.get((row["chain"], row["address"], row["pair"]), "unknown")
     history = []
     if os.path.exists(STATE):
         try:
