@@ -1007,7 +1007,7 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 
 @measure_wallet_latency
 @wallet_transaction
-def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False, require_liquidity_growth=False):
+def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False, require_liquidity_growth=False, net_scenario_gate=False):
     from m4_lab import RECOVERY, is_quarantined
     from continuation_lab import ARMS, FILES as continuation_files
     rebound_files = {"fomo_lab_rebound_control_r1.json", "fomo_lab_rebound_extended_r1.json"}
@@ -1025,6 +1025,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         raise ValueError("Edad ampliada reservada al laboratorio rebound")
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
         raise ValueError("Umbral de compras invalido")
+    if net_scenario_gate and basename != "fomo_lab_v11_net_r1.json":
+        raise ValueError("V11 net gate restricted to isolated PAPER lab")
     ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
     recovery_ratio = (basename == RECOVERY and quarantine_m4 and confirm
                       and entry_mode == "early" and min_buy_ratio == 0.75)
@@ -1337,6 +1339,16 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             except Exception as exc:
                 notes.append(f"ENTRADA OMITIDA {key} | precio final tras seguridad: {exc}")
                 continue
+        if net_scenario_gate:
+            from net_execution_lab import assess_net_entry
+            net_scenario = assess_net_entry(
+                entry_budget, 15.0, fee_per_side=PAPER_FEE,
+                slippage_per_side=PAPER_SLIPPAGE,
+                liquidity_eur=entry_liquidity if confirm else token.get("liquidity"))
+            if not net_scenario["allowed"]:
+                notes.append(f"DESCARTE {key} | V11 NET: {net_scenario['reason']} | "
+                             + json.dumps(net_scenario, ensure_ascii=False))
+                continue
         budget = entry_budget
         quantity = budget / (price * cost)
         state["cash"] -= budget
@@ -1461,6 +1473,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     with open(paper_file + ".tmp", "w") as handle:
         json.dump(state, handle, indent=2)
     os.replace(paper_file + ".tmp", paper_file)
+    if (ranking and basename in {"fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json"}
+            and os.getenv("BRAIN_V12_OBSERVABILITY", "0") == "1"):
+        from v12_lab import record_cycle
+        record_cycle(label, ranking, notes)
     if ranking and os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         from opportunity_audit import record_decisions
         record_decisions(label, notes)
@@ -1790,6 +1806,16 @@ def descubrir_pares():
     return pairs, sources
 
 
+def v12_quote(token):
+    """Exact-pair research quote; a provider receipt never proves a recent trade."""
+    original = dict(token)
+    price, _, pair = cotizar_posicion(dict(token))
+    if (pair.get("chainId") != original["chain"] or pair.get("pairAddress") != original["pair"]
+            or (pair.get("baseToken") or {}).get("address") != original["address"]):
+        raise ValueError("V12 rejects pair migration or identity mismatch")
+    return dict(original, price=price, received_at=pair.get("_brain_received_at"))
+
+
 def main(refresh_events=True):
     from candle_lab import begin_cycle
     begin_cycle()
@@ -1894,6 +1920,18 @@ def main(refresh_events=True):
                             entry_guard=candle_guard(True, "early", "LAB EARLY LIQUIDITY +5% r1"))
         except Exception as exc:
             print("LAB LIQUIDITY ERROR: " + str(exc) + "; V10-r3 intacta")
+    # Fresh PAPER control/treatment: independent histories, both start at 100 EUR.
+    if os.getenv("BRAIN_V11_NET_LAB", "0") == "1":
+        try:
+            from candle_lab import guard as candle_guard
+            for filename, name, net_gate in (
+                ("fomo_lab_v11_control_r1.json", "V11 CONTROL 100 EUR", False),
+                ("fomo_lab_v11_net_r1.json", "V11 NET 100 EUR", True)):
+                simular_cartera(ranking, filename, name, confirm=True,
+                                entry_mode="early", net_scenario_gate=net_gate,
+                                entry_guard=candle_guard(True, "early", name))
+        except Exception as exc:
+            print("V11 LAB ERROR: " + str(exc) + "; V10 and historical wallets unchanged")
     print("V10 IMPULSO: cartera independiente; no sumar con EARLY. Holders SIN FUENTE VERIFICADA.")
     simular_cartera(ranking, V10_IMPULSE_FILE, "V10 IMPULSO", confirm=True, entry_mode="impulse")
     if os.getenv("BRAIN_CANDLE_LAB", "0") == "1":
@@ -1961,6 +1999,9 @@ def main(refresh_events=True):
             observe(pairs, sources, discovery_rejections=REJECTIONS)
         except Exception as exc:
             print("AUDITORIA OPORTUNIDADES ERROR: " + str(exc) + "; carteras conservadas")
+    if os.getenv("BRAIN_V12_OBSERVABILITY", "0") == "1":
+        from v12_lab import run as run_v12
+        run_v12(v12_quote)
     counts = {}
     for item in REJECTIONS:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
@@ -2092,6 +2133,10 @@ def refresh_open_positions(stop_event=None):
                                 f"LAB PROTECT {mode.upper()} {arm.upper()} r1", mode, .60, arm == "protect"))
     if os.getenv("BRAIN_LIQUIDITY_LAB", "1") == "1":
         wallets.append(("fomo_lab_liquidity_early_r1.json", "LAB EARLY LIQUIDITY +5% r1", "early", .60, False))
+    if os.getenv("BRAIN_V11_NET_LAB", "0") == "1":
+        for path, label in (("fomo_lab_v11_control_r1.json", "V11 CONTROL 100 EUR"),
+                            ("fomo_lab_v11_net_r1.json", "V11 NET 100 EUR")):
+            wallets.append((path, label, "early", .60, False))
     JSON_CACHE.clear()  # Fresh quotes shared across wallets within this tick only.
     if os.getenv("BRAIN_M4_LAB", "0") == "1":
         from m4_lab import CONTROL, RECOVERY

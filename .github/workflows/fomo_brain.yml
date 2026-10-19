@@ -9,7 +9,7 @@ on:
     - cron: "7,22,37,52 * * * *"
 
 concurrency:
-  group: fomo-brain-state
+  group: fomo-brain-state-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -30,6 +30,7 @@ jobs:
         uses: dawidd6/action-download-artifact@v11
         with:
           workflow: fomo_brain.yml
+          branch: ${{ github.ref_name }}
           name: fomo-memory
           path: .
           search_artifacts: true
@@ -41,6 +42,8 @@ jobs:
           python -m unittest -v test_market_data_coverage.py test_jupiter_exit_diagnostic.py
           python -m unittest -v test_quote_safety.py
           python -m unittest -v test_exit_watchdog.py
+          python -m unittest -v test_net_execution_lab.py
+          python -m unittest -v test_paper_observability.py test_v12_lab.py
           python -m unittest -v test_quote_audit.py
           python -m unittest -v test_m4_lab.py
           python -m unittest -v test_m4_isolation.py
@@ -93,6 +96,8 @@ jobs:
           BRAIN_TARGETS_LAB: "1"
           BRAIN_CONTINUATION_LAB: "1"
           BRAIN_EXIT_WATCHDOG: "1"
+          BRAIN_V11_NET_LAB: "1"
+          BRAIN_V12_OBSERVABILITY: "1"
           PYTHONUNBUFFERED: "1"
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: |
@@ -107,6 +112,11 @@ jobs:
       - name: Descubrir pools Solana para estudio (sin compras)
         if: always()
         run: python discovery_watch.py
+
+      - name: Registrar estado de observabilidad V11 V12
+        if: always()
+        run: |
+          python v12_lab.py
 
       - name: Guardar memoria FOMO
         if: always()
@@ -127,6 +137,8 @@ jobs:
             fomo_memory.json
             fomo_event_memory.json
             fomo_quote_audit.json
+            paper_observability_status.json
+            fomo_v12_observations_r1.json
             discovery_watch.json
             fomo_opportunity_audit_r1.json
             fomo_lab_rebound_control_r1.json
@@ -145,6 +157,8 @@ jobs:
             fomo_paper_whale_unipcs.json
             fomo_lab_candle_audit_r1.json
             fomo_lab_liquidity_early_r1.json
+            fomo_lab_v11_control_r1.json
+            fomo_lab_v11_net_r1.json
             fomo_lab_early_control_r1.json
             fomo_lab_early_velas_r1.json
             fomo_lab_impulse_control_r1.json
@@ -186,6 +200,7 @@ jobs:
         uses: dawidd6/action-download-artifact@v11
         with:
           workflow: fomo_brain.yml
+          branch: ${{ github.ref_name }}
           name: gmgn-paper
           path: .
           search_artifacts: true
