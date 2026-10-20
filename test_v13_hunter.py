@@ -194,6 +194,20 @@ class HunterTests(unittest.TestCase):
         counts = discovery_timing_audit([current], [old], {("solana","mint")})
         self.assertEqual(counts["MANUAL_CASE_NOT_AUTONOMOUS"], 1)
 
+    def test_public_social_links_are_unverified_metadata(self):
+        from v13_runner import public_social_links
+        sample = {"info": {"socials": [
+            {"type": "twitter", "url": "https://x.com/example"},
+            {"type": "telegram", "url": "https://t.me/example"},
+            {"type": "twitter", "url": "https://x.com/example"},
+            {"type": "twitter", "url": "https://notx.com/impostor"}],
+            "websites": [{"url": "https://example.org"}]}}
+        links = public_social_links(sample)
+        self.assertEqual(len(links), 4)
+        self.assertEqual({item["platform"] for item in links},
+                         {"x", "telegram", "other"})
+        self.assertEqual(public_social_links({"info": {}}), [])
+
     def test_unknown_market_values_never_pass(self):
         r = observe(pair(txns={"m5": {}}, priceChange={}), NOW)
         self.assertFalse(r["market_gates_pass"])
