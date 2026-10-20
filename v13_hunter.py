@@ -3,8 +3,12 @@ import json
 import math
 from datetime import datetime, timezone
 
-VERSION = "v13-hunter-r5-age-segmented-research"
+VERSION = "v13-hunter-r6-extended-age-research"
 MAX_EXPOSURE_EUR = 10.0
+EARLY_MIN_AGE_MINUTES = 2
+EARLY_MAX_AGE_MINUTES = 90
+MATURE_MIN_AGE_MINUTES = 60
+MATURE_MAX_AGE_MINUTES = 720
 
 
 def finite(value):
@@ -49,7 +53,7 @@ def observe(pair, now=None):
         reasons.append("MOMENTUM_OUT_OF_RANGE")
     if ch1h is None or ch1h > 150:
         reasons.append("LATE_OR_UNKNOWN_1H")
-    if age is None or not 2 <= age <= 60:
+    if age is None or not EARLY_MIN_AGE_MINUTES <= age <= EARLY_MAX_AGE_MINUTES:
         reasons.append("PAIR_AGE_OUT_OF_RANGE")
     # No holder, concentration, sell-route, or source trade-age verification in this snapshot.
     return {
@@ -183,7 +187,7 @@ def continuation_observation(row, previous=()):
 
 
 def mature_continuation_observation(row, previous=()):
-    """1–6h follow-through watch, NOT an entry signal; independent of launch age gate.
+    """1–12h follow-through watch, NOT an entry signal; independent of launch age gate.
 
     Use previous sampled prices only. A pump already above +150% in 1h is
     observed for research but cannot produce a qualified mature watch.
@@ -215,18 +219,18 @@ def mature_continuation_observation(row, previous=()):
     # At least two separate observations and >=10m time coverage are required.
     enough = len(samples) >= 2 and (samples[-1][0]-samples[0][0]).total_seconds() >= 600
     breakout = bool(enough and price is not None and price > prior_high*1.01)
-    age_ok = age is not None and 60 < age <= 360
+    age_ok = age is not None and MATURE_MIN_AGE_MINUTES < age <= MATURE_MAX_AGE_MINUTES
     safety = (cap is not None and 0 < cap <= 2000000 and
               liquidity is not None and liquidity >= 20000 and
               trades is not None and trades >= 40 and
               ratio is not None and ratio >= .60 and
               change5 is not None and 0 < change5 <= 25 and
               change1h is not None and change1h <= 150)
-    result["mature_strategy"] = "CONTINUACION_1_6H"
+    result["mature_strategy"] = "CONTINUACION_1_12H"
     result["mature_data_sufficient"] = enough
     result["mature_prior_high_usd"] = prior_high
     result["mature_watch"] = bool(age_ok and breakout and safety)
-    result["mature_signal"] = ("VIGILAR_CONTINUACION_1_6H" if result["mature_watch"] else
+    result["mature_signal"] = ("VIGILAR_CONTINUACION_1_12H" if result["mature_watch"] else
                                "HISTORIAL_INSUFICIENTE" if not enough else
                                "SIN_CONFIRMACION")
     result["mature_entry_authorized"] = False
