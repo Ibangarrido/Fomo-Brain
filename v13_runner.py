@@ -131,6 +131,49 @@ def select_revisits(prior, now):
     return tuple(active + dormant), len(dormant)
 
 
+def discovery_timing_audit(observations, prior, manual_watch):
+    """Audit discovery timing using only recorded snapshots, never backfill.
+
+    'PRE_IMPULSE_CANDIDATE' means first observation was not already extended
+    by 1h change; it does NOT establish that a later x5 occurred.
+    """
+    earliest = {}
+    first_alert = {}
+    for row in (*prior, *observations):
+        key = (row.get("chain"), row.get("address"))
+        stamp = row.get("received_at")
+        if not all(isinstance(x, str) and x for x in (*key, stamp)):
+            continue
+        if key not in earliest or stamp < earliest[key]["received_at"]:
+            earliest[key] = row
+        if row.get("discovery_alert") and (key not in first_alert or stamp < first_alert[key]):
+            first_alert[key] = stamp
+    counts = Counter()
+    for row in observations:
+        key = (row.get("chain"), row.get("address"))
+        first = earliest.get(key, row)
+        pct = first.get("change_1h_pct")
+        source = first.get("source", "unknown")
+        manual = key in manual_watch
+        if manual:
+            stage = "MANUAL_CASE_NOT_AUTONOMOUS"
+        elif pct is None or not isinstance(pct, (int, float)):
+            stage = "FIRST_OBSERVATION_MOMENTUM_UNKNOWN"
+        elif pct >= 150:
+            stage = "FIRST_SEEN_ALREADY_OVER_150PCT_1H"
+        elif pct >= 50:
+            stage = "FIRST_SEEN_ALREADY_OVER_50PCT_1H"
+        else:
+            stage = "PRE_IMPULSE_CANDIDATE_UNVERIFIED"
+        row["discovery_timing_stage"] = stage
+        row["first_observed_at"] = first.get("received_at")
+        row["first_observed_1h_pct"] = pct
+        row["first_observed_source"] = source
+        row["first_alert_at"] = first_alert.get(key)
+        counts[stage] += 1
+    return dict(counts)
+
+
 def main():
     now = datetime.now(timezone.utc)
     # Revisit previous promising tokens even if search no longer returns them.
@@ -162,6 +205,8 @@ def main():
             errors.append({"source": "history", "error": "UNREADABLE"})
     # Enrich using only PREVIOUS snapshots. No lookahead or invented OHLC candles.
     observations = [dormant_wakeup_observation(mature_continuation_observation(continuation_observation(trend_observation(row, history), history), history), history) for row in observations]
+    # Timing audit is computed before truncation and before current rows are saved.
+    timing_counts = discovery_timing_audit(observations, history, set(WATCH))
     # Keep all observations, including rejects; never infer a trade from an API receipt.
     history = (history + observations)[-MAX_HISTORY:]
     with open(STATE + ".tmp", "w") as f:
@@ -178,7 +223,7 @@ def main():
             if key not in first_seen or stamp < first_seen[key]:
                 first_seen[key] = stamp
     for row in observations:
-        row["first_observed_at"] = first_seen.get((row["chain"], row["address"]))
+        # first_observed_at comes from the timing audit, before truncation.
         row["manually_watchlisted"] = (row["chain"], row["address"]) in WATCH
         row["independently_discovered_this_run"] = row.get("source", "").startswith(("search:", "profile:")) and not row["manually_watchlisted"]
     autonomous_alerts = [row for row in observations if row["discovery_alert"] and row["independently_discovered_this_run"]]
@@ -191,6 +236,8 @@ def main():
               "dormant_revisits_requested": dormant_revisit_count, "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
               "promotion_sourced_alerts": len(promoted_alerts),
+              "discovery_timing_counts": timing_counts,
+              "discovery_timing_note": "Only earliest snapshot retained in 24h history; pre-impulse candidate is NOT a proven pre-x5 signal",
               "dormant_wakeup_watches": sum(r["dormant_wakeup_watch"] for r in observations),
               "dormant_sufficient_history": sum(r["dormant_data_sufficient"] for r in observations),
               "promotion_source_note": "Paid boosts/takeovers are visibility signals, NOT proof of organic demand or an entry",
@@ -212,6 +259,7 @@ def main():
               "errors": errors,
               "top_near_misses": near_misses,
               "top_dormant_wakeups": [r for r in observations if r["dormant_wakeup_watch"]][:30],
+              "top_discovery_timing": sorted((r for r in observations if r["discovery_alert"]), key=lambda r: r.get("first_observed_at") or "")[:30],
               "top_autonomous_alerts": sorted(autonomous_alerts, key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
               "top_mature_continuations": sorted((r for r in observations if r["mature_watch"]),
                                                  key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
@@ -224,7 +272,7 @@ def main():
                                    reverse=True)[:30]}
     with open(OUTPUT, "w") as f:
         json.dump(report, f, indent=2, allow_nan=False)
-    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts", "top_dormant_wakeups")}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts", "top_dormant_wakeups", "top_discovery_timing")}, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
