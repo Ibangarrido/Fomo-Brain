@@ -198,7 +198,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: V13 offline tests
-        run: python -m unittest -v test_v13_hunter.py test_v13_paper.py
+        run: python -m unittest -v test_v13_hunter.py test_v13_paper.py test_v13_microcap.py
       - name: Restore V13 history
         uses: actions/cache/restore@v4
         with:
