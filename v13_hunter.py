@@ -235,3 +235,56 @@ def mature_continuation_observation(row, previous=()):
                                "SIN_CONFIRMACION")
     result["mature_entry_authorized"] = False
     return result
+
+
+def dormant_wakeup_observation(row, previous=()):
+    """Research-only revival of an observed quiet token; no fabricated prehistory.
+
+    Requires >=3 prior snapshots spanning >=60 minutes, all quiet. This
+    measures the wakeup against an observed baseline, not social sentiment.
+    """
+    from datetime import datetime, timedelta
+    result = dict(row)
+    now = datetime.fromisoformat(row["received_at"])
+    samples = []
+    for item in previous:
+        if item.get("chain") != row.get("chain") or item.get("address") != row.get("address"):
+            continue
+        try:
+            t = datetime.fromisoformat(item["received_at"])
+            volume = finite(item.get("volume_5m_usd"))
+            trades = finite(item.get("trades_5m"))
+            if now-timedelta(hours=6) <= t <= now-timedelta(minutes=10) and volume is not None and trades is not None:
+                samples.append((t, volume, trades))
+        except (KeyError, TypeError, ValueError):
+            continue
+    samples.sort(key=lambda item: item[0])
+    # Use the most recent quiet run, not an average distorted by an earlier pump.
+    baseline = samples[-6:]
+    sufficient = len(baseline) >= 3 and (baseline[-1][0]-baseline[0][0]).total_seconds() >= 3600
+    quiet = sufficient and all(v <= 1000 and t <= 10 for _, v, t in baseline)
+    avg_volume = sum(v for _, v, _ in baseline)/len(baseline) if sufficient else None
+    current_volume = finite(row.get("volume_5m_usd"))
+    current_trades = finite(row.get("trades_5m"))
+    ratio = finite(row.get("buy_ratio_5m"))
+    momentum = finite(row.get("change_5m_pct"))
+    liquidity = finite(row.get("liquidity_usd"))
+    cap = finite(row.get("market_cap_usd"))
+    ratio_volume = current_volume/max(200, avg_volume) if avg_volume is not None and current_volume is not None else None
+    safe_to_watch = (liquidity is not None and liquidity >= 20000 and
+                     cap is not None and 0 < cap <= 2000000 and
+                     ratio is not None and ratio >= .60 and
+                     momentum is not None and 0 < momentum <= 35)
+    result["dormant_data_sufficient"] = sufficient
+    result["dormant_baseline_quiet"] = bool(quiet)
+    result["dormant_baseline_volume_5m_usd"] = round(avg_volume, 2) if avg_volume is not None else None
+    result["dormant_volume_multiple"] = round(ratio_volume, 2) if ratio_volume is not None else None
+    result["dormant_wakeup_watch"] = bool(quiet and safe_to_watch and
+                                         current_trades is not None and current_trades >= 30 and
+                                         current_volume is not None and current_volume >= 1500 and
+                                         ratio_volume is not None and ratio_volume >= 3)
+    result["dormant_signal"] = ("VIGILAR_DESPERTAR" if result["dormant_wakeup_watch"] else
+                                "HISTORIAL_INSUFICIENTE" if not sufficient else
+                                "SIN_CONFIRMACION")
+    result["dormant_entry_authorized"] = False
+    return result
