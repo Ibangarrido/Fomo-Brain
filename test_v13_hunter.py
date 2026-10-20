@@ -2,6 +2,7 @@
 import unittest
 from datetime import datetime, timezone, timedelta
 from v13_hunter import observe, report, trend_observation, continuation_observation, mature_continuation_observation
+from v13_runner import WATCH
 
 NOW = datetime(2026, 10, 18, 16, 0, tzinfo=timezone.utc)
 
@@ -16,6 +17,10 @@ def pair(**overrides):
     return p
 
 class HunterTests(unittest.TestCase):
+    def test_manual_watchlist_has_unique_token_addresses(self):
+        self.assertEqual(len(WATCH), len(set(WATCH)))
+        self.assertTrue(all(chain == "solana" and isinstance(address, str) and address for chain, address in WATCH))
+
     def test_valid_market_not_auto_trade(self):
         r = observe(pair(), NOW)
         self.assertTrue(r["market_gates_pass"])
