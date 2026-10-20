@@ -1,5 +1,6 @@
 """V13 scheduled PAPER radar. Public DEX Screener discovery, no wallet or trading."""
 import json
+from collections import Counter
 import os
 import time
 import urllib.parse
@@ -110,9 +111,29 @@ def main():
     with open(STATE + ".tmp", "w") as f:
         json.dump(history, f, indent=2, allow_nan=False)
     os.replace(STATE + ".tmp", STATE)
+    # Explain zero qualifying signals without weakening any safety gate.
+    blocker_counts = Counter(reason for row in observations for reason in row["blockers"])
+    alert_blocker_counts = Counter(reason for row in observations if row["discovery_alert"] for reason in row["blockers"])
+    first_seen = {}
+    for item in history:
+        key = (item.get("chain"), item.get("address"))
+        stamp = item.get("received_at")
+        if all(isinstance(v, str) and v for v in key) and isinstance(stamp, str):
+            if key not in first_seen or stamp < first_seen[key]:
+                first_seen[key] = stamp
+    for row in observations:
+        row["first_observed_at"] = first_seen.get((row["chain"], row["address"]))
+        row["manually_watchlisted"] = (row["chain"], row["address"]) in WATCH
+        row["independently_discovered_this_run"] = row.get("source", "").startswith(("search:", "profile:")) and not row["manually_watchlisted"]
+    autonomous_alerts = [row for row in observations if row["discovery_alert"] and row["independently_discovered_this_run"]]
+    near_misses = sorted((row for row in observations if row["discovery_alert"] and not row["market_gates_pass"]),
+                         key=lambda row: (len(row["blockers"]), -(row["trades_5m"] or 0)))[:20]
     report = {"version": "v13-hunter-r5-age-segmented-research", "at": now.isoformat(), "paper_only": True,
               "execution_verified": False, "trades": 0, "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch), "alerts": sum(r["discovery_alert"] for r in observations),
+              "autonomous_discovery_alerts": len(autonomous_alerts),
+              "blocker_counts": dict(blocker_counts.most_common()),
+              "alert_blocker_counts": dict(alert_blocker_counts.most_common()),
               "market_gate_passes": sum(r["market_gates_pass"] for r in observations),
               "trend_4h_watches": sum(r["trend_watch"] for r in observations),
               "continuation_watches": sum(r["continuation_watch"] for r in observations),
@@ -125,6 +146,8 @@ def main():
               "history_observations_24h": len(history),
               "source_coverage": "partial: DEX search + token profiles + manual watch; not a full launch stream",
               "errors": errors,
+              "top_near_misses": near_misses,
+              "top_autonomous_alerts": sorted(autonomous_alerts, key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
               "top_mature_continuations": sorted((r for r in observations if r["mature_watch"]),
                                                  key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
               "top_continuations": sorted((r for r in observations if r["continuation_watch"]),
@@ -136,7 +159,7 @@ def main():
                                    reverse=True)[:30]}
     with open(OUTPUT, "w") as f:
         json.dump(report, f, indent=2, allow_nan=False)
-    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations")}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts")}, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
