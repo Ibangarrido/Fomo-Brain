@@ -2,7 +2,7 @@
 import unittest
 from datetime import datetime, timezone, timedelta
 from v13_hunter import observe, report, trend_observation, continuation_observation, mature_continuation_observation, dormant_wakeup_observation
-from v13_runner import WATCH
+from v13_runner import WATCH, SUPPORTED_CHAINS
 
 NOW = datetime(2026, 10, 18, 16, 0, tzinfo=timezone.utc)
 
@@ -19,7 +19,9 @@ def pair(**overrides):
 class HunterTests(unittest.TestCase):
     def test_manual_watchlist_has_unique_token_addresses(self):
         self.assertEqual(len(WATCH), len(set(WATCH)))
-        self.assertTrue(all(chain == "solana" and isinstance(address, str) and address for chain, address in WATCH))
+        self.assertTrue(all(chain in SUPPORTED_CHAINS and isinstance(address, str) and address for chain, address in WATCH))
+        self.assertIn(("bsc", "0xaacbc156435dbab7815a61bccba1c827e52a7777"), WATCH)
+        self.assertIn(("bsc", "0xb10b2c022a717a66fa627c9c9ce73779b5347777"), WATCH)
 
     def test_valid_market_not_auto_trade(self):
         r = observe(pair(), NOW)
