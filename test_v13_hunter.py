@@ -27,6 +27,22 @@ class HunterTests(unittest.TestCase):
         self.assertFalse(r["entry_authorized"])
         self.assertEqual(r["signal"], "VIGILAR")
 
+    def test_early_age_extended_to_ninety_minutes(self):
+        age_75 = int((NOW-timedelta(minutes=75)).timestamp()*1000)
+        age_95 = int((NOW-timedelta(minutes=95)).timestamp()*1000)
+        self.assertTrue(observe(pair(pairCreatedAt=age_75), NOW)["market_gates_pass"])
+        self.assertIn("PAIR_AGE_OUT_OF_RANGE", observe(pair(pairCreatedAt=age_95), NOW)["blockers"])
+
+    def test_mature_age_extended_to_twelve_hours(self):
+        history = [
+            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0001},
+            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00015},
+        ]
+        for hours, expected in ((8, True), (13, False)):
+            old = int((NOW-timedelta(hours=hours)).timestamp()*1000)
+            row = observe(pair(pairCreatedAt=old, priceUsd="0.0002"), NOW)
+            self.assertEqual(mature_continuation_observation(row, history)["mature_watch"], expected)
+
     def test_moonshot_is_late(self):
         r = observe(pair(priceChange={"m5": 20, "h1": 1439}), NOW)
         self.assertIn("LATE_OR_UNKNOWN_1H", r["blockers"])
