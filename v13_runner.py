@@ -27,7 +27,8 @@ WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
          ("solana", "D9rASpRWPyMYQGVLQLEN4S4Cy8fYE7fP8au9Gy7Upump"),
          ("solana", "ESnW5ZbLmoEAg2QEMxnMsY9R3aS8Kw58HJacYURmpump"),
          ("solana", "2qgnTgJbZU6Tu6CMrm5Z5ePDGuUAyGTACbBoBCw6pump"),
-         ("bsc", "0xaacbc156435dbab7815a61bccba1c827e52a7777"))
+         ("bsc", "0xaacbc156435dbab7815a61bccba1c827e52a7777"),
+         ("bsc", "0xb10b2c022a717a66fa627c9c9ce73779b5347777"))
 MAX_HISTORY = 12000
 MAX_REVISIT = 18
 MAX_DORMANT_REVISIT = 12
