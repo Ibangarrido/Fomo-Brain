@@ -27,6 +27,7 @@ WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
          ("solana", "ESnW5ZbLmoEAg2QEMxnMsY9R3aS8Kw58HJacYURmpump"))
 MAX_HISTORY = 12000
 MAX_REVISIT = 18
+MAX_DORMANT_REVISIT = 12
 
 def fetch(url):
     req = urllib.request.Request(url, headers={"User-Agent": "Fomo-Brain-V13-Paper/1.0", "Accept": "application/json"})
@@ -86,6 +87,49 @@ def discover(extra_watch=()):
             errors.append({"source": "watch", "error": type(exc).__name__})
     return list(pairs.values()), errors
 
+def select_revisits(prior, now):
+    """Reserve follow-up slots for quiet tokens, not only past winners.
+
+    Latest snapshot per token prevents ancient alerts from dominating. Quiet
+    candidates require a valid, liquid, sub-$2m market and recent observation.
+    """
+    latest = {}
+    for row in prior:
+        key = (row.get("chain"), row.get("address"))
+        if key[0] != "solana" or not isinstance(key[1], str) or not key[1]:
+            continue
+        try:
+            stamp = datetime.fromisoformat(row["received_at"])
+            if not now-timedelta(hours=6) <= stamp <= now:
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        if key not in latest or stamp > latest[key][0]:
+            latest[key] = (stamp, row)
+    alerts, quiet = [], []
+    for key, (stamp, row) in latest.items():
+        if (row.get("discovery_alert") or row.get("trend_watch") or
+            row.get("continuation_watch") or row.get("mature_watch") or
+            row.get("dormant_wakeup_watch")):
+            alerts.append((stamp, key))
+        if (row.get("volume_5m_usd") is not None and
+            0 <= row["volume_5m_usd"] <= 1000 and
+            row.get("trades_5m") is not None and
+            0 <= row["trades_5m"] <= 10 and
+            row.get("liquidity_usd") is not None and
+            row["liquidity_usd"] >= 20000 and
+            row.get("market_cap_usd") is not None and
+            0 < row["market_cap_usd"] <= 2000000 and
+            row.get("pair_age_minutes") is not None and
+            row["pair_age_minutes"] >= 60):
+            quiet.append((stamp, key))
+    alerts.sort(reverse=True)
+    quiet.sort(reverse=True)
+    active = [key for _, key in alerts[:MAX_REVISIT]]
+    dormant = [key for _, key in quiet if key not in active][:MAX_DORMANT_REVISIT]
+    return tuple(active + dormant), len(dormant)
+
+
 def main():
     now = datetime.now(timezone.utc)
     # Revisit previous promising tokens even if search no longer returns them.
@@ -98,13 +142,7 @@ def main():
                 prior = [r for r in data if isinstance(r, dict)]
         except (OSError, ValueError, TypeError):
             pass
-    candidates = {}
-    for r in prior:
-        key = (r.get("chain"), r.get("address"))
-        if key[0] == "solana" and isinstance(key[1], str) and key[1] and (
-                r.get("discovery_alert") or r.get("trend_watch") or r.get("continuation_watch") or r.get("mature_watch") or r.get("dormant_wakeup_watch")):
-            candidates[key] = r.get("received_at", "")
-    extra_watch = tuple(k for k, _ in sorted(candidates.items(), key=lambda item: item[1], reverse=True)[:MAX_REVISIT])
+    extra_watch, dormant_revisit_count = select_revisits(prior, now)
     pairs, errors = discover(extra_watch)
     observations = scan(pairs, now)
     sources = {(p.get("chainId"), (p.get("baseToken") or {}).get("address"), p.get("pairAddress")): p.get("_v13_source", "unknown") for p in pairs}
@@ -148,7 +186,8 @@ def main():
                          key=lambda row: (len(row["blockers"]), -(row["trades_5m"] or 0)))[:20]
     report = {"version": "v13-hunter-r6-extended-age-research", "at": now.isoformat(), "paper_only": True,
               "execution_verified": False, "trades": 0, "pairs_discovered": len(pairs),
-              "observed": len(observations), "revisited_tokens_requested": len(extra_watch), "alerts": sum(r["discovery_alert"] for r in observations),
+              "observed": len(observations), "revisited_tokens_requested": len(extra_watch),
+              "dormant_revisits_requested": dormant_revisit_count, "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
               "promotion_sourced_alerts": len(promoted_alerts),
               "dormant_wakeup_watches": sum(r["dormant_wakeup_watch"] for r in observations),
