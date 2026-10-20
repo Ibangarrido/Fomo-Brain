@@ -178,6 +178,20 @@ class HunterTests(unittest.TestCase):
         self.assertEqual(keys, ())
         self.assertEqual(count, 0)
 
+    def test_discovery_timing_does_not_credit_manual_cases(self):
+        from v13_runner import discovery_timing_audit
+        old = {"chain":"solana", "address":"mint", "received_at":
+               (NOW-timedelta(minutes=30)).isoformat(),
+               "change_1h_pct":180, "source":"search:pump"}
+        current = dict(old, received_at=NOW.isoformat(), discovery_alert=True,
+                       change_1h_pct=15)
+        counts = discovery_timing_audit([current], [old], set())
+        self.assertEqual(counts["FIRST_SEEN_ALREADY_OVER_150PCT_1H"], 1)
+        self.assertEqual(current["first_observed_1h_pct"], 180)
+        self.assertEqual(current["first_alert_at"], NOW.isoformat())
+        counts = discovery_timing_audit([current], [old], {("solana","mint")})
+        self.assertEqual(counts["MANUAL_CASE_NOT_AUTONOMOUS"], 1)
+
     def test_unknown_market_values_never_pass(self):
         r = observe(pair(txns={"m5": {}}, priceChange={}), NOW)
         self.assertFalse(r["market_gates_pass"])
