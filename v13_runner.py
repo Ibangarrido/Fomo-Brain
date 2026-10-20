@@ -225,7 +225,7 @@ def main():
         with open(PAPER_STATE) as handle:
             paper_state = json.load(handle)
     else:
-        if any(r.get("version") == "v13-hunter-r7-prospective-paper" for r in prior):
+        if any(r.get("paper_ledger_initialized") is True for r in prior):
             raise ValueError("Missing paper ledger after initialization; refusing capital reset")
         paper_state = initial_state()
     extra_watch, dormant_revisit_count = select_revisits(prior, now)
@@ -257,6 +257,10 @@ def main():
         enriched.append(row)
     observations = enriched
     paper_state, paper_summary = advance(paper_state, observations, history, now)
+    # Persist a restart sentinel in the independent history cache. Never mistake
+    # a lost paper ledger for a new experiment with a fresh 100 EUR.
+    for row in observations:
+        row["paper_ledger_initialized"] = True
     with open(PAPER_STATE + ".tmp", "w") as handle:
         json.dump(paper_state, handle, indent=2, allow_nan=False)
     os.replace(PAPER_STATE + ".tmp", PAPER_STATE)
