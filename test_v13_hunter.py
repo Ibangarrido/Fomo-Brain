@@ -1,7 +1,7 @@
 """Offline checks for V13. Run: python -m unittest test_v13_hunter.py"""
 import unittest
 from datetime import datetime, timezone, timedelta
-from v13_hunter import observe, report, trend_observation, continuation_observation, mature_continuation_observation
+from v13_hunter import observe, report, trend_observation, continuation_observation, mature_continuation_observation, dormant_wakeup_observation
 from v13_runner import WATCH
 
 NOW = datetime(2026, 10, 18, 16, 0, tzinfo=timezone.utc)
@@ -143,6 +143,23 @@ class HunterTests(unittest.TestCase):
         row = observe(pair(pairCreatedAt=old, priceUsd="0.0003",
                            liquidity={"usd":1000}), NOW)
         self.assertFalse(mature_continuation_observation(row, history)["mature_watch"])
+
+    def test_dormant_wakeup_requires_real_quiet_history(self):
+        row = observe(pair(priceChange={"m5": 8, "h1": 20},
+                           volume={"m5": 5000}, txns={"m5": {"buys": 35, "sells": 10}}), NOW)
+        history = [
+            {"chain": "solana", "address": "mint", "received_at":
+             (NOW-timedelta(minutes=minutes)).isoformat(),
+             "volume_5m_usd": 300, "trades_5m": 4}
+            for minutes in (100, 70, 30)
+        ]
+        self.assertTrue(dormant_wakeup_observation(row, history)["dormant_wakeup_watch"])
+        self.assertFalse(dormant_wakeup_observation(row, history)["dormant_entry_authorized"])
+        self.assertFalse(dormant_wakeup_observation(row, history[:2])["dormant_wakeup_watch"])
+        hot_history = [dict(item, volume_5m_usd=5000) for item in history]
+        self.assertFalse(dormant_wakeup_observation(row, hot_history)["dormant_wakeup_watch"])
+        illiquid = dict(row, liquidity_usd=1000)
+        self.assertFalse(dormant_wakeup_observation(illiquid, history)["dormant_wakeup_watch"])
 
     def test_unknown_market_values_never_pass(self):
         r = observe(pair(txns={"m5": {}}, priceChange={}), NOW)
