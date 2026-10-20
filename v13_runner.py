@@ -6,7 +6,7 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
-from v13_hunter import scan, trend_observation, continuation_observation, mature_continuation_observation
+from v13_hunter import scan, trend_observation, continuation_observation, mature_continuation_observation, dormant_wakeup_observation
 
 STATE = "v13_history.json"
 OUTPUT = "v13_report.json"
@@ -101,7 +101,7 @@ def main():
     for r in prior:
         key = (r.get("chain"), r.get("address"))
         if key[0] == "solana" and isinstance(key[1], str) and key[1] and (
-                r.get("discovery_alert") or r.get("trend_watch") or r.get("continuation_watch") or r.get("mature_watch")):
+                r.get("discovery_alert") or r.get("trend_watch") or r.get("continuation_watch") or r.get("mature_watch") or r.get("dormant_wakeup_watch")):
             candidates[key] = r.get("received_at", "")
     extra_watch = tuple(k for k, _ in sorted(candidates.items(), key=lambda item: item[1], reverse=True)[:MAX_REVISIT])
     pairs, errors = discover(extra_watch)
@@ -121,7 +121,7 @@ def main():
         except (OSError, ValueError, TypeError):
             errors.append({"source": "history", "error": "UNREADABLE"})
     # Enrich using only PREVIOUS snapshots. No lookahead or invented OHLC candles.
-    observations = [mature_continuation_observation(continuation_observation(trend_observation(row, history), history), history) for row in observations]
+    observations = [dormant_wakeup_observation(mature_continuation_observation(continuation_observation(trend_observation(row, history), history), history), history) for row in observations]
     # Keep all observations, including rejects; never infer a trade from an API receipt.
     history = (history + observations)[-MAX_HISTORY:]
     with open(STATE + ".tmp", "w") as f:
@@ -150,6 +150,8 @@ def main():
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch), "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
               "promotion_sourced_alerts": len(promoted_alerts),
+              "dormant_wakeup_watches": sum(r["dormant_wakeup_watch"] for r in observations),
+              "dormant_sufficient_history": sum(r["dormant_data_sufficient"] for r in observations),
               "promotion_source_note": "Paid boosts/takeovers are visibility signals, NOT proof of organic demand or an entry",
               "blocker_counts": dict(blocker_counts.most_common()),
               "alert_blocker_counts": dict(alert_blocker_counts.most_common()),
@@ -168,6 +170,7 @@ def main():
               "source_coverage": "partial: DEX search + profiles + boosts + community takeovers + manual watch; not social-media post monitoring or full launch stream",
               "errors": errors,
               "top_near_misses": near_misses,
+              "top_dormant_wakeups": [r for r in observations if r["dormant_wakeup_watch"]][:30],
               "top_autonomous_alerts": sorted(autonomous_alerts, key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
               "top_mature_continuations": sorted((r for r in observations if r["mature_watch"]),
                                                  key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
@@ -180,7 +183,7 @@ def main():
                                    reverse=True)[:30]}
     with open(OUTPUT, "w") as f:
         json.dump(report, f, indent=2, allow_nan=False)
-    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts")}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts", "top_dormant_wakeups")}, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
