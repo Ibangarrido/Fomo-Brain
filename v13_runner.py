@@ -134,6 +134,30 @@ def select_revisits(prior, now):
     return tuple(active + dormant), len(dormant)
 
 
+
+def public_social_links(pair):
+    """Record self-declared public links, NOT verified mentions or pre-pump signals."""
+    info = pair.get("info") or {}
+    links = []
+    for item in (*((info.get("socials") or [])), *((info.get("websites") or []))):
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url")
+        if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+            continue
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+        if host in ("x.com", "twitter.com", "www.x.com", "www.twitter.com"):
+            platform = "x"
+        elif host in ("t.me", "telegram.me", "www.t.me"):
+            platform = "telegram"
+        elif host in ("discord.gg", "discord.com", "www.discord.com"):
+            platform = "discord"
+        else:
+            platform = "other"
+        links.append({"platform": platform, "url": url})
+    return list({item["url"]: item for item in links}.values())[:12]
+
+
 def discovery_timing_audit(observations, prior, manual_watch):
     """Audit discovery timing using only recorded snapshots, never backfill.
 
@@ -193,8 +217,12 @@ def main():
     pairs, errors = discover(extra_watch)
     observations = scan(pairs, now)
     sources = {(p.get("chainId"), (p.get("baseToken") or {}).get("address"), p.get("pairAddress")): p.get("_v13_source", "unknown") for p in pairs}
+    social_metadata = {(p.get("chainId"), (p.get("baseToken") or {}).get("address"), p.get("pairAddress")): public_social_links(p) for p in pairs}
     for row in observations:
-        row["source"] = sources.get((row["chain"], row["address"], row["pair"]), "unknown")
+        key = (row["chain"], row["address"], row["pair"])
+        row["source"] = sources.get(key, "unknown")
+        row["public_social_links"] = social_metadata.get(key, [])
+        row["social_signal_verified"] = False
     history = []
     if os.path.exists(STATE):
         try:
@@ -239,6 +267,9 @@ def main():
               "dormant_revisits_requested": dormant_revisit_count, "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
               "promotion_sourced_alerts": len(promoted_alerts),
+              "tokens_with_declared_social_links": sum(bool(r["public_social_links"]) for r in observations),
+              "social_posts_checked": 0,
+              "social_signal_note": "Self-declared DEX social URLs are not posts, engagement, or proof of pre-pump coordination; no X/Telegram API connected",
               "discovery_timing_counts": timing_counts,
               "discovery_timing_note": "Only earliest snapshot retained in 24h history; pre-impulse candidate is NOT a proven pre-x5 signal",
               "dormant_wakeup_watches": sum(r["dormant_wakeup_watch"] for r in observations),
