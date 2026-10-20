@@ -7,6 +7,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from v13_paper import advance, initial_state, stamp as parse_stamp
+from v13_microcap import microcap_observation
 from v13_hunter import scan, trend_observation, continuation_observation, mature_continuation_observation, dormant_wakeup_observation
 
 STATE = "v13_history.json"
@@ -252,7 +253,8 @@ def main():
     for row in observations:
         previous_pool = pool_history.get((row["chain"], row["address"], row["pair"]), [])
         for enrich in (trend_observation, continuation_observation,
-                       mature_continuation_observation, dormant_wakeup_observation):
+                       mature_continuation_observation, dormant_wakeup_observation,
+                       microcap_observation):
             row = enrich(row, previous_pool)
         enriched.append(row)
     observations = enriched
@@ -304,6 +306,9 @@ def main():
               "discovery_timing_counts": timing_counts,
               "discovery_timing_note": "Only earliest snapshot retained in 24h history; pre-impulse candidate is NOT a proven pre-x5 signal",
               "dormant_wakeup_watches": sum(r["dormant_wakeup_watch"] for r in observations),
+              "microcap_watches": sum(r["microcap_watch"] for r in observations),
+              "microcap_sufficient_history": sum(r["microcap_history_sufficient"] for r in observations),
+              "microcap_note": "Research only; no wallet tracing, token contract risk verification or executable quotes",
               "dormant_sufficient_history": sum(r["dormant_data_sufficient"] for r in observations),
               "promotion_source_note": "Paid boosts/takeovers are visibility signals, NOT proof of organic demand or an entry",
               "blocker_counts": dict(blocker_counts.most_common()),
@@ -324,6 +329,7 @@ def main():
               "errors": errors,
               "top_near_misses": near_misses,
               "top_dormant_wakeups": [r for r in observations if r["dormant_wakeup_watch"]][:30],
+              "top_microcap_watches": [r for r in observations if r["microcap_watch"]][:30],
               "top_discovery_timing": sorted((r for r in observations if r["discovery_alert"]), key=lambda r: r.get("first_observed_at") or "")[:30],
               "top_autonomous_alerts": sorted(autonomous_alerts, key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
               "top_mature_continuations": sorted((r for r in observations if r["mature_watch"]),
@@ -337,7 +343,7 @@ def main():
                                    reverse=True)[:30]}
     with open(OUTPUT, "w") as f:
         json.dump(report, f, indent=2, allow_nan=False)
-    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts", "top_dormant_wakeups", "top_discovery_timing")}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts", "top_dormant_wakeups", "top_microcap_watches", "top_discovery_timing")}, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
