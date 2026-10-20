@@ -62,6 +62,20 @@ def discover(extra_watch=()):
                 time.sleep(.3)
         except Exception as exc:
             errors.append({"source": endpoint, "error": type(exc).__name__})
+    # Paid visibility is a discovery source, not evidence of organic demand.
+    for endpoint in ("token-boosts/latest/v1", "token-boosts/top/v1",
+                     "community-takeovers/latest/v1"):
+        try:
+            promoted = fetch("https://api.dexscreener.com/" + endpoint)
+            for item in promoted[:20] if isinstance(promoted, list) else []:
+                if not isinstance(item, dict) or item.get("chainId") != "solana" or not item.get("tokenAddress"):
+                    continue
+                url = "https://api.dexscreener.com/token-pairs/v1/solana/" + urllib.parse.quote(item["tokenAddress"])
+                for found in fetch(url) or []:
+                    add(found, "promotion:" + endpoint)
+                time.sleep(.3)
+        except Exception as exc:
+            errors.append({"source": endpoint, "error": type(exc).__name__})
     for chain, address in dict.fromkeys((*WATCH, *extra_watch)):
         try:
             url = "https://api.dexscreener.com/token-pairs/v1/" + chain + "/" + urllib.parse.quote(address)
@@ -128,12 +142,15 @@ def main():
         row["manually_watchlisted"] = (row["chain"], row["address"]) in WATCH
         row["independently_discovered_this_run"] = row.get("source", "").startswith(("search:", "profile:")) and not row["manually_watchlisted"]
     autonomous_alerts = [row for row in observations if row["discovery_alert"] and row["independently_discovered_this_run"]]
+    promoted_alerts = [row for row in observations if row["discovery_alert"] and row.get("source", "").startswith("promotion:")]
     near_misses = sorted((row for row in observations if row["discovery_alert"] and not row["market_gates_pass"]),
                          key=lambda row: (len(row["blockers"]), -(row["trades_5m"] or 0)))[:20]
     report = {"version": "v13-hunter-r6-extended-age-research", "at": now.isoformat(), "paper_only": True,
               "execution_verified": False, "trades": 0, "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch), "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
+              "promotion_sourced_alerts": len(promoted_alerts),
+              "promotion_source_note": "Paid boosts/takeovers are visibility signals, NOT proof of organic demand or an entry",
               "blocker_counts": dict(blocker_counts.most_common()),
               "alert_blocker_counts": dict(alert_blocker_counts.most_common()),
               "market_gate_passes": sum(r["market_gates_pass"] for r in observations),
@@ -148,7 +165,7 @@ def main():
               "trend_4h_sufficient_data": sum(r["trend_data_sufficient"] for r in observations),
               "trend_4h_method": "timestamped observations; >=4h history required, not OHLC candles",
               "history_observations_24h": len(history),
-              "source_coverage": "partial: DEX search + token profiles + manual watch; not a full launch stream",
+              "source_coverage": "partial: DEX search + profiles + boosts + community takeovers + manual watch; not social-media post monitoring or full launch stream",
               "errors": errors,
               "top_near_misses": near_misses,
               "top_autonomous_alerts": sorted(autonomous_alerts, key=lambda r: r["trades_5m"] or 0, reverse=True)[:30],
