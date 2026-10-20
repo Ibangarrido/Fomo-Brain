@@ -10,7 +10,8 @@ from v13_hunter import scan, trend_observation, continuation_observation, mature
 
 STATE = "v13_history.json"
 OUTPUT = "v13_report.json"
-SEARCHES = ("pump", "meme", "solana", "graduated")
+SEARCHES = ("pump", "meme", "solana", "graduated", "bnb", "flap")
+SUPPORTED_CHAINS = ("solana", "bsc")
 WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
          ("solana", "8Vb5f7enGjp2uHuRqh1F5AVoXoXrYVZHwuw2orjepump"),
          ("solana", "HqmFi85adLD8BQA7en1HfajdAfzVFps5REgQaYuw6Ax8"),
@@ -25,7 +26,8 @@ WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
          ("solana", "nxPqZ4F7ux8Vph5NFu25rEP6Kx9Gr1U6Fmj36Rjpump"),
          ("solana", "D9rASpRWPyMYQGVLQLEN4S4Cy8fYE7fP8au9Gy7Upump"),
          ("solana", "ESnW5ZbLmoEAg2QEMxnMsY9R3aS8Kw58HJacYURmpump"),
-         ("solana", "2qgnTgJbZU6Tu6CMrm5Z5ePDGuUAyGTACbBoBCw6pump"))
+         ("solana", "2qgnTgJbZU6Tu6CMrm5Z5ePDGuUAyGTACbBoBCw6pump"),
+         ("bsc", "0xaacbc156435dbab7815a61bccba1c827e52a7777"))
 MAX_HISTORY = 12000
 MAX_REVISIT = 18
 MAX_DORMANT_REVISIT = 12
@@ -41,7 +43,7 @@ def discover(extra_watch=()):
         if not isinstance(p, dict):
             return
         chain, pool = p.get("chainId"), p.get("pairAddress")
-        if chain == "solana" and pool:
+        if chain in SUPPORTED_CHAINS and pool:
             key = (chain, pool)
             if key not in pairs:
                 pairs[key] = dict(p, _v13_source=source)
@@ -57,9 +59,9 @@ def discover(extra_watch=()):
         try:
             profiles = fetch("https://api.dexscreener.com/" + endpoint)
             for p in profiles[:20] if isinstance(profiles, list) else []:
-                if p.get("chainId") != "solana" or not p.get("tokenAddress"):
+                if p.get("chainId") not in SUPPORTED_CHAINS or not p.get("tokenAddress"):
                     continue
-                url = "https://api.dexscreener.com/token-pairs/v1/solana/" + urllib.parse.quote(p["tokenAddress"])
+                url = "https://api.dexscreener.com/token-pairs/v1/" + p["chainId"] + "/" + urllib.parse.quote(p["tokenAddress"])
                 for found in fetch(url) or []:
                     add(found, "profile:" + endpoint)
                 time.sleep(.3)
@@ -71,9 +73,9 @@ def discover(extra_watch=()):
         try:
             promoted = fetch("https://api.dexscreener.com/" + endpoint)
             for item in promoted[:20] if isinstance(promoted, list) else []:
-                if not isinstance(item, dict) or item.get("chainId") != "solana" or not item.get("tokenAddress"):
+                if not isinstance(item, dict) or item.get("chainId") not in SUPPORTED_CHAINS or not item.get("tokenAddress"):
                     continue
-                url = "https://api.dexscreener.com/token-pairs/v1/solana/" + urllib.parse.quote(item["tokenAddress"])
+                url = "https://api.dexscreener.com/token-pairs/v1/" + item["chainId"] + "/" + urllib.parse.quote(item["tokenAddress"])
                 for found in fetch(url) or []:
                     add(found, "promotion:" + endpoint)
                 time.sleep(.3)
@@ -97,7 +99,7 @@ def select_revisits(prior, now):
     latest = {}
     for row in prior:
         key = (row.get("chain"), row.get("address"))
-        if key[0] != "solana" or not isinstance(key[1], str) or not key[1]:
+        if key[0] not in SUPPORTED_CHAINS or not isinstance(key[1], str) or not key[1]:
             continue
         try:
             stamp = datetime.fromisoformat(row["received_at"])
@@ -255,7 +257,7 @@ def main():
               "trend_4h_sufficient_data": sum(r["trend_data_sufficient"] for r in observations),
               "trend_4h_method": "timestamped observations; >=4h history required, not OHLC candles",
               "history_observations_24h": len(history),
-              "source_coverage": "partial: DEX search + profiles + boosts + community takeovers + manual watch; not social-media post monitoring or full launch stream",
+              "source_coverage": "partial: Solana + BSC DEX search/profiles/boosts/takeovers/manual watch; not social-media post monitoring or full launch stream",
               "errors": errors,
               "top_near_misses": near_misses,
               "top_dormant_wakeups": [r for r in observations if r["dormant_wakeup_watch"]][:30],
