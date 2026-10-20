@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "mode": "research_only",
+  "traders": [
+    {
+      "label": "DuckSoldier",
+      "network": "solana",
+      "wallet_address": null,
+      "identity_status": "unverified",
+      "tracking_status": "awaiting_verified_public_wallet",
+      "research_questions": [
+        "Does wallet buy before public posts?",
+        "Do repeat early buyers overlap across pumps?",
+        "What is realized PnL after exits and liquidity?",
+        "Are posts followed by price changes or just coincident?"
+      ],
+      "no_auto_copy": true
+    }
+  ]
+}
