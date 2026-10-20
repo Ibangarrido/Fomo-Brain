@@ -161,6 +161,23 @@ class HunterTests(unittest.TestCase):
         illiquid = dict(row, liquidity_usd=1000)
         self.assertFalse(dormant_wakeup_observation(illiquid, history)["dormant_wakeup_watch"])
 
+    def test_revisit_reserves_slots_for_dormant_tokens(self):
+        from v13_runner import select_revisits
+        quiet = {"chain": "solana", "address": "quiet", "received_at": NOW.isoformat(),
+                 "volume_5m_usd": 300, "trades_5m": 2,
+                 "liquidity_usd": 25000, "market_cap_usd": 150000,
+                 "pair_age_minutes": 500}
+        active = dict(quiet, address="active", discovery_alert=True,
+                      volume_5m_usd=5000, trades_5m=50)
+        keys, dormant_count = select_revisits([quiet, active], NOW)
+        self.assertIn(("solana", "quiet"), keys)
+        self.assertIn(("solana", "active"), keys)
+        self.assertEqual(dormant_count, 1)
+        too_old = dict(quiet, received_at=(NOW-timedelta(hours=7)).isoformat())
+        keys, count = select_revisits([too_old], NOW)
+        self.assertEqual(keys, ())
+        self.assertEqual(count, 0)
+
     def test_unknown_market_values_never_pass(self):
         r = observe(pair(txns={"m5": {}}, priceChange={}), NOW)
         self.assertFalse(r["market_gates_pass"])
