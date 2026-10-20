@@ -40,6 +40,11 @@ class PaperTests(unittest.TestCase):
             s, _ = advance(initial_state(), [row()], [prior], NOW)
             self.assertEqual(s["positions"], [])
 
+    def test_legacy_gate_flag_cannot_confirm_unknown_volume(self):
+        prior = dict(row(.00019, minutes=5), volume_5m_usd=None, market_gates_pass=True)
+        s, _ = advance(initial_state(), [row()], [prior], NOW)
+        self.assertEqual(s["positions"], [])
+
     def test_missing_liquidity_does_not_close_or_invent_equity(self):
         s, _ = advance(initial_state(), [row()], [row(.00019, minutes=5)], NOW)
         bad = dict(row(.00001), liquidity_usd=0)

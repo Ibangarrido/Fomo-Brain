@@ -99,7 +99,8 @@ def advance(state, rows, history, now):
             reason = "INVALID_PRICE_OR_LOW_VOLUME"
         prior = [r for r in history if key(r) == key(row) and stamp(r.get("received_at")) is not None
                  and now-timedelta(minutes=30) <= stamp(r["received_at"]) <= now-timedelta(minutes=5)
-                 and usable(r) and (r.get("market_gates_pass") or r.get("mature_watch"))]
+                 and usable(r) and (finite(r.get("volume_5m_usd")) or 0) >= 1500
+                 and (r.get("market_gates_pass") or r.get("mature_watch"))]
         previous = max(prior, key=lambda r: stamp(r["received_at"])) if prior else None
         if reason is None and previous is None:
             reason = "AWAITING_SECOND_QUALIFIED_SAME_POOL_OBSERVATION"
