@@ -3,7 +3,7 @@ import json
 import math
 from datetime import datetime, timezone
 
-VERSION = "v13-hunter-r6-extended-age-research"
+VERSION = "v13-hunter-r7-prospective-paper"
 MAX_EXPOSURE_EUR = 10.0
 EARLY_MIN_AGE_MINUTES = 2
 EARLY_MAX_AGE_MINUTES = 90
@@ -41,6 +41,13 @@ def observe(pair, now=None):
     created = finite(pair.get("pairCreatedAt"))
     age = (now.timestamp() * 1000 - created) / 60000 if created and created <= now.timestamp() * 1000 else None
     reasons = []
+    price = finite(pair.get("priceUsd"))
+    if price is None or price <= 0:
+        reasons.append("PRICE_UNVERIFIED_OR_INVALID")
+    if volume is None or volume < 1500:
+        reasons.append("VOLUME_UNVERIFIED_OR_LOW")
+    if buys is not None and sells is not None and (buys < 0 or sells < 0):
+        reasons.append("INVALID_TRANSACTION_COUNTS")
     if liquidity is None or liquidity < 20000:
         reasons.append("LIQUIDITY_UNVERIFIED_OR_LOW")
     if cap is None or not 0 < cap <= 2000000:
@@ -103,8 +110,12 @@ def trend_observation(row, previous=()):
     for item in previous:
         if item.get("address") != mint or item.get("chain") != chain:
             continue
+        if item.get("pair") != row.get("pair"):
+            continue
         try:
             t = datetime.fromisoformat(item["received_at"])
+            if t.utcoffset() is None:
+                continue
             p = finite(item.get("price_usd"))
             if p is not None and p > 0 and now-timedelta(hours=6) <= t < now:
                 samples.append((t, p))
@@ -146,8 +157,12 @@ def continuation_observation(row, previous=()):
     for item in previous:
         if item.get("chain") != row.get("chain") or item.get("address") != row.get("address"):
             continue
+        if item.get("pair") != row.get("pair"):
+            continue
         try:
             t = datetime.fromisoformat(item["received_at"])
+            if t.utcoffset() is None:
+                continue
             p = finite(item.get("price_usd"))
             v = finite(item.get("volume_5m_usd"))
             if now-timedelta(minutes=90) <= t < now and p is not None and p > 0:
@@ -207,8 +222,12 @@ def mature_continuation_observation(row, previous=()):
     for item in previous:
         if item.get("chain") != row.get("chain") or item.get("address") != row.get("address"):
             continue
+        if item.get("pair") != row.get("pair"):
+            continue
         try:
             t = datetime.fromisoformat(item["received_at"])
+            if t.utcoffset() is None:
+                continue
             p = finite(item.get("price_usd"))
             if now-timedelta(minutes=75) <= t <= now-timedelta(minutes=10) and p is not None and p > 0:
                 samples.append((t, p))
@@ -250,8 +269,12 @@ def dormant_wakeup_observation(row, previous=()):
     for item in previous:
         if item.get("chain") != row.get("chain") or item.get("address") != row.get("address"):
             continue
+        if item.get("pair") != row.get("pair"):
+            continue
         try:
             t = datetime.fromisoformat(item["received_at"])
+            if t.utcoffset() is None:
+                continue
             volume = finite(item.get("volume_5m_usd"))
             trades = finite(item.get("trades_5m"))
             if now-timedelta(hours=6) <= t <= now-timedelta(minutes=10) and volume is not None and trades is not None:

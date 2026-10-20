@@ -6,10 +6,12 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
+from v13_paper import advance, initial_state, stamp as parse_stamp
 from v13_hunter import scan, trend_observation, continuation_observation, mature_continuation_observation, dormant_wakeup_observation
 
 STATE = "v13_history.json"
 OUTPUT = "v13_report.json"
+PAPER_STATE = "v13_paper_state.json"
 SEARCHES = ("pump", "meme", "solana", "graduated", "bnb", "flap")
 SUPPORTED_CHAINS = ("solana", "bsc")
 WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
@@ -28,9 +30,11 @@ WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
          ("solana", "ESnW5ZbLmoEAg2QEMxnMsY9R3aS8Kw58HJacYURmpump"),
          ("solana", "2qgnTgJbZU6Tu6CMrm5Z5ePDGuUAyGTACbBoBCw6pump"),
          ("solana", "4xcATYzwt6aoQH7NnPjqdRGhdp9o1DvKu5zdE8zmpump"),
+         ("solana", "8Bm6eGHRWNjBybaKjPVuRggnfn5mf815y8FZEP2qpump"),
+         ("solana", "6KEiPuRtAEcGgv9Ryi9Zx27yg4mZXm69sZpHUrBZKD9D"),
          ("bsc", "0xaacbc156435dbab7815a61bccba1c827e52a7777"),
          ("bsc", "0xb10b2c022a717a66fa627c9c9ce73779b5347777"))
-MAX_HISTORY = 12000
+MAX_HISTORY = 120000
 MAX_REVISIT = 18
 MAX_DORMANT_REVISIT = 12
 
@@ -105,6 +109,8 @@ def select_revisits(prior, now):
             continue
         try:
             stamp = datetime.fromisoformat(row["received_at"])
+            if stamp.utcoffset() is None:
+                continue
             if not now-timedelta(hours=6) <= stamp <= now:
                 continue
         except (KeyError, TypeError, ValueError):
@@ -214,8 +220,20 @@ def main():
                 prior = [r for r in data if isinstance(r, dict)]
         except (OSError, ValueError, TypeError):
             pass
+    # Existing state errors must stop the experiment instead of resetting capital.
+    if os.path.exists(PAPER_STATE):
+        with open(PAPER_STATE) as handle:
+            paper_state = json.load(handle)
+    else:
+        if any(r.get("version") == "v13-hunter-r7-prospective-paper" for r in prior):
+            raise ValueError("Missing paper ledger after initialization; refusing capital reset")
+        paper_state = initial_state()
     extra_watch, dormant_revisit_count = select_revisits(prior, now)
+    position_watch = tuple((p["chain"], p["address"]) for p in paper_state["positions"])
+    extra_watch = tuple(dict.fromkeys((*position_watch, *extra_watch)))
     pairs, errors = discover(extra_watch)
+    # Receipt clock after requests: never backdate network observations.
+    now = datetime.now(timezone.utc)
     observations = scan(pairs, now)
     sources = {(p.get("chainId"), (p.get("baseToken") or {}).get("address"), p.get("pairAddress")): p.get("_v13_source", "unknown") for p in pairs}
     social_metadata = {(p.get("chainId"), (p.get("baseToken") or {}).get("address"), p.get("pairAddress")): public_social_links(p) for p in pairs}
@@ -224,19 +242,24 @@ def main():
         row["source"] = sources.get(key, "unknown")
         row["public_social_links"] = social_metadata.get(key, [])
         row["social_signal_verified"] = False
-    history = []
-    if os.path.exists(STATE):
-        try:
-            with open(STATE) as handle:
-                previous = json.load(handle)
-            if isinstance(previous, list):
-                history = [r for r in previous if isinstance(r, dict) and
-                           isinstance(r.get("received_at"), str) and
-                           datetime.fromisoformat(r["received_at"]) >= now - timedelta(hours=24)]
-        except (OSError, ValueError, TypeError):
-            errors.append({"source": "history", "error": "UNREADABLE"})
-    # Enrich using only PREVIOUS snapshots. No lookahead or invented OHLC candles.
-    observations = [dormant_wakeup_observation(mature_continuation_observation(continuation_observation(trend_observation(row, history), history), history), history) for row in observations]
+    history = [r for r in prior if parse_stamp(r.get("received_at")) is not None and
+               now-timedelta(hours=24) <= parse_stamp(r["received_at"]) < now]
+    # Index by pool: growing history must not multiply four full-history scans.
+    pool_history = {}
+    for item in history:
+        pool_history.setdefault((item.get("chain"), item.get("address"), item.get("pair")), []).append(item)
+    enriched = []
+    for row in observations:
+        previous_pool = pool_history.get((row["chain"], row["address"], row["pair"]), [])
+        for enrich in (trend_observation, continuation_observation,
+                       mature_continuation_observation, dormant_wakeup_observation):
+            row = enrich(row, previous_pool)
+        enriched.append(row)
+    observations = enriched
+    paper_state, paper_summary = advance(paper_state, observations, history, now)
+    with open(PAPER_STATE + ".tmp", "w") as handle:
+        json.dump(paper_state, handle, indent=2, allow_nan=False)
+    os.replace(PAPER_STATE + ".tmp", PAPER_STATE)
     # Timing audit is computed before truncation and before current rows are saved.
     timing_counts = discovery_timing_audit(observations, history, set(WATCH))
     # Keep all observations, including rejects; never infer a trade from an API receipt.
@@ -262,8 +285,11 @@ def main():
     promoted_alerts = [row for row in observations if row["discovery_alert"] and row.get("source", "").startswith("promotion:")]
     near_misses = sorted((row for row in observations if row["discovery_alert"] and not row["market_gates_pass"]),
                          key=lambda row: (len(row["blockers"]), -(row["trades_5m"] or 0)))[:20]
-    report = {"version": "v13-hunter-r6-extended-age-research", "at": now.isoformat(), "paper_only": True,
-              "execution_verified": False, "trades": 0, "pairs_discovered": len(pairs),
+    report = {"version": "v13-hunter-r7-prospective-paper", "at": now.isoformat(), "paper_only": True,
+              "execution_verified": False, "trades": 0,
+              "modeled_entries_this_run": sum(e["side"] == "BUY_MODEL" for e in paper_summary["events"]),
+              "modeled_exits_this_run": sum(e["side"] == "SELL_MODEL" for e in paper_summary["events"]),
+              "paper_portfolio": paper_summary, "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch),
               "dormant_revisits_requested": dormant_revisit_count, "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),

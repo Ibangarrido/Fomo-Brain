@@ -7,7 +7,7 @@ from v13_runner import WATCH, SUPPORTED_CHAINS
 NOW = datetime(2026, 10, 18, 16, 0, tzinfo=timezone.utc)
 
 def pair(**overrides):
-    p = {"chainId": "solana", "pairAddress": "pool", "baseToken": {"address": "mint", "symbol": "TEST"},
+    p = {"chainId": "solana", "pairAddress": "pool", "baseToken": {"address": "mint", "pair": "pool", "symbol": "TEST"},
          "pairCreatedAt": int((NOW-timedelta(minutes=12)).timestamp()*1000),
          "liquidity": {"usd": 30000}, "marketCap": 200000,
          "volume": {"m5": 10000}, "priceUsd": "0.0002",
@@ -37,8 +37,8 @@ class HunterTests(unittest.TestCase):
 
     def test_mature_age_extended_to_twelve_hours(self):
         history = [
-            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0001},
-            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00015},
+            {"chain":"solana","address":"mint","pair":"pool","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0001},
+            {"chain":"solana","address":"mint","pair":"pool","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00015},
         ]
         for hours, expected in ((8, True), (13, False)):
             old = int((NOW-timedelta(hours=hours)).timestamp()*1000)
@@ -66,9 +66,9 @@ class HunterTests(unittest.TestCase):
     def test_four_hour_and_fifteen_minute_observed_confirmation(self):
         row = observe(pair(), NOW)
         history = [
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(hours=4, minutes=30)).isoformat(), "price_usd": 0.0001},
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(minutes=15)).isoformat(), "price_usd": 0.00018},
         ]
         r = trend_observation(row, history)
@@ -79,9 +79,9 @@ class HunterTests(unittest.TestCase):
     def test_four_hour_downtrend_rejected(self):
         row = observe(pair(), NOW)
         history = [
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(hours=4, minutes=30)).isoformat(), "price_usd": 0.0004},
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(minutes=15)).isoformat(), "price_usd": 0.00018},
         ]
         self.assertFalse(trend_observation(row, history)["trend_watch"])
@@ -98,9 +98,9 @@ class HunterTests(unittest.TestCase):
         row = observe(pair(priceUsd="0.0003", volume={"m5": 12000},
                            txns={"m5": {"buys": 60, "sells": 40}}), NOW)
         history = [
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(minutes=30)).isoformat(), "price_usd": 0.0002, "volume_5m_usd": 5000},
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(minutes=15)).isoformat(), "price_usd": 0.00025, "volume_5m_usd": 6000},
         ]
         c = continuation_observation(row, history)
@@ -113,9 +113,9 @@ class HunterTests(unittest.TestCase):
     def test_continuation_blocks_illiquid_pump(self):
         row = observe(pair(priceUsd="0.0003", liquidity={"usd": 3000}), NOW)
         history = [
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(minutes=30)).isoformat(), "price_usd": 0.0002, "volume_5m_usd": 1000},
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(minutes=15)).isoformat(), "price_usd": 0.00025, "volume_5m_usd": 2000},
         ]
         self.assertFalse(continuation_observation(row, history)["continuation_watch"])
@@ -125,8 +125,8 @@ class HunterTests(unittest.TestCase):
         row = observe(pair(pairCreatedAt=old, priceUsd="0.0003"), NOW)
         self.assertFalse(mature_continuation_observation(row, [])["mature_watch"])
         history = [
-            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0002},
-            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00025},
+            {"chain":"solana","address":"mint","pair":"pool","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0002},
+            {"chain":"solana","address":"mint","pair":"pool","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00025},
         ]
         result = mature_continuation_observation(row, history)
         self.assertTrue(result["mature_watch"])
@@ -136,8 +136,8 @@ class HunterTests(unittest.TestCase):
     def test_mature_rejects_overextended_and_illiquid(self):
         old = int((NOW-timedelta(hours=4)).timestamp()*1000)
         history = [
-            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0002},
-            {"chain":"solana","address":"mint","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00025},
+            {"chain":"solana","address":"mint","pair":"pool","received_at":(NOW-timedelta(minutes=45)).isoformat(),"price_usd":0.0002},
+            {"chain":"solana","address":"mint","pair":"pool","received_at":(NOW-timedelta(minutes=15)).isoformat(),"price_usd":0.00025},
         ]
         row = observe(pair(pairCreatedAt=old, priceUsd="0.0003",
                            priceChange={"m5":12,"h1":200}), NOW)
@@ -150,7 +150,7 @@ class HunterTests(unittest.TestCase):
         row = observe(pair(priceChange={"m5": 8, "h1": 20},
                            volume={"m5": 5000}, txns={"m5": {"buys": 35, "sells": 10}}), NOW)
         history = [
-            {"chain": "solana", "address": "mint", "received_at":
+            {"chain": "solana", "address": "mint", "pair": "pool", "received_at":
              (NOW-timedelta(minutes=minutes)).isoformat(),
              "volume_5m_usd": 300, "trades_5m": 4}
             for minutes in (100, 70, 30)
@@ -182,7 +182,7 @@ class HunterTests(unittest.TestCase):
 
     def test_discovery_timing_does_not_credit_manual_cases(self):
         from v13_runner import discovery_timing_audit
-        old = {"chain":"solana", "address":"mint", "received_at":
+        old = {"chain":"solana", "address":"mint","pair":"pool", "received_at":
                (NOW-timedelta(minutes=30)).isoformat(),
                "change_1h_pct":180, "source":"search:pump"}
         current = dict(old, received_at=NOW.isoformat(), discovery_alert=True,

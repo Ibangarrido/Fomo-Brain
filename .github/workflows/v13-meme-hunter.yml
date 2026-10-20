@@ -1,12 +1,13 @@
 name: V13 Meme Hunter PAPER
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '3,18,33,48 * * * *'
 permissions:
   contents: read
 jobs:
   radar:
+    concurrency:
+      group: v13-paper-state-${{ github.ref_name }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -15,7 +16,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: V13 unit tests
-        run: python -m unittest -v test_v13_hunter.py
+        run: python -m unittest -v test_v13_hunter.py test_v13_paper.py
       - name: Restore previous paper observations
         uses: actions/cache/restore@v4
         with:
@@ -23,6 +24,13 @@ jobs:
           key: v13-history-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             v13-history-${{ github.ref_name }}-
+      - name: Restore V13 paper ledger
+        uses: actions/cache/restore@v4
+        with:
+          path: v13_paper_state.json
+          key: v13-ledger-r1-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            v13-ledger-r1-${{ github.ref_name }}-
       - name: Scan public sources
         run: python v13_runner.py
       - name: Save paper observations
@@ -30,6 +38,11 @@ jobs:
         with:
           path: v13_history.json
           key: v13-history-${{ github.ref_name }}-${{ github.run_id }}
+      - name: Save V13 paper ledger
+        uses: actions/cache/save@v4
+        with:
+          path: v13_paper_state.json
+          key: v13-ledger-r1-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload V13 evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -38,5 +51,6 @@ jobs:
           path: |
             v13_report.json
             v13_history.json
+            v13_paper_state.json
           if-no-files-found: warn
           retention-days: 7
