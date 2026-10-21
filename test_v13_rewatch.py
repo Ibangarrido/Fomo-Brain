@@ -27,6 +27,18 @@ class RewatchTests(unittest.TestCase):
         self.assertNotIn(("solana","future"), requested)
         self.assertNotIn(("solana","missing"), requested)
 
+    def test_rotation_changes_selected_contracts(self):
+        now = datetime(2026, 10, 21, 17, tzinfo=timezone.utc)
+        prior = [{"chain":"solana","address":f"mint{i:03}",
+                  "received_at":(now-timedelta(minutes=1)).isoformat(),
+                  "discovery_alert":False,"market_gates_pass":False,
+                  "blockers":["age"],"price_usd":0.001} for i in range(40)]
+        first, _ = select_revisits(prior, now)
+        second, _ = select_revisits(prior, now+timedelta(minutes=20))
+        self.assertEqual(len(first), MAX_REWATCH)
+        self.assertEqual(len(second), MAX_REWATCH)
+        self.assertNotEqual(first, second)
+
     def test_existing_alerts_are_not_double_counted(self):
         now = datetime(2026, 10, 21, 17, tzinfo=timezone.utc)
         prior = [{"chain":"solana","address":"alert","received_at":now.isoformat(),
