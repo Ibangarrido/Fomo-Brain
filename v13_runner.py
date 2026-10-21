@@ -100,7 +100,7 @@ def discover(extra_watch=()):
     return list(pairs.values()), errors
 
 def select_revisits(prior, now):
-    """Reserve follow-up slots for quiet tokens, not only past winners.
+    """Reserve follow-up slots for alerts, quiet pools and rejected non-alerts.
 
     Latest snapshot per token prevents ancient alerts from dominating. Quiet
     candidates require a valid, liquid, sub-$2m market and recent observation.
@@ -127,7 +127,7 @@ def select_revisits(prior, now):
             row.get("dormant_wakeup_watch")):
             alerts.append((stamp, key))
         # Rejected candidates remain observable; this never authorizes a buy.
-        if (row.get("discovery_alert") and not row.get("market_gates_pass") and
+        if (not row.get("discovery_alert") and not row.get("market_gates_pass") and
             isinstance(row.get("blockers"), list) and row["blockers"] and
             isinstance(row.get("price_usd"), (int, float)) and row["price_usd"] > 0):
             rejected.append((stamp, key))
@@ -244,7 +244,7 @@ def post_exit_audit(closed, history, now):
                    (r.get("chain"), r.get("address"), r.get("pair")) ==
                    (trade.get("chain"), trade.get("address"), trade.get("pair")) and
                    parse_stamp(r.get("received_at")) is not None and
-                   end < parse_stamp(r["received_at"]) <= end+timedelta(hours=2) and
+                   end < parse_stamp(r["received_at"]) <= min(now, end+timedelta(hours=2)) and
                    isinstance(r.get("price_usd"), (int, float)) and r["price_usd"] > 0]
         output.append({"symbol": trade.get("symbol"), "address": trade.get("address"),
                        "closed_at": trade.get("closed_at"), "window_complete": complete,
