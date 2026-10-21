@@ -6,7 +6,7 @@ on:
 
   # Respaldo nativo de GitHub. Puede sufrir retrasos o saltos bajo carga.
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    - cron: "7,27,47 * * * *"
 
 concurrency:
   group: fomo-brain-state-${{ github.ref }}
