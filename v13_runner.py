@@ -209,6 +209,31 @@ def discovery_timing_audit(observations, prior, manual_watch):
     return dict(counts)
 
 
+def post_exit_audit(closed, history, now):
+    """Research-only observed prices after exits; never used to trade or choose stops."""
+    output = []
+    for trade in closed[-30:]:
+        end = parse_stamp(trade.get("closed_at"))
+        exit_price = trade.get("exit_price_usd")
+        if end is None or not isinstance(exit_price, (int, float)) or exit_price <= 0:
+            continue
+        # Do not call an incomplete 2h observation window a finished outcome.
+        complete = now >= end + timedelta(hours=2)
+        samples = [r for r in history if
+                   (r.get("chain"), r.get("address"), r.get("pair")) ==
+                   (trade.get("chain"), trade.get("address"), trade.get("pair")) and
+                   parse_stamp(r.get("received_at")) is not None and
+                   end < parse_stamp(r["received_at"]) <= end+timedelta(hours=2) and
+                   isinstance(r.get("price_usd"), (int, float)) and r["price_usd"] > 0]
+        output.append({"symbol": trade.get("symbol"), "address": trade.get("address"),
+                       "closed_at": trade.get("closed_at"), "window_complete": complete,
+                       "observations": len(samples),
+                       "max_rebound_from_exit_pct": round((max(r["price_usd"] for r in samples)/exit_price-1)*100, 2) if samples else None,
+                       "min_move_from_exit_pct": round((min(r["price_usd"] for r in samples)/exit_price-1)*100, 2) if samples else None,
+                       "research_only": True})
+    return output
+
+
 def main():
     now = datetime.now(timezone.utc)
     # Revisit previous promising tokens even if search no longer returns them.
@@ -295,7 +320,9 @@ def main():
               "execution_verified": False, "trades": 0,
               "modeled_entries_this_run": sum(e["side"] == "BUY_MODEL" for e in paper_summary["events"]),
               "modeled_exits_this_run": sum(e["side"] == "SELL_MODEL" for e in paper_summary["events"]),
-              "paper_portfolio": paper_summary, "pairs_discovered": len(pairs),
+              "paper_portfolio": paper_summary,
+              "post_exit_research": post_exit_audit(paper_state["closed"], history, now),
+              "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch),
               "dormant_revisits_requested": dormant_revisit_count, "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
