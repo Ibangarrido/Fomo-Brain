@@ -38,6 +38,7 @@ WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
 MAX_HISTORY = 120000
 MAX_REVISIT = 18
 MAX_DORMANT_REVISIT = 12
+MAX_REWATCH = 8
 
 def fetch(url):
     req = urllib.request.Request(url, headers={"User-Agent": "Fomo-Brain-V13-Paper/1.0", "Accept": "application/json"})
@@ -118,12 +119,17 @@ def select_revisits(prior, now):
             continue
         if key not in latest or stamp > latest[key][0]:
             latest[key] = (stamp, row)
-    alerts, quiet = [], []
+    alerts, quiet, rejected = [], [], []
     for key, (stamp, row) in latest.items():
         if (row.get("discovery_alert") or row.get("trend_watch") or
             row.get("continuation_watch") or row.get("mature_watch") or
             row.get("dormant_wakeup_watch")):
             alerts.append((stamp, key))
+        # Rejected candidates remain observable; this never authorizes a buy.
+        if (row.get("discovery_alert") and not row.get("market_gates_pass") and
+            isinstance(row.get("blockers"), list) and row["blockers"] and
+            isinstance(row.get("price_usd"), (int, float)) and row["price_usd"] > 0):
+            rejected.append((stamp, key))
         if (row.get("volume_5m_usd") is not None and
             0 <= row["volume_5m_usd"] <= 1000 and
             row.get("trades_5m") is not None and
@@ -137,9 +143,11 @@ def select_revisits(prior, now):
             quiet.append((stamp, key))
     alerts.sort(reverse=True)
     quiet.sort(reverse=True)
+    rejected.sort(reverse=True)
     active = [key for _, key in alerts[:MAX_REVISIT]]
     dormant = [key for _, key in quiet if key not in active][:MAX_DORMANT_REVISIT]
-    return tuple(active + dormant), len(dormant)
+    rewatch = [key for _, key in rejected if key not in active and key not in dormant][:MAX_REWATCH]
+    return tuple(active + dormant + rewatch), len(dormant)
 
 
 
@@ -338,7 +346,7 @@ def main():
               "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch),
               "post_exit_revisits_requested": len(closed_watch),
-              "dormant_revisits_requested": dormant_revisit_count, "alerts": sum(r["discovery_alert"] for r in observations),
+              "dormant_revisits_requested": dormant_revisit_count, "rewatch_rejected_slots_max": MAX_REWATCH, "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
               "promotion_sourced_alerts": len(promoted_alerts),
               "tokens_with_declared_social_links": sum(bool(r["public_social_links"]) for r in observations),
