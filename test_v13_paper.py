@@ -127,6 +127,16 @@ class PaperTests(unittest.TestCase):
         self.assertFalse(trend_observation(row(), history)["trend_data_sufficient"])
         self.assertFalse(continuation_observation(row(), history)["continuation_data_sufficient"])
 
+    def test_recent_closed_positions_remain_on_watch_for_two_hours(self):
+        from v13_runner import recent_closed_revisits
+        trades = [
+            {"chain": "solana", "address": "mint", "closed_at": (NOW-timedelta(minutes=30)).isoformat()},
+            {"chain": "solana", "address": "mint", "closed_at": (NOW-timedelta(minutes=15)).isoformat()},
+            {"chain": "bsc", "address": "old", "closed_at": (NOW-timedelta(minutes=121)).isoformat()},
+            {"chain": "bsc", "address": "future", "closed_at": (NOW+timedelta(minutes=1)).isoformat()},
+        ]
+        self.assertEqual(recent_closed_revisits(trades, NOW), (("solana", "mint"),))
+
     def test_post_exit_audit_is_observation_only_and_no_future_leak(self):
         from v13_runner import post_exit_audit
         closed = [{"chain": "solana", "address": "mint", "pair": "pool",
