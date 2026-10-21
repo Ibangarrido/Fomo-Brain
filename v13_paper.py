@@ -106,6 +106,14 @@ def advance(state, rows, history, now):
             reason = "AWAITING_SECOND_QUALIFIED_SAME_POOL_OBSERVATION"
         if reason is None and not 1 <= (row["price_usd"] / previous["price_usd"] - 1) * 100 <= 12:
             reason = "CONFIRMATION_CHANGE_OUTSIDE_1_12PCT"
+        # Reject late, vertically extended candles before opening a paper position.
+        # Research-only gate: does not claim to forecast the next candle.
+        change5 = finite(row.get("change_5m_pct"))
+        change1h = finite(row.get("change_1h_pct"))
+        if reason is None and (change5 is None or change1h is None):
+            reason = "ENTRY_MOMENTUM_UNVERIFIED"
+        if reason is None and (change5 > 15 or change1h > 80):
+            reason = "ENTRY_OVEREXTENDED_5M_OR_1H"
         token = key(row)[:2]
         if token in held or token in cooldown or token in exited:
             reason = "HELD_OR_24H_COOLDOWN"
@@ -153,5 +161,8 @@ def advance(state, rows, history, now):
                "modeled_equity_eur": None if unknown else round(s["cash_eur"] + s["reserve_eur"] + marked, 4),
                "modeled_realized_pnl_eur": round(sum(p["net_pnl_eur"] for p in s["closed"]), 4),
                "events": events, "entry_checks": diagnostics, "recent_closed_audit": closed_audit,
+               "entry_stress_test": {"hypothetical_next_price_drop_pct": 5,
+                                     "modeled_loss_pct_after_both_fees": round(100*(1-(.95*.97/1.03)), 2),
+                                     "note": "Illustrative 5% adverse move plus 3% entry and exit costs; not a forecast or stop guarantee"},
                "assumptions": "Fixed EUR/USD=1; 3% each side; gas/MEV excluded; no sell-route verification; stops only at observed prices; no monitoring between runs"}
     return s, summary
