@@ -147,7 +147,7 @@ def select_revisits(prior, now):
     rejected.sort(reverse=True)
     active = [key for _, key in alerts[:MAX_REVISIT]]
     dormant = [key for _, key in quiet if key not in active][:MAX_DORMANT_REVISIT]
-    rewatch = [key for _, key in rejected if key not in active and key not in dormant][:MAX_REWATCH]
+    # Rotate the eligible rejected universe across cycles rather than always\n    # favoring lexicographically last addresses on equal receipt timestamps.\n    eligible = sorted({key for _, key in rejected if key not in active and key not in dormant})\n    offset = (int(now.timestamp()) // (20 * 60)) % len(eligible) if eligible else 0\n    rotated = eligible[offset:] + eligible[:offset]\n    rewatch = rotated[:MAX_REWATCH]
     return tuple(active + dormant + rewatch), len(dormant)
 
 
