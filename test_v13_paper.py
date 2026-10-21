@@ -127,6 +127,21 @@ class PaperTests(unittest.TestCase):
         self.assertFalse(trend_observation(row(), history)["trend_data_sufficient"])
         self.assertFalse(continuation_observation(row(), history)["continuation_data_sufficient"])
 
+    def test_post_exit_audit_is_observation_only_and_no_future_leak(self):
+        from v13_runner import post_exit_audit
+        closed = [{"chain": "solana", "address": "mint", "pair": "pool",
+                   "symbol": "DTC", "closed_at": NOW.isoformat(), "exit_price_usd": .001}]
+        def sample(minutes, price):
+            return {"chain": "solana", "address": "mint", "pair": "pool",
+                    "received_at": (NOW+timedelta(minutes=minutes)).isoformat(), "price_usd": price}
+        history = [sample(15, .0015), sample(90, .0008), sample(130, .01)]
+        audit = post_exit_audit(closed, history, NOW+timedelta(minutes=100))[0]
+        self.assertFalse(audit["window_complete"])
+        self.assertEqual(audit["observations"], 2)
+        self.assertEqual(audit["max_rebound_from_exit_pct"], 50)
+        self.assertEqual(audit["min_move_from_exit_pct"], -20)
+        self.assertTrue(audit["research_only"])
+
     def test_runner_restores_ledger_and_follows_open_position(self):
         import v13_runner as runner
         class Clock(datetime):
