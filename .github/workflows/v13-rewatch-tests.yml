@@ -1,0 +1,23 @@
+name: V13 REWATCH regression
+on:
+  push:
+    branches:
+      - research/rewatch-rejected-v13
+  pull_request:
+    paths:
+      - 'v13_runner.py'
+      - 'test_v13_rewatch.py'
+      - '.github/workflows/v13-rewatch-tests.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Regression tests (no market orders)
+        run: python -m unittest -v test_v13_rewatch.py test_v13_hunter.py test_v13_paper.py
