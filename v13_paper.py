@@ -128,12 +128,30 @@ def advance(state, rows, history, now):
         held.add(token)
         events.append(dict(position, side="BUY_MODEL"))
     s["last_at"] = now.isoformat()
+    # Retrospective accounting diagnostics: never interpreted as executable fills.
+    recent_closed = s["closed"][-30:]
+    closed_audit = []
+    for closed in recent_closed:
+        entry, exit_price = finite(closed.get("entry_price_usd")), finite(closed.get("exit_price_usd"))
+        cost, proceeds = finite(closed.get("cost_eur")), finite(closed.get("proceeds_eur"))
+        if not entry or not exit_price or cost is None or proceeds is None:
+            continue
+        gross_price_change = (exit_price / entry - 1) * 100
+        net_return = (proceeds / cost - 1) * 100 if cost else None
+        closed_audit.append({"chain": closed.get("chain"), "address": closed.get("address"),
+                             "symbol": closed.get("symbol"), "reason": closed.get("reason"),
+                             "gross_price_change_pct": round(gross_price_change, 2),
+                             "net_modeled_return_pct": round(net_return, 2) if net_return is not None else None,
+                             "stop_gap_beyond_10pct_points": round(max(0, -10-net_return), 2)
+                             if closed.get("reason") == "STOP_OBSERVED" and net_return is not None else None,
+                             "entry_to_exit_minutes": round((stamp(closed["closed_at"])-stamp(closed["opened_at"])).total_seconds()/60, 1)
+                             if stamp(closed.get("closed_at")) and stamp(closed.get("opened_at")) else None})
     summary = {"schema": SCHEMA, "mode": "prospective_price_model_only",
                "execution_verified": False, "cash_eur": round(s["cash_eur"], 4),
                "reserve_eur": round(s["reserve_eur"], 4),
                "open_positions": len(s["positions"]), "unknown_positions": unknown,
                "modeled_equity_eur": None if unknown else round(s["cash_eur"] + s["reserve_eur"] + marked, 4),
                "modeled_realized_pnl_eur": round(sum(p["net_pnl_eur"] for p in s["closed"]), 4),
-               "events": events, "entry_checks": diagnostics,
+               "events": events, "entry_checks": diagnostics, "recent_closed_audit": closed_audit,
                "assumptions": "Fixed EUR/USD=1; 3% each side; gas/MEV excluded; no sell-route verification; stops only at observed prices; no monitoring between runs"}
     return s, summary
