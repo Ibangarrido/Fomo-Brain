@@ -209,6 +209,18 @@ def discovery_timing_audit(observations, prior, manual_watch):
     return dict(counts)
 
 
+def recent_closed_revisits(closed, now, hours=2):
+    """Revisit recently closed tokens to measure the outcome of paper exits."""
+    result = []
+    for trade in closed:
+        when = parse_stamp(trade.get("closed_at"))
+        chain, address = trade.get("chain"), trade.get("address")
+        if (when is not None and timedelta(0) <= now - when <= timedelta(hours=hours)
+                and isinstance(chain, str) and chain and isinstance(address, str) and address):
+            result.append((chain, address))
+    return tuple(dict.fromkeys(result))
+
+
 def post_exit_audit(closed, history, now):
     """Research-only observed prices after exits; never used to trade or choose stops."""
     output = []
@@ -256,7 +268,8 @@ def main():
         paper_state = initial_state()
     extra_watch, dormant_revisit_count = select_revisits(prior, now)
     position_watch = tuple((p["chain"], p["address"]) for p in paper_state["positions"])
-    extra_watch = tuple(dict.fromkeys((*position_watch, *extra_watch)))
+    closed_watch = recent_closed_revisits(paper_state["closed"], now)
+    extra_watch = tuple(dict.fromkeys((*position_watch, *closed_watch, *extra_watch)))
     pairs, errors = discover(extra_watch)
     # Receipt clock after requests: never backdate network observations.
     now = datetime.now(timezone.utc)
@@ -324,6 +337,7 @@ def main():
               "post_exit_research": post_exit_audit(paper_state["closed"], history, now),
               "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch),
+              "post_exit_revisits_requested": len(closed_watch),
               "dormant_revisits_requested": dormant_revisit_count, "alerts": sum(r["discovery_alert"] for r in observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
               "promotion_sourced_alerts": len(promoted_alerts),
