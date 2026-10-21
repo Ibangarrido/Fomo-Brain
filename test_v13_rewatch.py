@@ -7,7 +7,7 @@ class RewatchTests(unittest.TestCase):
     def test_rejected_alert_is_revisited(self):
         now = datetime(2026, 10, 21, 17, tzinfo=timezone.utc)
         prior = [{"chain":"solana","address":"rejected-mint","received_at":(now-timedelta(minutes=10)).isoformat(),
-                  "discovery_alert":True,"market_gates_pass":False,"blockers":["age"],
+                  "discovery_alert":False,"market_gates_pass":False,"blockers":["age"],
                   "price_usd":0.001}]
         requested, dormant = select_revisits(prior, now)
         self.assertIn(("solana","rejected-mint"), requested)
@@ -23,8 +23,17 @@ class RewatchTests(unittest.TestCase):
                   {"chain":"solana","address":"missing","received_at":now.isoformat(),
                    "discovery_alert":True,"market_gates_pass":False,"blockers":["age"],"price_usd":None}]
         requested, _ = select_revisits(prior, now)
-        self.assertLessEqual(len(requested), 18)
+        self.assertLessEqual(len(requested), MAX_REWATCH)
         self.assertNotIn(("solana","future"), requested)
+        self.assertNotIn(("solana","missing"), requested)
+
+    def test_existing_alerts_are_not_double_counted(self):
+        now = datetime(2026, 10, 21, 17, tzinfo=timezone.utc)
+        prior = [{"chain":"solana","address":"alert","received_at":now.isoformat(),
+                  "discovery_alert":True,"market_gates_pass":False,
+                  "blockers":["age"],"price_usd":0.001}]
+        requested, _ = select_revisits(prior, now)
+        self.assertEqual(requested, (("solana","alert"),))
 
 if __name__ == "__main__":
     unittest.main()
