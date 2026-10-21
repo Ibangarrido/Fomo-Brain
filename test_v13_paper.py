@@ -33,6 +33,18 @@ class PaperTests(unittest.TestCase):
         self.assertAlmostEqual(report["modeled_equity_eur"], 99.4175, places=4)
         self.assertFalse(report["execution_verified"])
 
+    def test_overextended_entry_is_rejected_but_not_removed_from_research(self):
+        for changes in ({"change_5m_pct": 20}, {"change_1h_pct": 95}):
+            current = row()
+            current.update(changes)
+            state, report = advance(initial_state(), [current], [row(.00019, minutes=5)], NOW)
+            self.assertEqual(state["positions"], [])
+            self.assertEqual(report["entry_checks"][0]["blocker"], "ENTRY_OVEREXTENDED_5M_OR_1H")
+
+    def test_entry_stress_test_accounts_for_both_fees(self):
+        _, report = advance(initial_state(), [], [], NOW)
+        self.assertAlmostEqual(report["entry_stress_test"]["modeled_loss_pct_after_both_fees"], 10.53, places=2)
+
     def test_another_pool_future_or_stale_quote_does_not_confirm(self):
         for prior in (row(.00019, pool="other", minutes=5),
                       row(.00019, minutes=-5), row(.00019, minutes=31)):
