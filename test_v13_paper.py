@@ -67,6 +67,17 @@ class PaperTests(unittest.TestCase):
         s, report = advance(s, [r], [previous], newer)
         self.assertEqual(s["positions"], [])
 
+    def test_closed_audit_separates_price_loss_and_modeled_costs(self):
+        state, _ = advance(initial_state(), [row()], [row(.00019, minutes=5)], NOW)
+        state, report = advance(state, [row(.00017)], [], NOW+timedelta(minutes=15))
+        self.assertEqual(len(report["recent_closed_audit"]), 1)
+        audit = report["recent_closed_audit"][0]
+        self.assertEqual(audit["reason"], "STOP_OBSERVED")
+        self.assertAlmostEqual(audit["gross_price_change_pct"], -15.0)
+        self.assertLess(audit["net_modeled_return_pct"], -15)
+        self.assertGreater(audit["stop_gap_beyond_10pct_points"], 0)
+        self.assertEqual(audit["entry_to_exit_minutes"], 15)
+
     def test_profit_reserve_and_conservation(self):
         s, _ = advance(initial_state(), [row()], [row(.00019, minutes=5)], NOW)
         s, report = advance(s, [row(.0003)], [], NOW+timedelta(minutes=15))
