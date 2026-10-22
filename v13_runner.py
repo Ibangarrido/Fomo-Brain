@@ -149,7 +149,7 @@ def select_revisits(prior, now):
     dormant = [key for _, key in quiet if key not in active][:MAX_DORMANT_REVISIT]
     # Rotate rejected candidates between cycles without changing trading rules.
     eligible = sorted({key for _, key in rejected if key not in active and key not in dormant})
-    offset = (int(now.timestamp()) // (20 * 60)) % len(eligible) if eligible else 0
+    offset = ((int(now.timestamp()) // (20 * 60)) * MAX_REWATCH) % len(eligible) if eligible else 0
     rotated = eligible[offset:] + eligible[:offset]
     rewatch = rotated[:MAX_REWATCH]
     return tuple(active + dormant + rewatch), len(dormant)
