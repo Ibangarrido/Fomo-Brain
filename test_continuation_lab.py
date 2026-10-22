@@ -24,11 +24,21 @@ class ContinuationTests(unittest.TestCase):
         return [[minute-300+i*60,*v] for i,v in enumerate(values)]
     def candidate(self):
         p=pair(address='cont',price=1.35,liquidity=25000)
-        p['priceChange']={'h1':400,'m5':-10};p['txns']['m5']={'buys':55,'sells':45}
+        # Valid fixture: the production late-entry guard rejects >150%/1h.
+        p['priceChange']={'h1':100,'m5':-10};p['txns']['m5']={'buys':55,'sells':45}
         p['_brain_received_at']=datetime.now(timezone.utc).isoformat()
         token=brain.analizar_par(p)
         old=dict(token,received_at=(datetime.now(timezone.utc)-timedelta(seconds=60)).isoformat(),price=1.34)
         return p,token,old
+    def test_late_entry_guard_rejects_over_150_percent_without_changing_policy(self):
+        p, token, _ = self.candidate()
+        self.assertIsNotNone(token)
+        p['priceChange']['h1'] = 150
+        self.assertIsNotNone(brain.analizar_par(p))
+        p['priceChange']['h1'] = 400
+        self.assertIsNone(brain.analizar_par(p))
+        self.assertEqual(lab.candidate_universe({'late': p}, brain.analizar_par), [])
+
     def test_negative_aggregate_momentum_reaches_candle_guard_and_can_fill(self):
         lab.bootstrap()
         p, _, old = self.candidate()
