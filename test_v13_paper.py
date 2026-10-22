@@ -18,6 +18,29 @@ def row(price=.0002, address="mint", pool="pool", minutes=0):
 
 
 class PaperTests(unittest.TestCase):
+    def test_post_exit_audit_survives_pruned_history_and_rejects_future_and_other_pools(self):
+        from v13_runner import post_exit_audit
+        import json
+        end = NOW - timedelta(hours=3)
+        trade = {"chain": "solana", "address": "mint", "pair": "pool",
+                 "symbol": "TEST", "closed_at": end.isoformat(), "exit_price_usd": 1.0}
+        key = json.dumps([trade[k] for k in ("chain", "address", "pair", "closed_at")])
+        stored = {key: {"samples": {
+            (end + timedelta(minutes=15)).isoformat(): 1.2,
+            (NOW + timedelta(minutes=10)).isoformat(): 100.0,
+        }}}
+        other_pool = {"chain": "solana", "address": "mint", "pair": "other",
+                      "received_at": (end + timedelta(minutes=20)).isoformat(), "price_usd": 9.0}
+        result = post_exit_audit([trade], [other_pool], NOW, stored)[0]
+        self.assertEqual(result["observations"], 1)
+        self.assertEqual(result["max_rebound_from_exit_pct"], 20.0)
+        self.assertTrue(result["window_complete"])
+        self.assertTrue(result["has_observed_post_exit_data"])
+        missing = post_exit_audit([trade], [], NOW, {})[0]
+        self.assertTrue(missing["window_complete"])
+        self.assertFalse(missing["has_observed_post_exit_data"])
+        self.assertIsNone(missing["max_rebound_from_exit_pct"])
+
     def test_first_observation_does_not_buy(self):
         s, report = advance(initial_state(), [row()], [], NOW)
         self.assertEqual(s["cash_eur"], 100)
