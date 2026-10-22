@@ -36,6 +36,8 @@ class PaperTests(unittest.TestCase):
         ]
         result = post_exit_audit([trade], history, NOW, stored)[0]
         self.assertEqual(result["observations"], 2)
+        self.assertEqual(result["observation_coverage"], "OBSERVED_SAMPLES")
+        self.assertEqual(result["last_observed_at"], t2)
         self.assertEqual(result["max_rebound_from_exit_pct"], 30.0)
 
     def test_post_exit_audit_survives_pruned_history_and_rejects_future_and_other_pools(self):
@@ -59,6 +61,8 @@ class PaperTests(unittest.TestCase):
         missing = post_exit_audit([trade], [], NOW, {})[0]
         self.assertTrue(missing["window_complete"])
         self.assertFalse(missing["has_observed_post_exit_data"])
+        self.assertEqual(missing["observation_coverage"], "NO_OBSERVED_SAMPLES")
+        self.assertIsNone(missing["last_observed_at"])
         self.assertIsNone(missing["max_rebound_from_exit_pct"])
 
     def test_first_observation_does_not_buy(self):
