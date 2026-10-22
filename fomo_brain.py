@@ -1630,7 +1630,7 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60,
               (token["liquidity"] < 10_000, "liquidez < 10000 USD"),
               (token["buyRatio5m"] < min_buy_ratio, f"ratio compras < {min_buy_ratio:.0%}"),
               (token["trades5m"] < 20, "actividad 5m insuficiente"),
-              (not confirm and token["change1h"] > 150, "subida 1h > 150%")]
+              (token["change1h"] > 150, "subida 1h > 150%")]
     for failed, reason in checks:
         if failed:
             return reason
