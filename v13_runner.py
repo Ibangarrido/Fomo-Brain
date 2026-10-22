@@ -227,27 +227,41 @@ def unique_alert_tokens(observations):
                 if r.get("discovery_alert") and r.get("chain") and r.get("address")})
 
 
-def post_exit_audit(closed, history, now):
-    """Research-only observed prices after exits; never used to trade or choose stops."""
+def post_exit_audit(closed, history, now, stored=None):
+    """Observed post-sale prices only; persist evidence without influencing trading."""
+    stored = stored if isinstance(stored, dict) else {}
     output = []
     for trade in closed[-30:]:
         end = parse_stamp(trade.get("closed_at"))
         exit_price = trade.get("exit_price_usd")
-        if end is None or not isinstance(exit_price, (int, float)) or exit_price <= 0:
+        if end is None or not isinstance(exit_price, (int, float)) or not 0 < exit_price < float("inf"):
             continue
-        # Do not call an incomplete 2h observation window a finished outcome.
+        key = json.dumps([trade.get(k) for k in ("chain", "address", "pair", "closed_at")])
+        saved = stored.get(key, {})
+        saved_samples = saved.get("samples", {}) if isinstance(saved, dict) else {}
+        values = {}
+        if isinstance(saved_samples, dict):
+            for stamp_str, price in saved_samples.items():
+                stamp = parse_stamp(stamp_str)
+                if (stamp is not None and end < stamp <= min(now, end + timedelta(hours=2))
+                    and isinstance(price, (int, float)) and 0 < price < float("inf")):
+                    values[stamp.isoformat()] = price
+        for row in history:
+            if (row.get("chain"), row.get("address"), row.get("pair")) != (
+                trade.get("chain"), trade.get("address"), trade.get("pair")):
+                continue
+            stamp = parse_stamp(row.get("received_at"))
+            price = row.get("price_usd")
+            if (stamp is not None and end < stamp <= min(now, end + timedelta(hours=2))
+                and isinstance(price, (int, float)) and 0 < price < float("inf")):
+                values[stamp.isoformat()] = price
         complete = now >= end + timedelta(hours=2)
-        samples = [r for r in history if
-                   (r.get("chain"), r.get("address"), r.get("pair")) ==
-                   (trade.get("chain"), trade.get("address"), trade.get("pair")) and
-                   parse_stamp(r.get("received_at")) is not None and
-                   end < parse_stamp(r["received_at"]) <= end+timedelta(hours=2) and
-                   isinstance(r.get("price_usd"), (int, float)) and r["price_usd"] > 0]
+        prices = list(values.values())
         output.append({"symbol": trade.get("symbol"), "address": trade.get("address"),
                        "closed_at": trade.get("closed_at"), "window_complete": complete,
-                       "observations": len(samples),
-                       "max_rebound_from_exit_pct": round((max(r["price_usd"] for r in samples)/exit_price-1)*100, 2) if samples else None,
-                       "min_move_from_exit_pct": round((min(r["price_usd"] for r in samples)/exit_price-1)*100, 2) if samples else None,
+                       "observations": len(prices), "has_observed_post_exit_data": bool(prices),
+                       "max_rebound_from_exit_pct": round((max(prices)/exit_price-1)*100, 2) if prices else None,
+                       "min_move_from_exit_pct": round((min(prices)/exit_price-1)*100, 2) if prices else None,
                        "research_only": True})
     return output
 
@@ -367,7 +381,7 @@ def main():
               "modeled_entries_this_run": sum(e["side"] == "BUY_MODEL" for e in paper_summary["events"]),
               "modeled_exits_this_run": sum(e["side"] == "SELL_MODEL" for e in paper_summary["events"]),
               "paper_portfolio": paper_summary,
-              "post_exit_research": post_exit_audit(paper_state["closed"], history, now),
+              "post_exit_research": post_exit_audit(paper_state["closed"], history, now, post_exit_store),
               "post_exit_persisted_sample_count": sum(len(v.get("samples", {})) for v in post_exit_store.values()),
               "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch),
