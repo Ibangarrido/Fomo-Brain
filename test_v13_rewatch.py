@@ -15,15 +15,19 @@ class RewatchTests(unittest.TestCase):
 
     def test_bounded_and_no_future_or_missing_price(self):
         now = datetime(2026, 10, 21, 17, tzinfo=timezone.utc)
-        prior = [{"chain":"solana","address":f"mint{i}","received_at":(now-timedelta(minutes=5)).isoformat(),
-                  "discovery_alert":True,"market_gates_pass":False,"blockers":["age"],
-                  "price_usd":0.001} for i in range(50)]
-        prior += [{"chain":"solana","address":"future","received_at":(now+timedelta(minutes=1)).isoformat(),
-                   "discovery_alert":True,"market_gates_pass":False,"blockers":["age"],"price_usd":0.001},
+        prior = [{"chain":"solana","address":f"mint{i:03}",
+                  "received_at":(now-timedelta(minutes=5)).isoformat(),
+                  "discovery_alert":False,"market_gates_pass":False,
+                  "blockers":["age"],"price_usd":0.001} for i in range(50)]
+        prior += [{"chain":"solana","address":"future",
+                   "received_at":(now+timedelta(minutes=1)).isoformat(),
+                   "discovery_alert":False,"market_gates_pass":False,
+                   "blockers":["age"],"price_usd":0.001},
                   {"chain":"solana","address":"missing","received_at":now.isoformat(),
-                   "discovery_alert":True,"market_gates_pass":False,"blockers":["age"],"price_usd":None}]
+                   "discovery_alert":False,"market_gates_pass":False,
+                   "blockers":["age"],"price_usd":None}]
         requested, _ = select_revisits(prior, now)
-        self.assertLessEqual(len(requested), MAX_REWATCH)
+        self.assertEqual(len(requested), MAX_REWATCH)
         self.assertNotIn(("solana","future"), requested)
         self.assertNotIn(("solana","missing"), requested)
 
