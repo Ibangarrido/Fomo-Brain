@@ -18,6 +18,26 @@ def row(price=.0002, address="mint", pool="pool", minutes=0):
 
 
 class PaperTests(unittest.TestCase):
+    def test_post_exit_audit_merges_saved_and_history_without_duplicates(self):
+        from v13_runner import post_exit_audit
+        import json
+        end = NOW - timedelta(hours=3)
+        trade = {"chain": "solana", "address": "mint", "pair": "pool",
+                 "symbol": "TEST", "closed_at": end.isoformat(), "exit_price_usd": 1.0}
+        t1 = (end + timedelta(minutes=15)).isoformat()
+        t2 = (end + timedelta(minutes=30)).isoformat()
+        key = json.dumps([trade[k] for k in ("chain", "address", "pair", "closed_at")])
+        stored = {key: {"samples": {t1: 1.1}}}
+        history = [
+            {"chain": "solana", "address": "mint", "pair": "pool",
+             "received_at": t1, "price_usd": 1.1},
+            {"chain": "solana", "address": "mint", "pair": "pool",
+             "received_at": t2, "price_usd": 1.3},
+        ]
+        result = post_exit_audit([trade], history, NOW, stored)[0]
+        self.assertEqual(result["observations"], 2)
+        self.assertEqual(result["max_rebound_from_exit_pct"], 30.0)
+
     def test_post_exit_audit_survives_pruned_history_and_rejects_future_and_other_pools(self):
         from v13_runner import post_exit_audit
         import json
