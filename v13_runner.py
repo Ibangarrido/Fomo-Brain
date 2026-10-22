@@ -221,6 +221,12 @@ def recent_closed_revisits(closed, now, hours=2):
     return tuple(dict.fromkeys(result))
 
 
+def unique_alert_tokens(observations):
+    """Count distinct alerted contracts, not DEX pools; research metric only."""
+    return len({(r.get("chain"), r.get("address")) for r in observations
+                if r.get("discovery_alert") and r.get("chain") and r.get("address")})
+
+
 def post_exit_audit(closed, history, now):
     """Research-only observed prices after exits; never used to trade or choose stops."""
     output = []
@@ -339,6 +345,7 @@ def main():
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch),
               "post_exit_revisits_requested": len(closed_watch),
               "dormant_revisits_requested": dormant_revisit_count, "alerts": sum(r["discovery_alert"] for r in observations),
+              "unique_alert_tokens": unique_alert_tokens(observations),
               "autonomous_discovery_alerts": len(autonomous_alerts),
               "promotion_sourced_alerts": len(promoted_alerts),
               "tokens_with_declared_social_links": sum(bool(r["public_social_links"]) for r in observations),
