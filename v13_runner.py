@@ -266,6 +266,13 @@ def post_exit_audit(closed, history, now, stored=None):
     return output
 
 
+def ranked_discovery_alerts(observations):
+    """Complete ranked alert set; the top-30 view is only a dashboard preview."""
+    return sorted((r for r in observations if r["discovery_alert"]),
+                  key=lambda r: (r["market_gates_pass"], r["trades_5m"] or 0),
+                  reverse=True)
+
+
 def main():
     now = datetime.now(timezone.utc)
     # Revisit previous promising tokens even if search no longer returns them.
@@ -428,12 +435,11 @@ def main():
                                           key=lambda r: r["continuation_relative_volume"] or 0, reverse=True)[:30],
               "top_trends": sorted((r for r in observations if r["trend_watch"]),
                                    key=lambda r: r["trend_4h_pct_observed"] or 0, reverse=True)[:30],
-              "top_alerts": sorted((r for r in observations if r["discovery_alert"]),
-                                   key=lambda r: (r["market_gates_pass"], r["trades_5m"] or 0),
-                                   reverse=True)[:30]}
+              "all_alerts": ranked_discovery_alerts(observations),
+              "top_alerts": ranked_discovery_alerts(observations)[:30]}
     with open(OUTPUT, "w") as f:
         json.dump(report, f, indent=2, allow_nan=False)
-    print(json.dumps({k: v for k, v in report.items() if k not in ("top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts", "top_dormant_wakeups", "top_microcap_watches", "top_discovery_timing")}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in report.items() if k not in ("all_alerts", "top_alerts", "top_continuations", "top_trends", "top_mature_continuations", "top_near_misses", "top_autonomous_alerts", "top_dormant_wakeups", "top_microcap_watches", "top_discovery_timing")}, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
