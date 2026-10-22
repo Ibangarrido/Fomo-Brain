@@ -266,6 +266,37 @@ def post_exit_audit(closed, history, now, stored=None):
     return output
 
 
+
+def contrarian_exhaustion_research(rows):
+    """GCR-inspired contrarian observations only; no trading or wallet attribution.
+
+    Euphoria requires observed >=150% 1h price change. Exhaustion is only
+    evaluated when BOTH 5m price change and buy ratio are present. Missing
+    values stay explicitly unverified, never inferred as a sell signal.
+    """
+    output = []
+    for row in rows:
+        hour = row.get("change_1h_pct")
+        five = row.get("change_5m_pct")
+        ratio = row.get("buy_ratio_5m")
+        if not isinstance(hour, (int, float)) or not 150 <= hour < float("inf"):
+            continue
+        if not (isinstance(five, (int, float)) and -float("inf") < five < float("inf")
+                and isinstance(ratio, (int, float)) and 0 <= ratio <= 1):
+            status = "EXHAUSTION_UNVERIFIED"
+        elif five < 0 and ratio < 0.5:
+            status = "POSSIBLE_EXHAUSTION_UNCONFIRMED"
+        else:
+            status = "EUPHORIA_WITHOUT_EXHAUSTION_CONFIRMATION"
+        output.append({"chain": row.get("chain"), "address": row.get("address"),
+                       "pair": row.get("pair"), "symbol": row.get("symbol"),
+                       "received_at": row.get("received_at"),
+                       "change_1h_pct": hour, "change_5m_pct": five,
+                       "buy_ratio_5m": ratio, "research_status": status,
+                       "trading_signal": False, "wallet_attribution": None})
+    return output
+
+
 def main():
     now = datetime.now(timezone.utc)
     # Revisit previous promising tokens even if search no longer returns them.
@@ -392,6 +423,8 @@ def main():
               "promotion_sourced_alerts": len(promoted_alerts),
               "tokens_with_declared_social_links": sum(bool(r["public_social_links"]) for r in observations),
               "social_posts_checked": 0,
+              "contrarian_research": contrarian_exhaustion_research(observations),
+              "contrarian_research_note": "GCR-inspired research hypothesis only; no GCR wallet monitoring, short trades, executable quotes or strategy changes",
               "social_signal_note": "Self-declared DEX social URLs are not posts, engagement, or proof of pre-pump coordination; no X/Telegram API connected",
               "discovery_timing_counts": timing_counts,
               "discovery_timing_note": "Only earliest snapshot retained in 24h history; pre-impulse candidate is NOT a proven pre-x5 signal",
