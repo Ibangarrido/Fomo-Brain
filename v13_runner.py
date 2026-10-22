@@ -332,7 +332,7 @@ def main():
         samples = entry.get("samples", {}) if isinstance(entry, dict) else {}
         if not isinstance(samples, dict):
             samples = {}
-        for row in observations:
+        for row in history + observations:
             observed_at = parse_stamp(row.get("received_at"))
             observed_price = row.get("price_usd")
             if (observed_at is not None and exit_time < observed_at <= exit_time + timedelta(hours=2)
