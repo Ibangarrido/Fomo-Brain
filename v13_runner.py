@@ -260,6 +260,8 @@ def post_exit_audit(closed, history, now, stored=None):
         output.append({"symbol": trade.get("symbol"), "address": trade.get("address"),
                        "closed_at": trade.get("closed_at"), "window_complete": complete,
                        "observations": len(prices), "has_observed_post_exit_data": bool(prices),
+                       "observation_coverage": "OBSERVED_SAMPLES" if prices else "NO_OBSERVED_SAMPLES",
+                       "last_observed_at": max(values) if values else None,
                        "max_rebound_from_exit_pct": round((max(prices)/exit_price-1)*100, 2) if prices else None,
                        "min_move_from_exit_pct": round((min(prices)/exit_price-1)*100, 2) if prices else None,
                        "research_only": True})

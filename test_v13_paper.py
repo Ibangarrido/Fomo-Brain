@@ -36,6 +36,8 @@ class PaperTests(unittest.TestCase):
         ]
         result = post_exit_audit([trade], history, NOW, stored)[0]
         self.assertEqual(result["observations"], 2)
+        self.assertEqual(result["observation_coverage"], "OBSERVED_SAMPLES")
+        self.assertEqual(result["last_observed_at"], t2)
         self.assertEqual(result["max_rebound_from_exit_pct"], 30.0)
 
     def test_post_exit_audit_survives_pruned_history_and_rejects_future_and_other_pools(self):
@@ -59,6 +61,8 @@ class PaperTests(unittest.TestCase):
         missing = post_exit_audit([trade], [], NOW, {})[0]
         self.assertTrue(missing["window_complete"])
         self.assertFalse(missing["has_observed_post_exit_data"])
+        self.assertEqual(missing["observation_coverage"], "NO_OBSERVED_SAMPLES")
+        self.assertIsNone(missing["last_observed_at"])
         self.assertIsNone(missing["max_rebound_from_exit_pct"])
 
     def test_first_observation_does_not_buy(self):
@@ -83,6 +87,25 @@ class PaperTests(unittest.TestCase):
             state, report = advance(initial_state(), [current], [row(.00019, minutes=5)], NOW)
             self.assertEqual(state["positions"], [])
             self.assertEqual(report["entry_checks"][0]["blocker"], "ENTRY_OVEREXTENDED_5M_OR_1H")
+
+    def test_confirmation_diagnostics_explain_blocked_and_accepted_entries(self):
+        prior = row(.00019, minutes=5)
+        current = row(.0002)
+        _, accepted = advance(initial_state(), [current], [prior], NOW)
+        self.assertEqual(accepted["modeled_equity_eur"], 99.4175)
+        self.assertIsNone(accepted["entry_checks"][0]["blocker"])
+        self.assertAlmostEqual(accepted["entry_checks"][0]["confirmation_change_pct"], 5.2632, places=4)
+        self.assertEqual(accepted["entry_checks"][0]["prior_qualified_at"], prior["received_at"])
+        self.assertEqual(accepted["entry_blocker_counts"], {})
+
+        flat = row(.00019)
+        _, blocked = advance(initial_state(), [flat], [prior], NOW)
+        self.assertEqual(blocked["events"], [])
+        self.assertEqual(blocked["entry_blocker_counts"], {"CONFIRMATION_CHANGE_OUTSIDE_1_12PCT": 1})
+        self.assertEqual(blocked["entry_checks"][0]["confirmation_change_pct"], 0.0)
+        _, missing = advance(initial_state(), [current], [], NOW)
+        self.assertEqual(missing["entry_blocker_counts"], {"AWAITING_SECOND_QUALIFIED_SAME_POOL_OBSERVATION": 1})
+        self.assertIsNone(missing["entry_checks"][0]["confirmation_change_pct"])
 
     def test_entry_stress_test_accounts_for_both_fees(self):
         _, report = advance(initial_state(), [], [], NOW)

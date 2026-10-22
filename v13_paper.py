@@ -104,7 +104,8 @@ def advance(state, rows, history, now):
         previous = max(prior, key=lambda r: stamp(r["received_at"])) if prior else None
         if reason is None and previous is None:
             reason = "AWAITING_SECOND_QUALIFIED_SAME_POOL_OBSERVATION"
-        if reason is None and not 1 <= (row["price_usd"] / previous["price_usd"] - 1) * 100 <= 12:
+        confirmation_change_pct = (row["price_usd"] / previous["price_usd"] - 1) * 100 if previous is not None and usable(row) else None
+        if reason is None and not 1 <= confirmation_change_pct <= 12:
             reason = "CONFIRMATION_CHANGE_OUTSIDE_1_12PCT"
         # Reject late, vertically extended candles before opening a paper position.
         # Research-only gate: does not claim to forecast the next candle.
@@ -123,7 +124,9 @@ def advance(state, rows, history, now):
         if s["cash_eur"] + s["reserve_eur"] + marked <= 75:
             reason = "CAPITAL_FLOOR"
         diagnostics.append({"chain": row["chain"], "address": row["address"],
-                            "pair": row["pair"], "blocker": reason})
+                            "pair": row["pair"], "blocker": reason,
+                            "confirmation_change_pct": round(confirmation_change_pct, 4) if confirmation_change_pct is not None else None,
+                            "prior_qualified_at": previous.get("received_at") if previous is not None else None})
         if reason:
             continue
         position = {k: row.get(k) for k in ("chain", "address", "pair", "symbol")}
@@ -160,7 +163,10 @@ def advance(state, rows, history, now):
                "open_positions": len(s["positions"]), "unknown_positions": unknown,
                "modeled_equity_eur": None if unknown else round(s["cash_eur"] + s["reserve_eur"] + marked, 4),
                "modeled_realized_pnl_eur": round(sum(p["net_pnl_eur"] for p in s["closed"]), 4),
-               "events": events, "entry_checks": diagnostics, "recent_closed_audit": closed_audit,
+               "events": events, "entry_checks": diagnostics,
+               "entry_blocker_counts": {reason: sum(check["blocker"] == reason for check in diagnostics)
+                                        for reason in sorted({check["blocker"] for check in diagnostics if check["blocker"]})},
+               "recent_closed_audit": closed_audit,
                "entry_stress_test": {"hypothetical_next_price_drop_pct": 5,
                                      "modeled_loss_pct_after_both_fees": round(100*(1-(.95*.97/1.03)), 2),
                                      "note": "Illustrative 5% adverse move plus 3% entry and exit costs; not a forecast or stop guarantee"},
