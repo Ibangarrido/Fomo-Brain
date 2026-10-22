@@ -41,7 +41,9 @@ class RewatchTests(unittest.TestCase):
         second, _ = select_revisits(prior, now+timedelta(minutes=20))
         self.assertEqual(len(first), MAX_REWATCH)
         self.assertEqual(len(second), MAX_REWATCH)
-        self.assertNotEqual(first, second)
+        self.assertTrue(set(first).isdisjoint(second))
+        selections = [set(select_revisits(prior, now+timedelta(minutes=20*i))[0]) for i in range(5)]
+        self.assertEqual(len(set().union(*selections)), 40)
 
     def test_existing_alerts_are_not_double_counted(self):
         now = datetime(2026, 10, 21, 17, tzinfo=timezone.utc)
