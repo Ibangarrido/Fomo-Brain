@@ -303,6 +303,33 @@ def main():
         enriched.append(row)
     observations = enriched
     paper_state, paper_summary = advance(paper_state, observations, history, now)
+    # Research-only snapshots: keep post-sale observations in the existing
+    # persisted ledger, independently of the 24h rolling discovery history.
+    post_exit_store = paper_state.get("post_exit_research_store", {})
+    if not isinstance(post_exit_store, dict):
+        post_exit_store = {}
+    for trade in paper_state["closed"][-30:]:
+        exit_time = parse_stamp(trade.get("closed_at"))
+        price = trade.get("exit_price_usd")
+        if exit_time is None or not isinstance(price, (int, float)) or not 0 < price < float("inf"):
+            continue
+        key = json.dumps([trade.get(k) for k in ("chain", "address", "pair", "closed_at")])
+        entry = post_exit_store.get(key, {})
+        samples = entry.get("samples", {}) if isinstance(entry, dict) else {}
+        if not isinstance(samples, dict):
+            samples = {}
+        for row in observations:
+            observed_at = parse_stamp(row.get("received_at"))
+            observed_price = row.get("price_usd")
+            if (observed_at is not None and exit_time < observed_at <= exit_time + timedelta(hours=2)
+                and observed_at <= now
+                and (row.get("chain"), row.get("address"), row.get("pair")) ==
+                    (trade.get("chain"), trade.get("address"), trade.get("pair"))
+                and isinstance(observed_price, (int, float))
+                and 0 < observed_price < float("inf")):
+                samples[observed_at.isoformat()] = observed_price
+        post_exit_store[key] = {"samples": samples}
+    paper_state["post_exit_research_store"] = post_exit_store
     # Persist a restart sentinel in the independent history cache. Never mistake
     # a lost paper ledger for a new experiment with a fresh 100 EUR.
     for row in observations:
@@ -341,6 +368,7 @@ def main():
               "modeled_exits_this_run": sum(e["side"] == "SELL_MODEL" for e in paper_summary["events"]),
               "paper_portfolio": paper_summary,
               "post_exit_research": post_exit_audit(paper_state["closed"], history, now),
+              "post_exit_persisted_sample_count": sum(len(v.get("samples", {})) for v in post_exit_store.values()),
               "pairs_discovered": len(pairs),
               "observed": len(observations), "revisited_tokens_requested": len(extra_watch),
               "post_exit_revisits_requested": len(closed_watch),
