@@ -84,6 +84,25 @@ class PaperTests(unittest.TestCase):
             self.assertEqual(state["positions"], [])
             self.assertEqual(report["entry_checks"][0]["blocker"], "ENTRY_OVEREXTENDED_5M_OR_1H")
 
+    def test_confirmation_diagnostics_explain_blocked_and_accepted_entries(self):
+        prior = row(.00019, minutes=5)
+        current = row(.0002)
+        _, accepted = advance(initial_state(), [current], [prior], NOW)
+        self.assertEqual(accepted["modeled_equity_eur"], 99.4175)
+        self.assertIsNone(accepted["entry_checks"][0]["blocker"])
+        self.assertAlmostEqual(accepted["entry_checks"][0]["confirmation_change_pct"], 5.2632, places=4)
+        self.assertEqual(accepted["entry_checks"][0]["prior_qualified_at"], prior["received_at"])
+        self.assertEqual(accepted["entry_blocker_counts"], {})
+
+        flat = row(.00019)
+        _, blocked = advance(initial_state(), [flat], [prior], NOW)
+        self.assertEqual(blocked["events"], [])
+        self.assertEqual(blocked["entry_blocker_counts"], {"CONFIRMATION_CHANGE_OUTSIDE_1_12PCT": 1})
+        self.assertEqual(blocked["entry_checks"][0]["confirmation_change_pct"], 0.0)
+        _, missing = advance(initial_state(), [current], [], NOW)
+        self.assertEqual(missing["entry_blocker_counts"], {"AWAITING_SECOND_QUALIFIED_SAME_POOL_OBSERVATION": 1})
+        self.assertIsNone(missing["entry_checks"][0]["confirmation_change_pct"])
+
     def test_entry_stress_test_accounts_for_both_fees(self):
         _, report = advance(initial_state(), [], [], NOW)
         self.assertAlmostEqual(report["entry_stress_test"]["modeled_loss_pct_after_both_fees"], 10.53, places=2)
