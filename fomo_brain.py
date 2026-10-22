@@ -236,6 +236,11 @@ def analizar_par(pair, *, allow_nonpositive_momentum=False):
     if vol_1h < MIN_VOLUME_1H:
         return descartar(pair, "volumen 1h < 5000 USD")
 
+    # Regla de riesgo: no abrir entradas tras una subida >150% en 1h.
+    # Conservar el rechazo para auditar posteriormente oportunidades perdidas.
+    if change_1h > 150:
+        return descartar(pair, "subida 1h > 150%: entrada tardia bloqueada")
+
     if not allow_nonpositive_momentum and change_5m <= 0 and change_1h <= 0:
         return descartar(pair, "sin momentum positivo 5m/1h")
 
