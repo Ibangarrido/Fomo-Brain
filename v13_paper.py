@@ -3,6 +3,7 @@
 EUR/USD fixed at 1; modeled 3% cost on each side; gas/MEV excluded.
 Stops execute only at the next valid observed price, never at an invented level.
 """
+from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timedelta
 from v13_hunter import finite
@@ -154,13 +155,23 @@ def advance(state, rows, history, now):
                              if closed.get("reason") == "STOP_OBSERVED" and net_return is not None else None,
                              "entry_to_exit_minutes": round((stamp(closed["closed_at"])-stamp(closed["opened_at"])).total_seconds()/60, 1)
                              if stamp(closed.get("closed_at")) and stamp(closed.get("opened_at")) else None})
+    # Diagnostics only: the first decisive blocker for each evaluated candidate.
+    # This is a per-run funnel, not an estimate of missed executable profit.
+    entry_blockers = Counter(item["blocker"] or "ENTRY_MODEL_PLACED" for item in diagnostics)
+    entry_funnel = {"observed_pools": len(rows),
+                    "market_gate_passes": sum(bool(r.get("market_gates_pass")) for r in rows),
+                    "mature_watch_passes": sum(bool(r.get("mature_watch")) for r in rows),
+                    "candidates_evaluated": len(diagnostics),
+                    "first_blocker_counts": dict(entry_blockers),
+                    "note": "Overlapping gate/watch counts; first decisive entry blocker only; no hypothetical fills"}
     summary = {"schema": SCHEMA, "mode": "prospective_price_model_only",
                "execution_verified": False, "cash_eur": round(s["cash_eur"], 4),
                "reserve_eur": round(s["reserve_eur"], 4),
                "open_positions": len(s["positions"]), "unknown_positions": unknown,
                "modeled_equity_eur": None if unknown else round(s["cash_eur"] + s["reserve_eur"] + marked, 4),
                "modeled_realized_pnl_eur": round(sum(p["net_pnl_eur"] for p in s["closed"]), 4),
-               "events": events, "entry_checks": diagnostics, "recent_closed_audit": closed_audit,
+               "events": events, "entry_checks": diagnostics, "entry_funnel": entry_funnel,
+               "recent_closed_audit": closed_audit,
                "entry_stress_test": {"hypothetical_next_price_drop_pct": 5,
                                      "modeled_loss_pct_after_both_fees": round(100*(1-(.95*.97/1.03)), 2),
                                      "note": "Illustrative 5% adverse move plus 3% entry and exit costs; not a forecast or stop guarantee"},
