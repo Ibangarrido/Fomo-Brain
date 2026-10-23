@@ -69,6 +69,7 @@ X_STATUS = "PENDIENTE"
 STUDY_TOKENS = [
     ("solana", "6Kixbp4noymaazXvuNqjdHqaeYG7YVhpfcw5APxYAQk1"),
     ("solana", "E4X5HjWLZfHe3i1HWWutFdA7ywW7ytXWaCvEJV5Mpump"),
+    ("bsc", "0xb0e974ee58899dd77eb13c2c0a0adefeb30f7777"),
 ]
 
 
