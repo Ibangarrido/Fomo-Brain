@@ -206,6 +206,22 @@ class HunterTests(unittest.TestCase):
         counts = discovery_timing_audit([current], [old], {("solana","mint")})
         self.assertEqual(counts["MANUAL_CASE_NOT_AUTONOMOUS"], 1)
 
+    def test_discovery_timing_orders_offset_timestamps_by_instant(self):
+        from v13_runner import discovery_timing_audit
+        # 10:30 +02:00 is 08:30 UTC; 09:00 +00:00 is later.
+        early = {"chain":"solana", "address":"mint", "pair":"pool",
+                 "received_at":"2026-10-23T10:30:00+02:00",
+                 "change_1h_pct":175, "source":"search:pump",
+                 "discovery_alert":True}
+        later = dict(early, received_at="2026-10-23T09:00:00+00:00",
+                     change_1h_pct=12, discovery_alert=True)
+        current = dict(later, received_at="2026-10-23T09:15:00+00:00",
+                       discovery_alert=False)
+        counts = discovery_timing_audit([current], [later, early], set())
+        self.assertEqual(counts["FIRST_SEEN_ALREADY_OVER_150PCT_1H"], 1)
+        self.assertEqual(current["first_observed_at"], early["received_at"])
+        self.assertEqual(current["first_alert_at"], early["received_at"])
+
     def test_public_social_links_are_unverified_metadata(self):
         from v13_runner import public_social_links
         sample = {"info": {"socials": [
