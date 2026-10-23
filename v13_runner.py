@@ -176,17 +176,17 @@ def discovery_timing_audit(observations, prior, manual_watch):
     first_alert = {}
     for row in (*prior, *observations):
         key = (row.get("chain"), row.get("address"))
-        stamp = row.get("received_at")
-        if not all(isinstance(x, str) and x for x in (*key, stamp)):
+        stamp = parse_stamp(row.get("received_at"))
+        if not all(isinstance(x, str) and x for x in key) or stamp is None:
             continue
-        if key not in earliest or stamp < earliest[key]["received_at"]:
-            earliest[key] = row
-        if row.get("discovery_alert") and (key not in first_alert or stamp < first_alert[key]):
-            first_alert[key] = stamp
+        if key not in earliest or stamp < earliest[key][0]:
+            earliest[key] = (stamp, row)
+        if row.get("discovery_alert") and (key not in first_alert or stamp < first_alert[key][0]):
+            first_alert[key] = (stamp, row["received_at"])
     counts = Counter()
     for row in observations:
         key = (row.get("chain"), row.get("address"))
-        first = earliest.get(key, row)
+        first = earliest.get(key, (None, row))[1]
         pct = first.get("change_1h_pct")
         source = first.get("source", "unknown")
         manual = key in manual_watch
@@ -204,7 +204,7 @@ def discovery_timing_audit(observations, prior, manual_watch):
         row["first_observed_at"] = first.get("received_at")
         row["first_observed_1h_pct"] = pct
         row["first_observed_source"] = source
-        row["first_alert_at"] = first_alert.get(key)
+        row["first_alert_at"] = first_alert[key][1] if key in first_alert else None
         counts[stage] += 1
     return dict(counts)
 
