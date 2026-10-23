@@ -1768,19 +1768,35 @@ def descubrir_pares():
                 requested.setdefault(target, None)
         except Exception as exc:
             print("AUDITORIA SEGUIMIENTO ERROR: " + str(exc))
-    for endpoint in ("token-profiles/latest/v1", "token-profiles/recent-updates/v1"):
+    # Los perfiles solos no cubren tokens con actividad: incluir tambien boosts
+    # publicos de DexScreener. No son señales de compra ni implican verificacion.
+    # Presupuesto limitado para evitar saturar la API y retrasar las salidas.
+    discovery_counts = {}
+    for endpoint in ("token-profiles/latest/v1", "token-profiles/recent-updates/v1",
+                     "token-boosts/latest/v1", "token-boosts/top/v1"):
         service_discovery_exits()
         try:
             profiles = pedir_json("https://api.dexscreener.com/" + endpoint)
             if not isinstance(profiles, list):
-                raise ValueError("Respuesta perfiles no valida")
+                raise ValueError("Respuesta de descubrimiento no valida")
+            added = 0
             for p in profiles[:20]:
-                if p.get("chainId") and p.get("tokenAddress"):
-                    requested.setdefault((p["chainId"], p["tokenAddress"]), None)
+                if not isinstance(p, dict):
+                    continue
+                chain, address = p.get("chainId"), p.get("tokenAddress")
+                if chain and address:
+                    key = (chain, address)
+                    if key not in requested:
+                        requested[key] = None
+                        added += 1
+            discovery_counts[endpoint] = added
         except Exception as exc:
+            discovery_counts[endpoint] = "ERROR"
             print(f"FUENTE ERROR {endpoint} | {exc}")
+    print(f"RADAR COBERTURA | nuevas direcciones por fuente={discovery_counts}"
+          f" | contratos unicos={len(requested)} | boosts no equivalen a oportunidades")
     for old in reversed(cargar_memoria()):
-        if len(requested) >= 60:
+        if len(requested) >= 90:
             break
         try:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(old["hora"])).total_seconds()
