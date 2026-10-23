@@ -155,15 +155,15 @@ def advance(state, rows, history, now):
                              if closed.get("reason") == "STOP_OBSERVED" and net_return is not None else None,
                              "entry_to_exit_minutes": round((stamp(closed["closed_at"])-stamp(closed["opened_at"])).total_seconds()/60, 1)
                              if stamp(closed.get("closed_at")) and stamp(closed.get("opened_at")) else None})
-    # Diagnostics only: the first decisive blocker for each evaluated candidate.
+    # Diagnostics only: the effective blocker after all entry constraints.
     # This is a per-run funnel, not an estimate of missed executable profit.
     entry_blockers = Counter(item["blocker"] or "ENTRY_MODEL_PLACED" for item in diagnostics)
     entry_funnel = {"observed_pools": len(rows),
                     "market_gate_passes": sum(bool(r.get("market_gates_pass")) for r in rows),
                     "mature_watch_passes": sum(bool(r.get("mature_watch")) for r in rows),
                     "candidates_evaluated": len(diagnostics),
-                    "first_blocker_counts": dict(entry_blockers),
-                    "note": "Overlapping gate/watch counts; first decisive entry blocker only; no hypothetical fills"}
+                    "effective_blocker_counts": dict(entry_blockers),
+                    "note": "Overlapping gate/watch counts; effective (last-applied) entry blocker only; no hypothetical fills"}
     summary = {"schema": SCHEMA, "mode": "prospective_price_model_only",
                "execution_verified": False, "cash_eur": round(s["cash_eur"], 4),
                "reserve_eur": round(s["reserve_eur"], 4),
