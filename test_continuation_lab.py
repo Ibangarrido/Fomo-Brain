@@ -187,7 +187,7 @@ class ContinuationTests(unittest.TestCase):
             state['observations'].append({'verified_component':100,'estimated_equity':100,'open':0,'closed':0})
             with open(path,'w') as f:json.dump(state,f)
         with contextlib.redirect_stdout(io.StringIO()):lab.run([],simulator,prefetch=prefetch)
-        self.assertEqual(events[0],'prefetch');self.assertEqual(len(events),7)
+        self.assertEqual(events[0],'prefetch');self.assertEqual(len(events),6)  # prefetch + five arms; SHALLOW initializes without trading
     def test_continuation_changes_policy_but_not_liquidity_or_confirmation(self):
         _,t,old=self.candidate()
         self.assertIn('75%',brain.motivo_entrada(t,True,min_buy_ratio=.75,previous_observation=old))
