@@ -2043,6 +2043,19 @@ def main(refresh_events=True):
         return
 
     comparar_con_memoria(ranking)
+    # Diagnostico de patrones sin autorizar entradas ni modificar carteras.
+    try:
+        from pattern_radar import scan as scan_pattern
+        matches = scan_pattern(ranking, cargar_memoria())
+        print("PATRON RECUPERACION OBSERVADO " + json.dumps({
+            "matches": len(matches),
+            "below_60pct_buy_gate": sum(m["below_60pct_buy_gate"] for m in matches),
+            "examples": matches[:10],
+            "paper_entries_triggered": 0,
+            "scope": "five received snapshots of same exact pair; no fill or profitability claim",
+        }, ensure_ascii=False))
+    except Exception as exc:
+        print("PATRON RECUPERACION DIAGNOSTICO ERROR: " + str(exc))
     guardar_memoria(ranking)
 
     for posicion, token in enumerate(
