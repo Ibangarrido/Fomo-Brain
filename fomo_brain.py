@@ -71,6 +71,8 @@ STUDY_TOKENS = [
     ("solana", "E4X5HjWLZfHe3i1HWWutFdA7ywW7ytXWaCvEJV5Mpump"),
     ("bsc", "0xb0e974ee58899dd77eb13c2c0a0adefeb30f7777"),
     ("solana", "6bW6xsZxYqcvqabk9rRgQwgjPNwe8SACPusx5o1wpump"),
+    # Older PUMP DEV: explicit research tracking, excluded from automatic entries.
+    ("solana", "BSBsxXFGHrew8FcxjYHDgx5EnzoRs9cWkZWxkvP5KAZQ"),
 ]
 
 
