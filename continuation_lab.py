@@ -36,7 +36,7 @@ def bootstrap():
                 'scope': 'independent paper portfolios; never add balances',
                 'flow_by_amount': 'UNKNOWN; count proxy only', 'execution_verified': False}
     for arm, (path, mode, ratio) in ARMS.items():
-        if arm in PATTERN_ARMS:
+        if arm in PATTERN_ARMS or arm == 'shallow_pullback':
             continue
         write(path, {'version': 1, 'started_at': at, 'cash': 100., 'reserve': 0.,
                      'positions': [], 'closed': [], 'seen': [], 'observations': [],
