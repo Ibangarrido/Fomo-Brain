@@ -18,6 +18,10 @@ PATTERN_ARMS = {
     'pattern_breakout': ('fomo_lab_pattern_breakout_r1.json', 'continuation', .50),
 }
 ARMS.update(PATTERN_ARMS)
+# Independent experimental arm; never restart or rewrite existing paper wallets.
+SHALLOW_FILE = 'fomo_lab_shallow_pullback_r1.json'
+SHALLOW_MARKER = 'fomo_lab_shallow_start_r1.json'
+ARMS['shallow_pullback'] = (SHALLOW_FILE, 'continuation', .50)
 FILES = {item[0] for item in ARMS.values()}
 
 @wallet_fork(sorted(LEGACY_FILES | {MARKER}))
@@ -59,6 +63,28 @@ def bootstrap_pattern():
                      'pattern_baseline': baseline})
     write(PATTERN_MARKER, baseline)
     return True
+
+@wallet_fork([SHALLOW_FILE, SHALLOW_MARKER])
+def bootstrap_shallow():
+    paths = [SHALLOW_FILE, SHALLOW_MARKER]
+    present = [os.path.exists(path) for path in paths]
+    if all(present):
+        return False
+    if any(present):
+        raise ValueError('Inicio shallow incompleto; restaurar, no reiniciar')
+    at = datetime.now(timezone.utc).isoformat()
+    baseline = {'version': 'shallow-r1', 'at': at, 'initial_eur': 100,
+                'scope': 'independent paper wallet; 8-22% pullback vs original 12-22%',
+                'profitability_verified': False}
+    write(SHALLOW_FILE, {'version': 1, 'started_at': at, 'cash': 100.,
+                         'reserve': 0., 'positions': [], 'closed': [],
+                         'seen': [], 'observations': [],
+                         'continuation_experiment': {'version': 'shallow-r1',
+                                                     'arm': 'shallow_pullback'},
+                         'shallow_baseline': baseline})
+    write(SHALLOW_MARKER, baseline)
+    return True
+
 
 def guard(token, allow_breakout=False):
     from candle_lab import context, evaluate_rows
@@ -114,11 +140,14 @@ def guard(token, allow_breakout=False):
 def breakout_guard(token):
     return guard(token, allow_breakout=True)
 
-def gradual_guard(token):
-    """Gradual impulse, ordered 12–22% pullback and two-bar reclaim; PAPER only."""
+def gradual_guard(token, *, min_pullback=12):
+    """Gradual impulse, bounded pullback and two-bar reclaim; PAPER only."""
+    if min_pullback not in (8, 12):
+        raise ValueError('Unsupported experimental pullback depth')
     from candle_lab import context, evaluate_rows
     result = context(token)
-    token['entry_policy_suffix'] = '+gradual-pullback-r1'
+    token['entry_policy_suffix'] = ('+shallow-pullback-r1' if min_pullback == 8
+                                    else '+gradual-pullback-r1')
     token.pop('continuation_pattern', None)
     checked = evaluate_rows({'data': {'attributes': {'ohlcv_list':
         result.get('closed_history', result.get('bars', []))}}},
@@ -154,8 +183,8 @@ def gradual_guard(token):
     a,b = bars[-2:]
     baseline = sum(r[5] for r in pullback)/len(pullback)
     wick = (b[2]-max(b[1],b[4]))/(b[2]-b[3]) if b[2]>b[3] else 0
-    if not 12 <= depth <= 22:
-        return 'gradual: retroceso fuera de 12-22%'
+    if not min_pullback <= depth <= 22:
+        return f'gradual: retroceso fuera de {min_pullback}-22%'
     if not (a[4]>a[1] and b[4]>b[1] and b[4]>a[2]
             and a[3]>=trough and b[3]>=a[3] and b[4]>=trough*1.03):
         return 'gradual: recuperacion no confirmada o pierde soporte'
@@ -164,11 +193,16 @@ def gradual_guard(token):
     if not a[2] < float(token['price']) <= b[4]*1.05:
         return 'gradual: precio pierde recuperacion o se aleja >5%'
     token['continuation_pattern'] = 'GRADUAL_IMPULSE_ORDERED_PULLBACK_RECLAIM'
-    token['gradual_pattern_evidence'] = {'version':'gradual-pullback-r1',
+    token['gradual_pattern_evidence'] = {'version': ('shallow-pullback-r1' if min_pullback == 8 else 'gradual-pullback-r1'),
         'impulse_pct':impulse, 'pullback_pct':depth, 'pullback_minutes':len(pullback),
         'volume_multiple':b[5]/baseline, 'peak_price':peak, 'support_price':trough,
         'future_target_verified':False}
     return None
+
+def shallow_guard(token):
+    """Experimental 8-22% pullback with all original safety and volume checks."""
+    return gradual_guard(token, min_pullback=8)
+
 
 def candidate_universe(pairs, analyzer):
     """Same discovered pools, without the EARLY momentum veto; bounded to 20.
@@ -195,16 +229,20 @@ def run(ranking, simulator, prefetch=None):
         print('LAB CONTINUATION INICIO: tres carteras virtuales de 100 EUR; decisiones desde proxima lectura; NO sumar')
         return
     pattern_started = bootstrap_pattern()
+    shallow_started = bootstrap_shallow()
     if prefetch is not None:
         prefetch(ranking)  # Use the running engine's thread-local caches, including __main__.
     rows = {}
     for arm, (path, mode, ratio) in ARMS.items():
         if pattern_started and arm in PATTERN_ARMS:
-            continue  # Both arms begin decisions together on the next cycle.
+            continue  # Both pattern arms begin decisions together next cycle.
+        if shallow_started and arm == 'shallow_pullback':
+            continue  # New isolated wallet starts decisions next cycle.
         simulator(ranking, path, 'LAB CONTINUATION ' + arm, confirm=True,
                   entry_mode=mode, min_buy_ratio=ratio,
                   entry_guard=(breakout_guard if arm == 'pattern_breakout' else
-                               gradual_guard if arm == 'pattern_pullback' else guard) if mode == 'continuation' else None)
+                               gradual_guard if arm == 'pattern_pullback' else
+                               shallow_guard if arm == 'shallow_pullback' else guard) if mode == 'continuation' else None)
         with open(path) as handle:
             state = json.load(handle)
         obs = state['observations'][-1]
@@ -213,5 +251,5 @@ def run(ranking, simulator, prefetch=None):
                      'closed': obs['closed'], 'entry_audit': state.get('last_entry_audit'),
                      'change_from_100': obs['verified_component'] - 100}
     print('LAB CONTINUATION COMPARACION ' + json.dumps(rows, allow_nan=False)
-          + ' | 50 vs 60 difiere solo ratio; pattern_pullback vs pattern_breakout solo patron adicional, mismo inicio; flujo importe desconocido; NO rentabilidad real')
+          + ' | shallow_pullback uses 8-22pct vs pattern_pullback 12-22pct; separate start date; no direct equity comparison across different start dates; NO rentabilidad real')
 
