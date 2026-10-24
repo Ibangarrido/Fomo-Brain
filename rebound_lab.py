@@ -19,6 +19,9 @@ def bootstrap():
         return False
     if any(present):
         raise ValueError("Bifurcacion rebound incompleta; restaurar, no reiniciar")
+    if not os.path.exists(SOURCE):
+        print("LAB REBOUND SIN BASE HISTORICA: falta cartera M4 recovery; no crear carteras ni reiniciar historiales")
+        return None
     with open(SOURCE) as handle:
         seed = json.load(handle)
     if seed.get("version") != 1 or seed.get("m4_experiment") != {"version": "m4-r1", "arm": "recovery"}:
@@ -39,7 +42,10 @@ def bootstrap():
 
 
 def run(ranking, simulator):
-    if bootstrap():
+    started = bootstrap()
+    if started is None:
+        return
+    if started:
         print("LAB REBOUND INICIO: misma copia; edad maxima 60m vs 24h; decisiones desde proxima lectura; NO sumar")
         return
     rows = {}
