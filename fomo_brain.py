@@ -1089,7 +1089,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if continuation_lab:
         expected_arm = next(arm for arm, spec in ARMS.items() if spec[0] == basename)
         expected = ARMS[expected_arm]
-        if (state.get("continuation_experiment") != {"version": "continuation-r1", "arm": expected_arm}
+        if (state.get("continuation_experiment") != {"version": ("shallow-r1" if expected_arm == "shallow_pullback" else "continuation-r1"), "arm": expected_arm}
                 or entry_mode != expected[1] or min_buy_ratio != expected[2] or not confirm
                 or quarantine_m4 or profit_protection or staged_targets or max_pair_age_minutes != 60
                 or (ranking and entry_mode == "continuation" and entry_guard is None)):
