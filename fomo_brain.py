@@ -1876,6 +1876,13 @@ def main(refresh_events=True):
     discovery_started = time.monotonic()
     pairs, sources = descubrir_pares()
     print(f"LATENCIA DESCUBRIMIENTO seconds={time.monotonic() - discovery_started:.3f}", flush=True)
+    # Observe active older pools before entry filters hide late movers.
+    # Research-only: does not add candidates or alter any wallet.
+    try:
+        from reactivation_radar import scan as scan_reactivation
+        print("REACTIVACION RADAR " + json.dumps(scan_reactivation(pairs), ensure_ascii=False))
+    except Exception as exc:
+        print("REACTIVACION RADAR ERROR: " + str(exc))
     for pool_key, pair in pairs.items():
         service_discovery_exits()
         resultado = analizar_par(pair)
