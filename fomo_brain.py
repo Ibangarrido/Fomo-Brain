@@ -939,7 +939,9 @@ def record_confirmation(state, reference, fresh, now, status, reasons, had_previ
     print('CONFIRMACION AUDIT ' + json.dumps(row, ensure_ascii=False, allow_nan=False))
 
 
-def recovery_signal_reference(state, token, fresh, now):
+def recovery_signal_reference(state, token, fresh, now, *, confirmation_window_seconds=90):
+    if confirmation_window_seconds not in (90, 120):
+        raise ValueError('Invalid confirmation window')
     """Re-observe drift; never turn a changed quote into an immediate fill."""
     key = token["chain"] + ":" + token["address"]
     pending = state.setdefault("recovery_pending_signals", {})
@@ -951,7 +953,7 @@ def recovery_signal_reference(state, token, fresh, now):
     if previous:
         try:
             at = datetime.fromisoformat(previous["received_at"])
-            if at.utcoffset() is None or not 0 <= (now-at).total_seconds() <= 90:
+            if at.utcoffset() is None or not 0 <= (now-at).total_seconds() <= confirmation_window_seconds:
                 renew = True
                 renewal_reasons.append('REFERENCE_EXPIRED_OR_INVALID')
         except (KeyError, ValueError, TypeError):
@@ -987,7 +989,7 @@ def recovery_signal_reference(state, token, fresh, now):
             previous_at = datetime.fromisoformat(previous["received_at"])
             if (current_at.utcoffset() is not None
                     and 0 <= (now-current_at).total_seconds() <= 30
-                    and 30 <= (current_at-previous_at).total_seconds() <= 90):
+                    and 30 <= (current_at-previous_at).total_seconds() <= confirmation_window_seconds):
                 pending[key] = dict(fresh)
         except (KeyError, ValueError, TypeError):
             pass
@@ -1037,6 +1039,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if net_scenario_gate and basename != "fomo_lab_v11_net_r1.json":
         raise ValueError("V11 net gate restricted to isolated PAPER lab")
     ratio_lab = os.path.basename(paper_file).startswith("fomo_lab_ratio_")
+    shallow_lab = basename == 'fomo_lab_shallow_pullback_r1.json' and continuation_lab
+    confirmation_window_seconds = 120 if shallow_lab else 90
     recovery_ratio = (basename == RECOVERY and quarantine_m4 and confirm
                       and entry_mode == "early" and min_buy_ratio == 0.75)
     if min_buy_ratio != 0.60 and not (ratio_lab or recovery_ratio or continuation_lab):
@@ -1286,7 +1290,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                                         'FIRST_READ', ['FIRST_READ'], False)
                 else:
                     signal_reference, previous_observation, wait_reason = recovery_signal_reference(
-                        state, token, fresh, datetime.now(timezone.utc))
+                        state, token, fresh, datetime.now(timezone.utc),
+                        confirmation_window_seconds=confirmation_window_seconds)
                 if recovery_ratio:
                     audit = recovery_ratio_audit(fresh, previous_observation, wait_reason, entry_guard)
                     state.setdefault("recovery_ratio_audit", []).append(audit)
@@ -1299,7 +1304,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             if confirm and (drift is None or abs(drift) > 5):
                 notes.append(f"DESCARTE {key} | cotizacion se aleja >5% de la señal")
                 continue
-            reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes, previous_observation=previous_observation)
+            reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes, previous_observation=previous_observation, confirmation_window_seconds=confirmation_window_seconds)
             if not reason and require_liquidity_growth:
                 old_liq = numero((previous_observation or {}).get("liquidity"))
                 new_liq = numero(fresh.get("liquidity"))
@@ -1332,7 +1337,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 drift = variacion(price, signal_reference.get("price"))
                 if confirm and (drift is None or abs(drift) > 5):
                     raise ValueError("precio final se aleja >5% de la señal")
-                reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes, previous_observation=previous_observation)
+                reason = motivo_entrada(fresh, confirm, entry_mode, min_buy_ratio=min_buy_ratio, max_pair_age_minutes=max_pair_age_minutes, previous_observation=previous_observation, confirmation_window_seconds=confirmation_window_seconds)
                 if not reason and entry_guard is not None:
                     reason = entry_guard(fresh)
                 if reason:
@@ -1622,7 +1627,9 @@ def ultima_lectura_par(token):
     return index.get((token["chain"], token["address"], token["pair"]))
 
 
-def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60, max_pair_age_minutes=60, previous_observation=None):
+def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60, max_pair_age_minutes=60, previous_observation=None, confirmation_window_seconds=90):
+    if confirmation_window_seconds not in (90, 120):
+        raise ValueError('Invalid confirmation window')
     if max_pair_age_minutes not in (60, 1440):
         raise ValueError("Limite de edad invalido")
     if not math.isfinite(min_buy_ratio) or not 0 <= min_buy_ratio <= 1:
@@ -1655,9 +1662,9 @@ def motivo_entrada(token, confirm=False, entry_mode="early", min_buy_ratio=0.60,
             now = datetime.now(timezone.utc)
             if (current_at.utcoffset() is None or previous_at.utcoffset() is None
                     or not 0 <= (now-current_at).total_seconds() <= 30
-                    or not 30 <= (current_at-previous_at).total_seconds() <= 90
-                    or (now-previous_at).total_seconds() > 90):
-                return "continuation: confirmacion fuera de 30-90s"
+                    or not 30 <= (current_at-previous_at).total_seconds() <= confirmation_window_seconds
+                    or (now-previous_at).total_seconds() > confirmation_window_seconds):
+                return f"continuation: confirmacion fuera de 30-{confirmation_window_seconds}s"
         except (KeyError, ValueError, TypeError):
             return "continuation: recepcion invalida"
         if token["liquidity"] < .95 * numero(old.get("liquidity")):
