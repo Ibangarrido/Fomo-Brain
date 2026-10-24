@@ -292,7 +292,9 @@ def bootstrap():
     targets = [p for p in seed["positions"] if p.get("chain") == "solana"
                and p.get("address") == MINT and p.get("quote_status") != "OK"]
     if len(targets) != 1:
-        raise ValueError("Requiere una M4 heredada sin valoracion verificable")
+        # No inventar ni reiniciar una cartera histórica si falta el activo heredado.
+        print("LAB M4 SIN BASE HISTORICA: se esperaban 1 M4 heredada sin cotizacion; encontradas " + str(len(targets)) + "; carteras intactas; sin simulacion")
+        return None
     known = seed["cash"] + seed["reserve"] + sum(
         p["mark_net"] for p in seed["positions"] if p.get("quote_status") == "OK")
     if not math.isfinite(known) or known <= 75:
@@ -316,7 +318,10 @@ def bootstrap():
 
 
 def run(ranking, simulator):
-    if bootstrap():
+    started = bootstrap()
+    if started is None:
+        return
+    if started:
         print("LAB M4 INICIO: misma copia e historial; decisiones desde proxima lectura; NO sumar")
         return
     from candle_lab import guard
