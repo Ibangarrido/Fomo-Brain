@@ -127,6 +127,8 @@ jobs:
             fomo_lab_targets_control_r1.json
             fomo_lab_targets_staged_r1.json
             fomo_lab_targets_start_r1.json
+            fomo_lab_shallow_pullback_r1.json
+            fomo_lab_shallow_start_r1.json
             fomo_lab_pattern_start_r1.json
             fomo_lab_pattern_pullback_r1.json
             fomo_lab_pattern_breakout_r1.json
