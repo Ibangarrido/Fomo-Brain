@@ -547,12 +547,18 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         name = str(minutes) + "m"
         counts = {"due": 0, "on_time_within_120s": 0,
                   "late_over_120s": 0, "missing": 0, "not_due": 0,
+                  "manual_after_event_excluded": 0,
                   "on_time_sampled_up_20pct": 0,
                   "on_time_sampled_down_20pct": 0,
                   "on_time_pair_changed": 0}
         for row in rows.values():
             baseline = row.get("first_rejection")
             if not baseline:
+                continue
+            # Videos supplied after the event cannot belong to a prospective
+            # automatic checkpoint cohort or its coverage denominator.
+            if row.get("cohort") == "manual_after_event":
+                counts["manual_after_event_excluded"] += 1
                 continue
             try:
                 due_at = datetime.fromisoformat(baseline["received_at"]) + timedelta(minutes=minutes)
