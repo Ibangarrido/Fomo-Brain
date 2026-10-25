@@ -381,6 +381,32 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(row["first_market_requalification"], recovery)
         self.assertEqual(audit.read()["second_look_summary"]["first_market_requalification_observed"], 1)
 
+    def test_second_look_never_requalifies_missing_or_excessive_market_cap(self):
+        audit.record_decisions("EARLY", ["DESCARTE solana:a | ratio compras < 60%"])
+        first = pair()
+        first["pairCreatedAt"] = int((self.now - timedelta(minutes=3)).timestamp() * 1000)
+        first["txns"]["m5"] = {"buys": 40, "sells": 60}
+        self.observe([first])
+        too_large = pair(price=1.1, liquidity=30000)
+        too_large["pairCreatedAt"] = first["pairCreatedAt"]
+        too_large["marketCap"] = 2500000
+        row = self.observe([too_large], self.now + timedelta(minutes=5))["solana:a"]
+        self.assertEqual(row["second_look_history"][-1]["checks"]["market_cap_max_2m"], "FAIL")
+        self.assertFalse(row["second_look_history"][-1]["market_gates_pass"])
+        self.assertNotIn("first_market_requalification", row)
+        missing = pair(price=1.2, liquidity=30000)
+        missing["pairCreatedAt"] = first["pairCreatedAt"]
+        missing["marketCap"] = None
+        row = self.observe([missing], self.now + timedelta(minutes=6))["solana:a"]
+        self.assertEqual(row["second_look_history"][-1]["checks"]["market_cap_max_2m"], "UNKNOWN")
+        self.assertNotIn("first_market_requalification", row)
+        valid = pair(price=1.3, liquidity=30000)
+        valid["pairCreatedAt"] = first["pairCreatedAt"]
+        row = self.observe([valid], self.now + timedelta(minutes=7))["solana:a"]
+        self.assertEqual(row["second_look_history"][-1]["checks"]["market_cap_max_2m"], "PASS")
+        self.assertIn("first_market_requalification", row)
+        self.assertFalse(row["first_market_requalification"]["execution_verified"])
+
     def test_pofd_bsc_is_manual_research_only(self):
         address = "0xc73ff93417777c31a579f5d48cbe0496da267777"
         self.assertIn(("bsc", address), audit.RESEARCH_TARGETS)
