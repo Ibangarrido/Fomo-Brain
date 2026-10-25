@@ -4,7 +4,7 @@ Input: chronological snapshots of one token with timestamp (ISO UTC), price,
 liquidity_usd, buy_ratio, volume_5m and optionally trades_5m.
 No orders, keys, wallets, or network access. Missing data never becomes a signal.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from math import isfinite
 
 MIN_PULLBACK_PCT = 8.0
@@ -51,7 +51,7 @@ def evaluate_recovery(snapshots, discarded_at):
         if (stamp is None or price is None or price <= 0 or
                 liquidity is None or ratio is None or volume is None):
             continue
-        if start <= stamp <= start.replace() + __import__("datetime").timedelta(minutes=WATCH_MINUTES):
+        if start <= stamp <= start + timedelta(minutes=WATCH_MINUTES):
             valid.append((stamp, price, liquidity, ratio, volume))
     valid.sort(key=lambda item: item[0])
     if len(valid) < 4:
