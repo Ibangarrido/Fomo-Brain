@@ -544,6 +544,25 @@ class OpportunityTests(unittest.TestCase):
             "buy_count_ratio_below_50pct", "buy_count_ratio_50_to_60pct",
             "buy_count_ratio_at_least_60pct", "buy_count_ratio_unknown")), 5)
 
+    def test_50_to_60_counterfactual_separates_other_market_gates(self):
+        # Only market-screen evidence, never candle, wallet or fill eligibility.
+        markets = []
+        for address, liquidity in (("passes", 25000), ("fails", 10000),
+                                   ("unknown", 25000)):
+            market = pair(address=address, liquidity=liquidity)
+            market["txns"] = {"m5": {"buys": 55, "sells": 45}}
+            market["pairCreatedAt"] = int((self.now - timedelta(minutes=30)).timestamp() * 1000)
+            if address == "unknown":
+                market["pairCreatedAt"] = None
+            markets.append(market)
+        self.observe(markets)
+        pulse = audit.read()["last_cycle_coverage"]["market_pulse"]
+        self.assertEqual(pulse["buy_count_ratio_50_to_60pct"], 3)
+        self.assertEqual(pulse["buy_count_ratio_50_to_60pct_other_market_gates_pass"], 1)
+        self.assertEqual(pulse["buy_count_ratio_50_to_60pct_other_market_gates_fail"], 1)
+        self.assertEqual(pulse["buy_count_ratio_50_to_60pct_other_market_gates_unknown"], 1)
+        self.assertEqual(pulse["buy_count_ratio_50_to_60pct_liquidity_at_least_20000"], 2)
+
     def test_fhostage_crash_is_research_only_even_with_more_buys(self):
         address = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
         self.assertIn(("solana", address), audit.RESEARCH_TARGETS)
