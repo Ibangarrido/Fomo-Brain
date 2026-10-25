@@ -101,6 +101,28 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(coverage["15m"]["not_due"], 1)
         self.assertEqual(audit.read()["second_look_summary"]["rejected_automatic_tracked"], 1)
 
+    def test_watch_diagnostics_distinguish_upcoming_from_due_rejected_checkpoints(self):
+        audit.record_decisions("CONTROL", ["DESCARTE solana:a | ratio compras < 60%"])
+        self.observe([pair(address="a")])
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            audit.watch_targets(self.now + timedelta(minutes=4))
+        lines = output.getvalue().splitlines()
+        upcoming = next(json.loads(line.split("WATCH UPCOMING CHECKPOINTS ", 1)[1])
+                        for line in lines if line.startswith("WATCH UPCOMING CHECKPOINTS "))
+        gaps = next(json.loads(line.split("WATCH CHECKPOINT POOL GAPS ", 1)[1])
+                    for line in lines if line.startswith("WATCH CHECKPOINT POOL GAPS "))
+        self.assertEqual(upcoming["upcoming_due_by_horizon"]["5m"], 1)
+        self.assertEqual(gaps["rejected_due"], 0)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            targets = audit.watch_targets(self.now + timedelta(minutes=5, seconds=30))
+        gaps = next(json.loads(line.split("WATCH CHECKPOINT POOL GAPS ", 1)[1])
+                    for line in output.getvalue().splitlines()
+                    if line.startswith("WATCH CHECKPOINT POOL GAPS "))
+        self.assertIn(("solana", "a"), targets)
+        self.assertEqual(gaps["rejected_due"], 1)
+        self.assertEqual(gaps["rejected_due_selected"], 1)
+        self.assertEqual(gaps["rejected_due_missed"], 0)
+
     def test_same_contract_different_chains_never_merge_and_liquid_pool_wins(self):
         other = pair(price=7)
         other["chainId"] = "bsc"
