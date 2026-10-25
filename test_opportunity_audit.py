@@ -86,6 +86,21 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(rows["solana:loser"]["cohort"], "automatic_prospective")
         self.assertIn((chain, mint), audit.watch_targets(self.now))
 
+    def test_manual_crash_cases_do_not_inflate_automatic_checkpoint_denominator(self):
+        # Post-event videos can be studied but must not reduce prospective coverage.
+        manual = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
+        audit.record_decisions("CONTROL", [
+            "DESCARTE solana:a | ratio compras < 60%",
+            "DESCARTE solana:" + manual + " | liquidez insuficiente"])
+        self.observe([pair(address="a"), pair(address=manual)])
+        self.observe([], self.now + timedelta(minutes=6))
+        coverage = audit.read()["last_cycle_coverage"]["checkpoint_coverage"]
+        self.assertEqual(coverage["5m"]["due"], 1)
+        self.assertEqual(coverage["5m"]["missing"], 1)
+        self.assertEqual(coverage["5m"]["manual_after_event_excluded"], 1)
+        self.assertEqual(coverage["15m"]["not_due"], 1)
+        self.assertEqual(audit.read()["second_look_summary"]["rejected_automatic_tracked"], 1)
+
     def test_same_contract_different_chains_never_merge_and_liquid_pool_wins(self):
         other = pair(price=7)
         other["chainId"] = "bsc"
