@@ -1255,6 +1255,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     risk_reason = freno_cartera_v10(state, now, conservative_unknown=isolated_m4)
     if risk_reason:
         notes.append("FRENO V10: " + risk_reason)
+    # Shadow-only: preflight unknown-valuation blockers, not proven missed trades.
+    m4_shadow_preflight = {"ranking_candidates": len(ranking),
+                           "unknown_valuation_only_at_preflight": 0,
+                           "other_preflight_blockers": 0,
+                           "downstream_filters_not_checked": True,
+                           "virtual_orders_created": 0}
     # Una sola entrada por token durante este experimento, sin reentradas.
     for token in ranking:
         key = token["chain"] + ":" + token["address"]
@@ -1267,6 +1273,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                       and p.get("quote_status") != "OK") for p in state["positions"]) >= 3 else
                   f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
+            if reason == "cartera sin valoracion completa":
+                m4_shadow_preflight["unknown_valuation_only_at_preflight"] += 1
+            else:
+                m4_shadow_preflight["other_preflight_blockers"] += 1
             notes.append(f"DESCARTE {key} | {reason}")
             continue
         try:
@@ -1492,6 +1502,10 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "version": "m4-isolation-r1", "unknown_value_for_risk": 0,
             "count_unknown_m4_in_active_slots": False,
             "total_equity_known": stale == 0, "historical_mark_is_liquidity": False}
+    state["last_m4_shadow_preflight"] = dict(
+        m4_shadow_preflight, at=datetime.now(timezone.utc).isoformat(),
+        scope="preflight only; does not imply passing market or execution checks")
+    print("M4 SHADOW PREFLIGHT " + json.dumps(dict(m4_shadow_preflight, label=label)))
     if ranking:
         from opportunity_audit import entry_summary
         state["last_entry_audit"] = dict(entry_summary(len(ranking), notes),
