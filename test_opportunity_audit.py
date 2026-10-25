@@ -101,7 +101,7 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(coverage["15m"]["not_due"], 1)
         self.assertEqual(audit.read()["second_look_summary"]["rejected_automatic_tracked"], 1)
 
-    def test_watch_diagnostics_distinguish_upcoming_from_due_rejected_checkpoints(self):
+    def test_watch_diagnostics_distinguish_upcoming_from_due_checkpoints(self):
         audit.record_decisions("CONTROL", ["DESCARTE solana:a | ratio compras < 60%"])
         self.observe([pair(address="a")])
         with contextlib.redirect_stdout(io.StringIO()) as output:
@@ -119,9 +119,9 @@ class OpportunityTests(unittest.TestCase):
                     for line in output.getvalue().splitlines()
                     if line.startswith("WATCH CHECKPOINT POOL GAPS "))
         self.assertIn(("solana", "a"), targets)
-        self.assertEqual(gaps["rejected_due"], 1)
-        self.assertEqual(gaps["rejected_due_selected"], 1)
-        self.assertEqual(gaps["rejected_due_missed"], 0)
+        self.assertEqual(gaps["ordinary_due"], 1)
+        self.assertEqual(gaps["ordinary_due_selected"], 1)
+        self.assertEqual(gaps["ordinary_due_missed"], 0)
 
     def test_same_contract_different_chains_never_merge_and_liquid_pool_wins(self):
         other = pair(price=7)
