@@ -407,6 +407,35 @@ class OpportunityTests(unittest.TestCase):
         self.assertIn("first_market_requalification", row)
         self.assertFalse(row["first_market_requalification"]["execution_verified"])
 
+    def test_fhostage_crash_is_research_only_even_with_more_buys(self):
+        address = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
+        self.assertIn(("solana", address), audit.RESEARCH_TARGETS)
+        market = pair(address=address, price=0.00001, liquidity=2100)
+        market["priceChange"] = {"m5": -91.77}
+        market["txns"] = {"m5": {"buys": 3017, "sells": 2484}}
+        snapshot = self.observe([market])["solana:" + address]["last"]
+        risk = snapshot["crash_risk_research"]
+        self.assertTrue(risk["price_drop_5m_ge_70pct"])
+        self.assertTrue(risk["liquidity_below_20000"])
+        self.assertTrue(risk["buyers_outnumber_sellers_during_drop"])
+        self.assertEqual(risk["liquidity_removed"], "UNKNOWN")
+        self.assertEqual(risk["buy_sell_volume_usd"], "UNKNOWN")
+        self.assertFalse(risk["sell_execution_verified"])
+        self.assertFalse(risk["entry_authorized"])
+        self.assertFalse(snapshot["execution_verified"])
+
+    def test_crash_research_does_not_turn_missing_data_into_safe_signal(self):
+        market = pair()
+        market["priceChange"] = {}
+        market["liquidity"] = {}
+        market["txns"] = {"m5": {}}
+        snapshot = self.observe([market])["solana:a"]["last"]
+        risk = snapshot["crash_risk_research"]
+        self.assertEqual(risk["price_drop_5m_ge_70pct"], "UNKNOWN")
+        self.assertEqual(risk["liquidity_below_20000"], "UNKNOWN")
+        self.assertEqual(risk["buyers_outnumber_sellers_during_drop"], "UNKNOWN")
+        self.assertFalse(risk["entry_authorized"])
+
     def test_pofd_bsc_is_manual_research_only(self):
         address = "0xc73ff93417777c31a579f5d48cbe0496da267777"
         self.assertIn(("bsc", address), audit.RESEARCH_TARGETS)
