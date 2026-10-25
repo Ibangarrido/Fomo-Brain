@@ -405,7 +405,10 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
     for minutes in (5, 15, 30, 60):
         name = str(minutes) + "m"
         counts = {"due": 0, "on_time_within_120s": 0,
-                  "late_over_120s": 0, "missing": 0, "not_due": 0}
+                  "late_over_120s": 0, "missing": 0, "not_due": 0,
+                  "on_time_sampled_up_20pct": 0,
+                  "on_time_sampled_down_20pct": 0,
+                  "on_time_pair_changed": 0}
         for row in rows.values():
             baseline = row.get("first_rejection")
             if not baseline:
@@ -423,6 +426,11 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                 counts["missing"] += 1
             elif checkpoint.get("lag_seconds") is not None and 0 <= checkpoint["lag_seconds"] <= 120:
                 counts["on_time_within_120s"] += 1
+                # Only timely sampled observations can support horizon-specific
+                # outcomes. Late snapshots cannot establish a 5/15/30/60m move.
+                counts["on_time_sampled_up_20pct"] += bool(checkpoint.get("sampled_up_20pct"))
+                counts["on_time_sampled_down_20pct"] += bool(checkpoint.get("sampled_down_20pct"))
+                counts["on_time_pair_changed"] += bool(checkpoint.get("pair_changed"))
             else:
                 counts["late_over_120s"] += 1
         checkpoint_coverage[name] = counts
@@ -432,7 +440,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "fresh_observations_accepted": fresh_observations_accepted,
         "cached_or_replayed_receipts": cached_or_replayed_receipts,
         "checkpoint_coverage": checkpoint_coverage,
-        "scope": "Sampling only; missing or late checkpoints are not zero returns or missed executable trades."}
+        "scope": "Receipt-time sampling only; provider market freshness unknown. Timely sampled moves are NOT candle highs, executable fills, or trading returns; late/missing checkpoints are excluded from horizon outcomes."}
     state["last_cycle_at"] = now.isoformat()
     # Advance by the number of automatic slots actually allocated per pool.
     # A stride of one revisits almost the same ten contracts every cycle,
@@ -454,6 +462,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
           "fresh_observations_accepted": fresh_observations_accepted,
           "cached_or_replayed_receipts": cached_or_replayed_receipts,
           "checkpoint_coverage": checkpoint_coverage,
+          "market_freshness_verified": False,
           "no_trading_return": True}))
     # Surface a bounded, auditable leaderboard in Actions logs. These are
     # sampled price observations, never exact candle highs or executable P&L.
