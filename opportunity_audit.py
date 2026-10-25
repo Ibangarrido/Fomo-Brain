@@ -30,6 +30,8 @@ RESEARCH_TARGETS = {
     ("solana", "EaqXJVr1aFPhMyTJbDCpwvTeiKc8x4gueFjFKKBvtcWY"),
     # FHOSTAGE: user-provided Solana crash video; retrospective risk study only.
     ("solana", "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"),
+    # Kongo: user video showed zero-liquidity warning before sampled crash; retrospective only.
+    ("solana", "BHUrqxqx6hMPFC7Mewfm4uJ5cAV2KZGvanwUeFEJpump"),
     # POFD人生: user-provided BSC video; retrospective research only, unverified token.
     ("bsc", "0xc73ff93417777c31a579f5d48cbe0496da267777"),
 }
