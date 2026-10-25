@@ -338,21 +338,36 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         row.setdefault("trough", row["first"])
         if snapshot["price"] < row["trough"]["price"]:
             row["trough"] = snapshot
-        if row["first"].get("entry_rejections") or row["first"].get("discovery_rejections"):
+        # Anchor the study to the FIRST ACTUAL REJECTION, not first discovery.
+        # Older cohorts without a rejection anchor start prospectively at the
+        # first observed rejection; no past performance is reconstructed.
+        rejected = bool(snapshot["entry_rejections"] or snapshot["discovery_rejections"])
+        if rejected and "first_rejection" not in row:
+            row["first_rejection"] = snapshot
+            row["rejection_peak"] = snapshot
+            row["rejection_trough"] = snapshot
+        baseline = row.get("first_rejection")
+        if baseline and received >= datetime.fromisoformat(baseline["received_at"]):
+            row.setdefault("rejection_peak", baseline)
+            row.setdefault("rejection_trough", baseline)
+            if snapshot["price"] > row["rejection_peak"]["price"]:
+                row["rejection_peak"] = snapshot
+            if snapshot["price"] < row["rejection_trough"]["price"]:
+                row["rejection_trough"] = snapshot
             checkpoints = row.setdefault("post_rejection_checkpoints", {})
-            elapsed_seconds = (received - datetime.fromisoformat(row["first"]["received_at"])).total_seconds()
+            elapsed_seconds = (received - datetime.fromisoformat(baseline["received_at"])).total_seconds()
             for minutes in (5, 15, 30, 60):
                 name = str(minutes) + "m"
                 if name not in checkpoints and elapsed_seconds >= minutes * 60:
                     checkpoints[name] = {
-                        "target_at": (datetime.fromisoformat(row["first"]["received_at"])
+                        "target_at": (datetime.fromisoformat(baseline["received_at"])
                                       + timedelta(minutes=minutes)).isoformat(),
                         "observed_at": received.isoformat(),
                         "lag_seconds": elapsed_seconds - minutes * 60,
-                        "price_change_pct": (snapshot["price"] / row["first"]["price"] - 1) * 100,
-                        "sampled_peak_pct": (row["peak"]["price"] / row["first"]["price"] - 1) * 100,
-                        "sampled_trough_pct": (row["trough"]["price"] / row["first"]["price"] - 1) * 100,
-                        "pair_changed": snapshot["pair"] != row["first"]["pair"],
+                        "price_change_pct": (snapshot["price"] / baseline["price"] - 1) * 100,
+                        "sampled_peak_pct": (row["rejection_peak"]["price"] / baseline["price"] - 1) * 100,
+                        "sampled_trough_pct": (row["rejection_trough"]["price"] / baseline["price"] - 1) * 100,
+                        "pair_changed": snapshot["pair"] != baseline["pair"],
                         "exact_horizon": elapsed_seconds == minutes * 60,
                         "execution_verified": False}
         row["observed_price_change_pct"] = (snapshot["price"] / row["first"]["price"] - 1) * 100
