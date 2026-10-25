@@ -28,6 +28,8 @@ RESEARCH_TARGETS = {
     ("robinhood", "0xb0f444a069d9264017610e0674ebf7e1d6e19cbb"),
     ("bsc", "0x7aede49f29bf7bc643853c1136854ea8e4da7777"),
     ("solana", "EaqXJVr1aFPhMyTJbDCpwvTeiKc8x4gueFjFKKBvtcWY"),
+    # POFD人生: user-provided BSC video; retrospective research only, unverified token.
+    ("bsc", "0xc73ff93417777c31a579f5d48cbe0496da267777"),
 }
 MANUAL |= RESEARCH_TARGETS
 
@@ -445,6 +447,20 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                 "entry_authorized": False,
             })
             del history[:-16]
+            # Preserve the first observed full market-screen recovery even if
+            # the bounded history later rotates. This is not wallet eligibility.
+            if (history[-1]["market_gates_pass"]
+                    and not row.get("first_market_requalification")):
+                row["first_market_requalification"] = {
+                    "observed_at": received.isoformat(),
+                    "minutes_since_rejection": history[-1]["minutes_since_rejection"],
+                    "buy_ratio_delta": history[-1]["buy_ratio_delta"],
+                    "liquidity_change_pct": history[-1]["liquidity_change_pct"],
+                    "pair_changed": history[-1]["pair_changed"],
+                    "wallet_risk_checked": False,
+                    "candles_verified": False,
+                    "execution_verified": False,
+                }
         row["observed_price_change_pct"] = (snapshot["price"] / row["first"]["price"] - 1) * 100
         row["observed_peak_change_pct"] = (row["peak"]["price"] / row["first"]["price"] - 1) * 100
         row["observed_drawdown_from_peak_pct"] = (snapshot["price"] / row["peak"]["price"] - 1) * 100
@@ -495,6 +511,31 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             else:
                 counts["late_over_120s"] += 1
         checkpoint_coverage[name] = counts
+    # Separate observed market requalification from actual portfolio eligibility.
+    # Never backfill missing checkpoints or interpret a later high as a fill.
+    automatic_rejected = [row for row in rows.values()
+                          if row.get("first_rejection")
+                          and row.get("cohort") != "manual_after_event"]
+    requalified = [row["first_market_requalification"]
+                   for row in automatic_rejected
+                   if row.get("first_market_requalification")]
+    second_look_summary = {
+        "rejected_automatic_tracked": len(automatic_rejected),
+        "with_fresh_second_read": sum(bool(row.get("second_look_history"))
+                                      for row in automatic_rejected),
+        "first_market_requalification_observed": len(requalified),
+        "first_requalified_within_15m_same_pair": sum(
+            r["minutes_since_rejection"] <= 15 and not r["pair_changed"]
+            for r in requalified),
+        "first_requalified_with_improved_buy_ratio": sum(
+            r["buy_ratio_delta"] is not None and r["buy_ratio_delta"] > 0
+            for r in requalified),
+        "full_entry_eligibility_verified": 0,
+        "executable_fills_verified": 0,
+        "scope": "Research market screens only; missing candles, wallet valuation, security and execution not bypassed",
+    }
+    state["second_look_summary"] = second_look_summary
+    print("SECOND LOOK REQUALIFICATION " + json.dumps(second_look_summary))
     state["last_cycle_coverage"] = {
         "at": now.isoformat(),
         "selected_existing_rows": sum(k in selected for k in rows),
