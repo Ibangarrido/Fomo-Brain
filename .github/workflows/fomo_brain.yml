@@ -11,6 +11,7 @@ on:
 concurrency:
   group: fomo-brain-state-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   analyze:
