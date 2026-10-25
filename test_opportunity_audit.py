@@ -437,6 +437,32 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(risk["buyers_outnumber_sellers_during_drop"], "UNKNOWN")
         self.assertFalse(risk["entry_authorized"])
 
+    def test_crash_interval_requires_same_pair_and_observed_liquidity(self):
+        address = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
+        first = pair(address=address, price=1, liquidity=30000)
+        row = self.observe([first])["solana:" + address]
+        self.assertIsNone(row["last"]["crash_risk_research"]["interval_minutes"])
+        second = pair(address=address, price=.2, liquidity=2000)
+        second["txns"] = {"m5": {"buys": 60, "sells": 40}}
+        row = self.observe([second], self.now + timedelta(minutes=15))["solana:" + address]
+        risk = row["last"]["crash_risk_research"]
+        self.assertTrue(risk["previous_receipt_comparable"])
+        self.assertEqual(risk["interval_minutes"], 15)
+        self.assertAlmostEqual(risk["observed_price_change_between_receipts_pct"], -80)
+        self.assertAlmostEqual(risk["observed_liquidity_change_between_receipts_pct"], (2000/30000-1)*100)
+        self.assertTrue(risk["buy_count_majority_during_observed_interval_drop"])
+        self.assertFalse(risk["entry_authorized"])
+        changed = pair(address=address, price=.01, liquidity=1, pool="another_pool")
+        row = self.observe([changed], self.now + timedelta(minutes=16))["solana:" + address]
+        risk = row["last"]["crash_risk_research"]
+        self.assertFalse(risk["previous_receipt_comparable"])
+        self.assertIsNone(risk["observed_liquidity_change_between_receipts_pct"])
+        self.assertEqual(risk["buy_count_majority_during_observed_interval_drop"], "UNKNOWN")
+        missing = pair(address=address, price=.009, pool="another_pool")
+        missing["liquidity"] = {}
+        row = self.observe([missing], self.now + timedelta(minutes=17))["solana:" + address]
+        self.assertIsNone(row["last"]["crash_risk_research"]["observed_liquidity_change_between_receipts_pct"])
+
     def test_pofd_bsc_is_manual_research_only(self):
         address = "0xc73ff93417777c31a579f5d48cbe0496da267777"
         self.assertIn(("bsc", address), audit.RESEARCH_TARGETS)
