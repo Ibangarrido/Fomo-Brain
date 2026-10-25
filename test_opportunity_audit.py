@@ -123,6 +123,17 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(gaps["ordinary_due_selected"], 1)
         self.assertEqual(gaps["ordinary_due_missed"], 0)
 
+    def test_upcoming_checkpoint_horizon_matches_twenty_minute_schedule(self):
+        audit.record_decisions("CONTROL", ["DESCARTE solana:a | ratio compras < 60%"])
+        self.observe([pair(address="a")])
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            audit.watch_targets(self.now - timedelta(minutes=14))
+        upcoming = next(json.loads(line.split("WATCH UPCOMING CHECKPOINTS ", 1)[1])
+                        for line in output.getvalue().splitlines()
+                        if line.startswith("WATCH UPCOMING CHECKPOINTS "))
+        self.assertEqual(upcoming["next_nominal_run_minutes"], 20)
+        self.assertEqual(upcoming["upcoming_due_by_horizon"]["5m"], 1)
+
     def test_same_contract_different_chains_never_merge_and_liquid_pool_wins(self):
         other = pair(price=7)
         other["chainId"] = "bsc"
