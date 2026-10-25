@@ -306,7 +306,13 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                     "discovery_rejections": sorted({r["reason"] for r in discovery_rejections
                         if r.get("chain") == chain and r.get("address") == address
                         and r.get("pair") == pair["pairAddress"]}),
-                    "data_freshness": "UNKNOWN", "execution_verified": False}
+                    "data_freshness": "UNKNOWN", "execution_verified": False,
+                    # DexScreener m5 buys/sells count transactions, NOT distinct wallets.
+                    # No whale attribution or smart-money confirmation is possible here.
+                    "whale_flow": {"status": "UNVERIFIED", "unique_buyers": None,
+                                   "unique_sellers": None, "smart_money_net_usd": None,
+                                   "cluster_independence_verified": False,
+                                   "source": "not_available_in_pair_snapshot"}}
         snapshot["early_market_screens"] = {str(age): market_screen(snapshot, age_minutes, age)
                                             for age in (60, 1440)}
         snapshot["pre_spike_research"] = early_discovery_screen(snapshot, age_minutes)
@@ -369,7 +375,11 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                         "sampled_trough_pct": (row["rejection_trough"]["price"] / baseline["price"] - 1) * 100,
                         "pair_changed": snapshot["pair"] != baseline["pair"],
                         "exact_horizon": elapsed_seconds == minutes * 60,
-                        "execution_verified": False}
+                        "execution_verified": False,
+                        "sampled_up_20pct": (row["rejection_peak"]["price"] / baseline["price"] - 1) >= 0.20,
+                        "sampled_down_20pct": (row["rejection_trough"]["price"] / baseline["price"] - 1) <= -0.20,
+                        "entry_rejection_reasons": dict(baseline["entry_rejections"]),
+                        "discovery_rejection_reasons": list(baseline["discovery_rejections"])}
         row["observed_price_change_pct"] = (snapshot["price"] / row["first"]["price"] - 1) * 100
         row["observed_peak_change_pct"] = (row["peak"]["price"] / row["first"]["price"] - 1) * 100
         row["observed_drawdown_from_peak_pct"] = (snapshot["price"] / row["peak"]["price"] - 1) * 100
