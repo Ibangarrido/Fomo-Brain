@@ -11,6 +11,8 @@ MANUAL_RESERVE = 32
 HORIZON_SECONDS = 72 * 3600
 MAX_TRACKING_SECONDS = HORIZON_SECONDS + 24 * 3600
 MANUAL = {
+    # NETWORK: user-provided video, post-event observation only.
+    ("solana", "8THZ69JP2ErZuHVj4G5rcwkFfsQafp5mQsaoQReApump"),
     # WHITEWHALE: user-supplied 2026-10-25 video; research-only after the observed move.
     ("solana", "AXoNsSQ2DjoBY8x8fP76pCeqrjhZEFRmRnnaM5hegVQx"),
     ("solana", "EcZndAERfzNhLirHwfsy44dAyPSZazjDU83pa6RApump"),
