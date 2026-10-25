@@ -10,6 +10,9 @@ REJECTED_RESERVE = 100
 MANUAL_RESERVE = 32
 HORIZON_SECONDS = 72 * 3600
 MAX_TRACKING_SECONDS = HORIZON_SECONDS + 24 * 3600
+# Diagnostic cadence matches the native 7,27,47 cron; manual dispatch is separate.
+# GitHub queue delays may make the actual interval much longer.
+NOMINAL_SCHEDULE_MINUTES = 20
 MANUAL = {
     # NETWORK: user-provided video, post-event observation only.
     ("solana", "8THZ69JP2ErZuHVj4G5rcwkFfsQafp5mQsaoQReApump"),
@@ -215,7 +218,7 @@ def watch_targets(now=None):
             "selected_due": len(due_targets.intersection(selected)),
             "automatic_requests": len(selected),
             "scope": "research quote requests only; provider freshness and fills unverified"}))
-    # Measure checkpoints that will become due before the next nominal 15m run.
+    # Measure checkpoints due before the next nominal 20m scheduled run.
     # This is a scheduling diagnostic, not a claim that those quotes were fetched.
     upcoming = {"5m": 0, "15m": 0, "30m": 0, "60m": 0}
     for row in automatic:
@@ -230,11 +233,11 @@ def watch_targets(now=None):
         for minutes in (5, 15, 30, 60):
             name = str(minutes) + "m"
             due = rejected_at + timedelta(minutes=minutes)
-            if name not in pending and now < due <= now + timedelta(minutes=15):
+            if name not in pending and now < due <= now + timedelta(minutes=NOMINAL_SCHEDULE_MINUTES):
                 upcoming[name] += 1
     print("WATCH UPCOMING CHECKPOINTS " + json.dumps({
         "at": now.isoformat(),
-        "next_nominal_run_minutes": 15,
+        "next_nominal_run_minutes": NOMINAL_SCHEDULE_MINUTES,
         "on_time_window_seconds": 120,
         "upcoming_due_by_horizon": upcoming,
         "scope": "schedule pressure only; actual run cadence, future quotes and execution unverified",
