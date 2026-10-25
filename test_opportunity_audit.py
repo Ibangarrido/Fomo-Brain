@@ -126,13 +126,15 @@ class OpportunityTests(unittest.TestCase):
     def test_upcoming_checkpoint_horizon_matches_twenty_minute_schedule(self):
         audit.record_decisions("CONTROL", ["DESCARTE solana:a | ratio compras < 60%"])
         self.observe([pair(address="a")])
+        # A pre-baseline timestamp cannot watch a token not yet observed.
+        # At +11m the 30m checkpoint is 19m away: within 20m, not 15m.
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            audit.watch_targets(self.now - timedelta(minutes=14))
+            audit.watch_targets(self.now + timedelta(minutes=11))
         upcoming = next(json.loads(line.split("WATCH UPCOMING CHECKPOINTS ", 1)[1])
                         for line in output.getvalue().splitlines()
                         if line.startswith("WATCH UPCOMING CHECKPOINTS "))
         self.assertEqual(upcoming["next_nominal_run_minutes"], 20)
-        self.assertEqual(upcoming["upcoming_due_by_horizon"]["5m"], 1)
+        self.assertEqual(upcoming["upcoming_due_by_horizon"]["30m"], 1)
 
     def test_same_contract_different_chains_never_merge_and_liquid_pool_wins(self):
         other = pair(price=7)
