@@ -156,12 +156,40 @@ def watch_targets(now=None):
         age = (now - datetime.fromisoformat(row["first"]["received_at"])).total_seconds()
         if 0 <= age < HORIZON_SECONDS + 24 * 3600 and not row.get("complete"):
             active.append(row)
-    # Rotate regardless of quote failures or performance; dead quotes cannot
-    # monopolize every monitoring slot.
+    # Prioritize a pending rejection checkpoint only during its actual
+    # 0..120s sampling window. Do not chase overdue cases indefinitely.
+    # This changes RESEARCH requests only, never entry or exit decisions.
+    def checkpoint_deadline(row):
+        baseline = row.get("first_rejection")
+        if not baseline:
+            return None
+        try:
+            rejected_at = datetime.fromisoformat(baseline["received_at"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        pending = row.get("post_rejection_checkpoints", {})
+        deadlines = []
+        for minutes in (5, 15, 30, 60):
+            if str(minutes) + "m" in pending:
+                continue
+            due = rejected_at + timedelta(minutes=minutes)
+            seconds_after_due = (now - due).total_seconds()
+            if 0 <= seconds_after_due <= 120:
+                deadlines.append(120 - seconds_after_due)
+        return min(deadlines) if deadlines else None
+
+    # Keep existing per-pool quotas and full-stride rotation for non-urgent
+    # watches. Priority is chronological, never based on price performance.
     def rotate(rows, count):
         targets = sorted((r["chain"], r["address"]) for r in rows)
         start = state.get("watch_cursor", 0) % len(targets) if targets else 0
-        return (targets[start:] + targets[:start])[:count]
+        rotated = targets[start:] + targets[:start]
+        urgent = sorted(
+            ((deadline, r["chain"], r["address"]) for r in rows
+             if (deadline := checkpoint_deadline(r)) is not None))
+        prioritized = [(chain, address) for _, chain, address in urgent]
+        return (prioritized + [target for target in rotated
+                               if target not in set(prioritized)])[:count]
     automatic = [r for r in active if not is_manual(r["chain"], r["address"])]
     rejected = [r for r in automatic if r.get("admission_pool") == "rejected_reserve"]
     ordinary = [r for r in automatic if r.get("admission_pool") != "rejected_reserve"]
