@@ -434,7 +434,15 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "checkpoint_coverage": checkpoint_coverage,
         "scope": "Sampling only; missing or late checkpoints are not zero returns or missed executable trades."}
     state["last_cycle_at"] = now.isoformat()
-    state["watch_cursor"] = state.get("watch_cursor", 0) + 1
+    # Advance by the number of automatic slots actually allocated per pool.
+    # A stride of one revisits almost the same ten contracts every cycle,
+    # leaving most rejection checkpoints unobserved.
+    active_auto = [r for r in rows.values()
+                   if not is_manual(r["chain"], r["address"]) and not r.get("complete")]
+    has_rejected = any(r.get("admission_pool") == "rejected_reserve" for r in active_auto)
+    has_ordinary = any(r.get("admission_pool") != "rejected_reserve" for r in active_auto)
+    state["watch_cursor"] = state.get("watch_cursor", 0) + (
+        5 if has_rejected and has_ordinary else 10)
     state["limitations"] = "Received market snapshots; freshness unknown; sampled peaks; gaps and pair changes recorded; no trades, costs or net return. Manual cases excluded from automatic cohort. Missing quotes never become zero. Active capacity bounded; skips counted. Completed or 96h-unresolved automatic cases removed from active tracking; only IDs and aggregate completion counts retained; no fabricated final prices."
     with open(FILE + ".tmp", "w") as handle:
         json.dump(state, handle, indent=2, allow_nan=False)
