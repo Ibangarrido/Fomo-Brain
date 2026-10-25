@@ -235,6 +235,8 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
     finished = retire_finished(state, now)
     rows = state["tokens"]
     selected = {}
+    fresh_observations_accepted = 0
+    cached_or_replayed_receipts = 0
     for pair in pairs.values():
         chain = pair.get("chainId")
         address = (pair.get("baseToken") or {}).get("address")
@@ -290,6 +292,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             state["invalid_receipt_skips"] = state.get("invalid_receipt_skips", 0) + 1
             continue
         if key in rows and received <= datetime.fromisoformat(rows[key]["last"]["received_at"]):
+            cached_or_replayed_receipts += 1
             continue
         created = number(pair.get("pairCreatedAt"))
         age_minutes = (received.timestamp() - created / 1000) / 60 if created is not None and created > 0 else None
@@ -337,6 +340,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         row["pair_changes"] += snapshot["pair"] != row["last"]["pair"]
         row["last"] = snapshot
         row["observations"] += 1
+        fresh_observations_accepted += 1
         if snapshot["price"] > row["peak"]["price"]:
             row["peak"] = snapshot
         # Prospective sampled outcomes only; never claim an intrabar high or exact fill.
@@ -394,6 +398,41 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             "automatic_limit": LIMIT, "rejected_reserve": REJECTED_RESERVE,
             "manual_reserve": MANUAL_RESERVE, "automatic_watch_requests": 10,
             "scope": "coverage and receipt timing only; no entry-policy change"})
+    # Audit sampling coverage separately from pair presence. A token in the
+    # incoming selected set may carry an unchanged cached receipt, so the old
+    # observed_this_cycle count is NOT a count of fresh observations.
+    checkpoint_coverage = {}
+    for minutes in (5, 15, 30, 60):
+        name = str(minutes) + "m"
+        counts = {"due": 0, "on_time_within_120s": 0,
+                  "late_over_120s": 0, "missing": 0, "not_due": 0}
+        for row in rows.values():
+            baseline = row.get("first_rejection")
+            if not baseline:
+                continue
+            try:
+                due_at = datetime.fromisoformat(baseline["received_at"]) + timedelta(minutes=minutes)
+            except (KeyError, ValueError, TypeError):
+                continue
+            if now < due_at:
+                counts["not_due"] += 1
+                continue
+            counts["due"] += 1
+            checkpoint = row.get("post_rejection_checkpoints", {}).get(name)
+            if checkpoint is None:
+                counts["missing"] += 1
+            elif checkpoint.get("lag_seconds") is not None and 0 <= checkpoint["lag_seconds"] <= 120:
+                counts["on_time_within_120s"] += 1
+            else:
+                counts["late_over_120s"] += 1
+        checkpoint_coverage[name] = counts
+    state["last_cycle_coverage"] = {
+        "at": now.isoformat(),
+        "selected_existing_rows": sum(k in selected for k in rows),
+        "fresh_observations_accepted": fresh_observations_accepted,
+        "cached_or_replayed_receipts": cached_or_replayed_receipts,
+        "checkpoint_coverage": checkpoint_coverage,
+        "scope": "Sampling only; missing or late checkpoints are not zero returns or missed executable trades."}
     state["last_cycle_at"] = now.isoformat()
     state["watch_cursor"] = state.get("watch_cursor", 0) + 1
     state["limitations"] = "Received market snapshots; freshness unknown; sampled peaks; gaps and pair changes recorded; no trades, costs or net return. Manual cases excluded from automatic cohort. Missing quotes never become zero. Active capacity bounded; skips counted. Completed or 96h-unresolved automatic cases removed from active tracking; only IDs and aggregate completion counts retained; no fabricated final prices."
@@ -403,7 +442,11 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
     print("AUDITORIA OPORTUNIDADES " + json.dumps({"tracked": len(rows), "capacity_skips": state["capacity_skips"],
           "retired": len(state['finished_tokens']),
           "capacity_skips_by_pool": state.get("capacity_skips_by_pool", {}),
-          "observed_this_cycle": sum(k in selected for k in rows), "no_trading_return": True}))
+          "observed_this_cycle": sum(k in selected for k in rows),
+          "fresh_observations_accepted": fresh_observations_accepted,
+          "cached_or_replayed_receipts": cached_or_replayed_receipts,
+          "checkpoint_coverage": checkpoint_coverage,
+          "no_trading_return": True}))
     for chain, address in sorted(MANUAL):
         row = rows.get(chain + ":" + address)
         if row:
