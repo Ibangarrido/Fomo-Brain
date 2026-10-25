@@ -1365,6 +1365,20 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 continue
         budget = entry_budget
         quantity = budget / (price * cost)
+        # PAPER-only, isolated to PATTERN BREAKOUT. A DEX price is not proof of an exit.
+        # A failed or unavailable quote must never be represented as a verified sale.
+        exit_route_evidence = None
+        if basename == "fomo_lab_pattern_breakout_r1.json":
+            try:
+                from route_shadow import quote as read_only_exit_quote
+                exit_route_evidence = read_only_exit_quote({
+                    "chain": token["chain"], "address": token["address"],
+                    "quantity": quantity})
+                if exit_route_evidence.get("status") != "QUOTE_ONLY":
+                    raise ValueError("quote-only exit route not confirmed")
+            except Exception as exc:
+                notes.append(f"DESCARTE {key} | breakout salida no verificable: {type(exc).__name__}: {str(exc)[:120]}")
+                continue
         state["cash"] -= budget
         state["seen"].append(key)
         if recovery_ratio:
@@ -1380,6 +1394,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
             "partial_taken": False, "peak_price": price,
             "entry_policy_version": ("continuation-r2" if entry_mode == "continuation" else "early-r5" if entry_mode == "early" else "impulse-r4") if confirm else "base",
             "entry_fee_evidence": fee_evidence, "entry_final_quote": final_quote_evidence,
+            "entry_exit_route_evidence": exit_route_evidence,
             "entry_snapshot": {k: fresh.get(k) for k in (
                 "price", "liquidity", "vol5m", "trades5m", "buyRatio5m",
                 "buys5m", "sells5m", "change5m", "change1h", "ageMinutes", "received_at")},
