@@ -2,7 +2,7 @@
 import json
 import math
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 FILE = "fomo_opportunity_audit_r1.json"
 LIMIT = 500
@@ -315,7 +315,8 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                                     else "automatic_prospective"),
                          "admission_pool": pool,
                          "first": snapshot, "last": snapshot, "peak": snapshot,
-                         "observations": 0, "pair_changes": 0, "max_observation_gap_seconds": 0}
+                         "observations": 0, "pair_changes": 0, "max_observation_gap_seconds": 0,
+                         "trough": snapshot, "post_rejection_checkpoints": {}}
         row = rows[key]
         if row.get("complete"):
             continue
@@ -328,6 +329,26 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         row["observations"] += 1
         if snapshot["price"] > row["peak"]["price"]:
             row["peak"] = snapshot
+        # Prospective sampled outcomes only; never claim an intrabar high or exact fill.
+        if snapshot["price"] < row.get("trough", row["first"])["price"]:
+            row["trough"] = snapshot
+        if row["first"].get("entry_rejections") or row["first"].get("discovery_rejections"):
+            checkpoints = row.setdefault("post_rejection_checkpoints", {})
+            elapsed_seconds = (received - datetime.fromisoformat(row["first"]["received_at"])).total_seconds()
+            for minutes in (5, 15, 30, 60):
+                name = str(minutes) + "m"
+                if name not in checkpoints and elapsed_seconds >= minutes * 60:
+                    checkpoints[name] = {
+                        "target_at": (datetime.fromisoformat(row["first"]["received_at"])
+                                      + timedelta(minutes=minutes)).isoformat(),
+                        "observed_at": received.isoformat(),
+                        "lag_seconds": elapsed_seconds - minutes * 60,
+                        "price_change_pct": (snapshot["price"] / row["first"]["price"] - 1) * 100,
+                        "sampled_peak_pct": (row["peak"]["price"] / row["first"]["price"] - 1) * 100,
+                        "sampled_trough_pct": (row["trough"]["price"] / row["first"]["price"] - 1) * 100,
+                        "pair_changed": snapshot["pair"] != row["first"]["pair"],
+                        "exact_horizon": elapsed_seconds == minutes * 60,
+                        "execution_verified": False}
         row["observed_price_change_pct"] = (snapshot["price"] / row["first"]["price"] - 1) * 100
         row["observed_peak_change_pct"] = (row["peak"]["price"] / row["first"]["price"] - 1) * 100
         row["observed_drawdown_from_peak_pct"] = (snapshot["price"] / row["peak"]["price"] - 1) * 100
