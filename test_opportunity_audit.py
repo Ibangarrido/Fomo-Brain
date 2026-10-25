@@ -241,6 +241,17 @@ class OpportunityTests(unittest.TestCase):
         self.assertGreater(len(first | second), 10)
 
 
+    def test_watch_rotation_advances_by_full_slot_allocation(self):
+        # Twenty eligible contracts and ten automatic slots per cycle:
+        # the next cycle must cover the other ten, not nine repeats.
+        self.observe([pair(address="rotation" + str(i)) for i in range(20)])
+        first = set(audit.watch_targets(self.now)) - audit.MANUAL
+        self.observe([], self.now + timedelta(minutes=1))
+        second = set(audit.watch_targets(self.now + timedelta(minutes=1))) - audit.MANUAL
+        self.assertEqual(len(first), 10)
+        self.assertEqual(len(second), 10)
+        self.assertFalse(first & second)
+
     def test_new_contracts_are_watched_even_without_a_previous_quote(self):
         self.assertTrue(audit.RESEARCH_TARGETS <= set(audit.watch_targets(self.now)))
         state = {"tokens": {}}
