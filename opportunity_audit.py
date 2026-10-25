@@ -32,6 +32,8 @@ RESEARCH_TARGETS = {
     ("solana", "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"),
     # Kongo: user video showed zero-liquidity warning before sampled crash; retrospective only.
     ("solana", "BHUrqxqx6hMPFC7Mewfm4uJ5cAV2KZGvanwUeFEJpump"),
+    # Kongo (second contract): flat/choppy user video; different Solana mint, post-event study only.
+    ("solana", "2Q3jYQWWzkfZotYMyxzAFwfpFT5RhhBvGS3mk8P7PryF"),
     # POFD人生: user-provided BSC video; retrospective research only, unverified token.
     ("bsc", "0xc73ff93417777c31a579f5d48cbe0496da267777"),
 }
@@ -293,6 +295,23 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
     selected = {}
     fresh_observations_accepted = 0
     cached_or_replayed_receipts = 0
+    # Independent receipt-time market pulse; never used to change entry gates.
+    # A rolling 5m change near zero is NOT proof of 15-30m sideways trading.
+    market_pulse = {
+        "automatic_fresh_receipts": 0,
+        "cap_below_50000": 0,
+        "cap_50000_to_180000": 0,
+        "cap_180000_or_more": 0,
+        "cap_unknown": 0,
+        "rolling_5m_abs_change_below_2pct": 0,
+        "rolling_5m_change_unknown": 0,
+        "rolling_5m_negative_buy_count_majority": 0,
+        "buy_count_ratio_below_60pct": 0,
+        "buy_count_ratio_unknown": 0,
+        "liquidity_below_20000": 0,
+        "liquidity_unknown": 0,
+        "scope": "Fresh automatic pair receipts only; rolling 5m values, not 15/30m trends, unique wallets, executable liquidity, or buy signals",
+    }
     for pair in pairs.values():
         chain = pair.get("chainId")
         address = (pair.get("baseToken") or {}).get("address")
@@ -438,6 +457,30 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         row["last"] = snapshot
         row["observations"] += 1
         fresh_observations_accepted += 1
+        if row.get("cohort") != "manual_after_event":
+            market_pulse["automatic_fresh_receipts"] += 1
+            if cap is None or cap <= 0:
+                market_pulse["cap_unknown"] += 1
+            elif cap < 50000:
+                market_pulse["cap_below_50000"] += 1
+            elif cap < 180000:
+                market_pulse["cap_50000_to_180000"] += 1
+            else:
+                market_pulse["cap_180000_or_more"] += 1
+            if change5 is None:
+                market_pulse["rolling_5m_change_unknown"] += 1
+            else:
+                market_pulse["rolling_5m_abs_change_below_2pct"] += abs(change5) < 2
+                market_pulse["rolling_5m_negative_buy_count_majority"] += (
+                    change5 < 0 and buy_ratio is not None and buy_ratio > 0.5)
+            if buy_ratio is None:
+                market_pulse["buy_count_ratio_unknown"] += 1
+            else:
+                market_pulse["buy_count_ratio_below_60pct"] += buy_ratio < .60
+            if liquidity is None:
+                market_pulse["liquidity_unknown"] += 1
+            else:
+                market_pulse["liquidity_below_20000"] += liquidity < 20000
         if snapshot["price"] > row["peak"]["price"]:
             row["peak"] = snapshot
         # Prospective sampled outcomes only; never claim an intrabar high or exact fill.
@@ -611,6 +654,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "selected_existing_rows": sum(k in selected for k in rows),
         "fresh_observations_accepted": fresh_observations_accepted,
         "cached_or_replayed_receipts": cached_or_replayed_receipts,
+        "market_pulse": market_pulse,
         "checkpoint_coverage": checkpoint_coverage,
         "scope": "Receipt-time sampling only; provider market freshness unknown. Timely sampled moves are NOT candle highs, executable fills, or trading returns; late/missing checkpoints are excluded from horizon outcomes."}
     state["last_cycle_at"] = now.isoformat()
@@ -636,6 +680,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
           "checkpoint_coverage": checkpoint_coverage,
           "market_freshness_verified": False,
           "no_trading_return": True}))
+    print("MERCADO PULSO 5M " + json.dumps(market_pulse, allow_nan=False))
     # Surface a bounded, auditable leaderboard in Actions logs. These are
     # sampled price observations, never exact candle highs or executable P&L.
     rejected_auto = []
