@@ -252,6 +252,19 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(len(second), 10)
         self.assertFalse(first & second)
 
+    def test_due_rejection_checkpoint_preempts_rotation_without_extra_requests(self):
+        # The next ten ordinary slots would omit priority0 at cursor=10.
+        # Its 5m checkpoint is due now, so research should sample it first.
+        audit.record_decisions("EARLY", ["DESCARTE solana:priority0 | ratio compras < 60%"])
+        self.observe([pair(address="priority" + str(i)) for i in range(20)])
+        self.observe([], self.now + timedelta(minutes=5))
+        targets = set(audit.watch_targets(self.now + timedelta(minutes=5))) - audit.MANUAL
+        self.assertEqual(len(targets), 10)
+        self.assertIn(("solana", "priority0"), targets)
+        # No indefinite priority after the two-minute checkpoint window.
+        self.observe([], self.now + timedelta(minutes=8))
+        self.assertEqual(len(set(audit.watch_targets(self.now + timedelta(minutes=8))) - audit.MANUAL), 10)
+
     def test_new_contracts_are_watched_even_without_a_previous_quote(self):
         self.assertTrue(audit.RESEARCH_TARGETS <= set(audit.watch_targets(self.now)))
         state = {"tokens": {}}
