@@ -353,6 +353,10 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "rolling_5m_change_unknown": 0,
         "rolling_5m_negative_buy_count_majority": 0,
         "buy_count_ratio_below_60pct": 0,
+        "buy_count_ratio_below_50pct": 0,
+        "buy_count_ratio_50_to_60pct": 0,
+        "buy_count_ratio_at_least_60pct": 0,
+        "buy_count_ratio_50_to_60pct_liquidity_at_least_20000": 0,
         "buy_count_ratio_unknown": 0,
         "liquidity_below_20000": 0,
         "liquidity_unknown": 0,
@@ -523,6 +527,13 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                 market_pulse["buy_count_ratio_unknown"] += 1
             else:
                 market_pulse["buy_count_ratio_below_60pct"] += buy_ratio < .60
+                # Observe the proposed 60% -> 50% experiment without changing
+                # any trading gate. Count transactions, not unique buyers.
+                market_pulse["buy_count_ratio_below_50pct"] += buy_ratio < .50
+                market_pulse["buy_count_ratio_50_to_60pct"] += .50 <= buy_ratio < .60
+                market_pulse["buy_count_ratio_at_least_60pct"] += buy_ratio >= .60
+                market_pulse["buy_count_ratio_50_to_60pct_liquidity_at_least_20000"] += (
+                    .50 <= buy_ratio < .60 and liquidity is not None and liquidity >= 20000)
             if liquidity is None:
                 market_pulse["liquidity_unknown"] += 1
             else:
