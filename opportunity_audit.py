@@ -357,6 +357,9 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "buy_count_ratio_50_to_60pct": 0,
         "buy_count_ratio_at_least_60pct": 0,
         "buy_count_ratio_50_to_60pct_liquidity_at_least_20000": 0,
+        "buy_count_ratio_50_to_60pct_other_market_gates_pass": 0,
+        "buy_count_ratio_50_to_60pct_other_market_gates_fail": 0,
+        "buy_count_ratio_50_to_60pct_other_market_gates_unknown": 0,
         "buy_count_ratio_unknown": 0,
         "liquidity_below_20000": 0,
         "liquidity_unknown": 0,
@@ -534,6 +537,19 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                 market_pulse["buy_count_ratio_at_least_60pct"] += buy_ratio >= .60
                 market_pulse["buy_count_ratio_50_to_60pct_liquidity_at_least_20000"] += (
                     .50 <= buy_ratio < .60 and liquidity is not None and liquidity >= 20000)
+                if .50 <= buy_ratio < .60:
+                    # Counterfactual research only: isolate the buyer-ratio gate
+                    # without treating missing age/momentum/liquidity as PASS.
+                    # Wallet, candles, security and executable quotes remain untested.
+                    other_gates = {name: result for name, result in
+                                   market_screen(snapshot, age_minutes, 60).items()
+                                   if name != "buy_count_60pct"}
+                    other_gates["market_cap_max_2m"] = (
+                        "UNKNOWN" if cap is None else
+                        "PASS" if 0 < cap <= 2000000 else "FAIL")
+                    classification = ("fail" if "FAIL" in other_gates.values() else
+                                      "unknown" if "UNKNOWN" in other_gates.values() else "pass")
+                    market_pulse["buy_count_ratio_50_to_60pct_other_market_gates_" + classification] += 1
             if liquidity is None:
                 market_pulse["liquidity_unknown"] += 1
             else:
