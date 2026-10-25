@@ -315,6 +315,30 @@ class OpportunityTests(unittest.TestCase):
                             for r in state["research_watch_history"]))
 
 
+    def test_timely_sampled_outcomes_exclude_late_horizon(self):
+        audit.record_decisions("CONTROL", ["DESCARTE solana:a | ratio compras < 60%"])
+        self.observe([pair(price=1)])
+        self.observe([pair(price=1.25)], self.now + timedelta(minutes=6))
+        counts = audit.read()["last_cycle_coverage"]["checkpoint_coverage"]
+        self.assertEqual(counts["5m"]["on_time_within_120s"], 1)
+        self.assertEqual(counts["5m"]["on_time_sampled_up_20pct"], 1)
+        self.assertEqual(counts["15m"]["not_due"], 1)
+        self.observe([pair(price=.7, pool="new")], self.now + timedelta(minutes=16))
+        counts = audit.read()["last_cycle_coverage"]["checkpoint_coverage"]
+        self.assertEqual(counts["5m"]["on_time_sampled_up_20pct"], 1)
+        self.assertEqual(counts["15m"]["on_time_sampled_down_20pct"], 1)
+        self.assertEqual(counts["15m"]["on_time_pair_changed"], 1)
+        self.assertEqual(counts["30m"]["not_due"], 1)
+
+    def test_late_checkpoint_does_not_count_as_timely_winner(self):
+        audit.record_decisions("CONTROL", ["DESCARTE solana:a | liquidity"])
+        self.observe([pair(price=1)])
+        self.observe([pair(price=1.5)], self.now + timedelta(minutes=12))
+        counts = audit.read()["last_cycle_coverage"]["checkpoint_coverage"]["5m"]
+        self.assertEqual(counts["late_over_120s"], 1)
+        self.assertEqual(counts["on_time_sampled_up_20pct"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
 
