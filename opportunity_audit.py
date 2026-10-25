@@ -174,8 +174,10 @@ def watch_targets(now=None):
                 continue
             due = rejected_at + timedelta(minutes=minutes)
             seconds_after_due = (now - due).total_seconds()
-            if 0 <= seconds_after_due <= 120:
-                deadlines.append(120 - seconds_after_due)
+            if -60 <= seconds_after_due <= 120:
+                # Prewarm during the minute BEFORE the checkpoint so the next
+                # scheduled observation is less likely to miss the 120s window.
+                deadlines.append(abs(seconds_after_due))
         return min(deadlines) if deadlines else None
 
     # Keep existing per-pool quotas and full-stride rotation for non-urgent
@@ -203,7 +205,7 @@ def watch_targets(now=None):
                    if checkpoint_deadline(r) is not None}
     if due_targets:
         print("WATCH CHECKPOINT PRIORITY " + json.dumps({
-            "due_in_120s_window": len(due_targets),
+            "due_or_prewarms": len(due_targets),
             "selected_due": len(due_targets.intersection(selected)),
             "automatic_requests": len(selected),
             "scope": "research quote requests only; provider freshness and fills unverified"}))
