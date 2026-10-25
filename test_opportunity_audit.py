@@ -352,6 +352,43 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(counts["on_time_sampled_up_20pct"], 0)
 
 
+    def test_second_look_counts_market_requalification_without_authorizing_entry(self):
+        audit.record_decisions("EARLY", ["DESCARTE solana:a | ratio compras < 60%"])
+        first = pair()
+        first["pairCreatedAt"] = int((self.now - timedelta(minutes=3)).timestamp() * 1000)
+        first["txns"]["m5"] = {"buys": 45, "sells": 55}
+        self.observe([first])
+        state = audit.read()
+        self.assertEqual(state["second_look_summary"]["with_fresh_second_read"], 0)
+        second = pair(price=1.1, liquidity=26000)
+        second["pairCreatedAt"] = first["pairCreatedAt"]
+        second["txns"]["m5"] = {"buys": 70, "sells": 30}
+        row = self.observe([second], self.now + timedelta(minutes=5))["solana:a"]
+        recovery = row["first_market_requalification"]
+        self.assertEqual(recovery["minutes_since_rejection"], 5)
+        self.assertAlmostEqual(recovery["buy_ratio_delta"], .25)
+        self.assertFalse(recovery["execution_verified"])
+        self.assertFalse(recovery["wallet_risk_checked"])
+        summary = audit.read()["second_look_summary"]
+        self.assertEqual(summary["first_market_requalification_observed"], 1)
+        self.assertEqual(summary["first_requalified_within_15m_same_pair"], 1)
+        self.assertEqual(summary["full_entry_eligibility_verified"], 0)
+        self.assertEqual(summary["executable_fills_verified"], 0)
+        third = pair(price=.8, pool="different")
+        third["pairCreatedAt"] = first["pairCreatedAt"]
+        third["txns"]["m5"] = {"buys": 10, "sells": 90}
+        row = self.observe([third], self.now + timedelta(minutes=16))["solana:a"]
+        self.assertEqual(row["first_market_requalification"], recovery)
+        self.assertEqual(audit.read()["second_look_summary"]["first_market_requalification_observed"], 1)
+
+    def test_pofd_bsc_is_manual_research_only(self):
+        address = "0xc73ff93417777c31a579f5d48cbe0496da267777"
+        self.assertIn(("bsc", address), audit.RESEARCH_TARGETS)
+        self.assertTrue(audit.is_manual("bsc", address.upper()))
+        self.assertFalse(audit.is_manual("solana", address))
+        self.assertIn(("bsc", address), audit.watch_targets(self.now))
+
+
 if __name__ == "__main__":
     unittest.main()
 
