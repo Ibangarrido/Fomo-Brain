@@ -37,6 +37,9 @@ jobs:
           search_artifacts: true
           if_no_artifact_found: ignore
 
+      - name: Registrar inicio de auditoria
+        run: echo "BRAIN_AUDIT_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Verificar simulacion V10 sin red
         run: |
           python test_fomo_v8.py
@@ -83,6 +86,7 @@ jobs:
         run: python -m pip install websocket-client==1.8.0
 
       - name: Ejecutar FOMO Brain
+        id: brain_engine
         env:
           BRAIN_CYCLES: "15"
           BRAIN_CANDLE_LAB: ${{ steps.candle_tests.outcome == 'success' && '1' || '0' }}
@@ -92,6 +96,7 @@ jobs:
           BRAIN_QUOTE_GUARD: "1"
           BRAIN_M4_LAB: "1"
           BRAIN_M4_ISOLATION: "1"
+          BRAIN_UNKNOWN_ISOLATION: "1"
           BRAIN_OPPORTUNITY_AUDIT: "1"
           BRAIN_REBOUND_LAB: "1"
           BRAIN_TARGETS_LAB: "1"
@@ -116,6 +121,8 @@ jobs:
 
       - name: Registrar estado de observabilidad V11 V12
         if: always()
+        env:
+          BRAIN_ENGINE_OUTCOME: ${{ steps.brain_engine.outcome }}
         run: |
           python v12_lab.py
 
@@ -279,6 +286,7 @@ jobs:
           name: gmgn-paper
           path: gmgn_paper_r1.json
           retention-days: 30
+
 
 
 

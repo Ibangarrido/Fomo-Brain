@@ -1016,6 +1016,29 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
             "scope": "entry policy only; not wallet eligibility, executable route or profit"}
 
 
+UNKNOWN_ISOLATION_FILES = {
+    "fomo_paper_v10.json", "fomo_paper_v10_impulse.json",
+    "fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json",
+}
+
+
+def isolate_existing_unknowns(state, path, now):
+    """One PAPER policy epoch; later unknown positions still block entries."""
+    if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "0") != "1"
+            or os.path.basename(path) not in UNKNOWN_ISOLATION_FILES):
+        return set()
+    epoch = state.get("unknown_isolation_epoch")
+    if epoch is None:
+        keys = [[p.get("chain"), p.get("address"), p.get("opened_at")]
+                for p in state["positions"] if p.get("quote_status") != "OK"]
+        epoch = {"version": "unknown-isolation-r1", "at": now.isoformat(),
+                 "positions": keys, "cash": state["cash"], "reserve": state["reserve"],
+                 "not_a_sale": True, "unknown_value_for_risk": 0,
+                 "comparison": "new policy epoch; not an unchanged-policy comparison"}
+        state["unknown_isolation_epoch"] = epoch
+    return {tuple(key) for key in epoch["positions"]}
+
+
 @measure_wallet_latency
 @wallet_transaction
 def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False, require_liquidity_growth=False, net_scenario_gate=False):
@@ -1246,13 +1269,18 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                          f" | hueco_cotizacion_s={pos.get('quote_gap_seconds')}"
                          f" | exceso_stop_pp={max(0, -15-pnl_pct):.2f}")
             notes.append(note)
-    quotes_blocked = any(p["quote_status"] != "OK" and not
+    isolated_unknowns = isolate_existing_unknowns(state, paper_file, now)
+    cash_only_unknowns = bool(isolated_unknowns)
+    if cash_only_unknowns:
+        notes.append("PAPER: posiciones desconocidas heredadas aisladas; sin venta ni efectivo recuperado")
+    quotes_blocked = any(p["quote_status"] != "OK" and
+                        (p.get("chain"), p.get("address"), p.get("opened_at")) not in isolated_unknowns and not
                         (isolated_m4 and is_quarantined(p)) for p in state["positions"])
     if isolated_m4:
         notes.append("LAB M4: posicion heredada aislada; valor desconocido excluido del control de riesgo; no es venta")
     if quotes_blocked:
         notes.append("ENTRADAS PAUSADAS: hay posiciones sin cotizacion verificable")
-    risk_reason = freno_cartera_v10(state, now, conservative_unknown=isolated_m4)
+    risk_reason = freno_cartera_v10(state, now, conservative_unknown=(isolated_m4 or cash_only_unknowns))
     if risk_reason:
         notes.append("FRENO V10: " + risk_reason)
     # Shadow-only: preflight unknown-valuation blockers, not proven missed trades.
@@ -1264,7 +1292,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     # Una sola entrada por token durante este experimento, sin reentradas.
     for token in ranking:
         key = token["chain"] + ":" + token["address"]
-        risk_reason = freno_cartera_v10(state, now, conservative_unknown=isolated_m4)
+        risk_reason = freno_cartera_v10(state, now, conservative_unknown=(isolated_m4 or cash_only_unknowns))
         reason = (risk_reason if risk_reason else
                   "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
@@ -1366,7 +1394,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 if reason:
                     raise ValueError(reason)
                 entry_at = datetime.now(timezone.utc)
-                reason = freno_cartera_v10(state, entry_at, conservative_unknown=isolated_m4)
+                reason = freno_cartera_v10(state, entry_at, conservative_unknown=(isolated_m4 or cash_only_unknowns))
                 if reason:
                     raise ValueError(reason)
                 final_quote_evidence = {"version": "entry-quote-r1", "after_security_checks": True,
@@ -2367,6 +2395,7 @@ def run_session(cycles=1, interval_seconds=60):
 
 if __name__ == "__main__":
     run_session(int(os.getenv("BRAIN_CYCLES", "1")))
+
 
 
 

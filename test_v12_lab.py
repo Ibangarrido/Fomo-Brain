@@ -13,6 +13,23 @@ from test_fomo_v8 import pair
 
 
 class V12Tests(unittest.TestCase):
+    def test_run_provenance_distinguishes_restored_partial_and_current(self):
+        now = datetime(2026, 10, 25, 5, tzinfo=timezone.utc)
+        for outcome, stamp, expected in (
+            ('skipped', '2026-10-24T09:19:00+00:00', 'RESTORED_OR_NOT_UPDATED'),
+            ('failure', '2026-10-25T04:59:00+00:00', 'PARTIAL_RUN'),
+            ('success', '2026-10-25T04:59:00+00:00', 'CURRENT_RUN'),
+            ('success', None, 'RESTORED_OR_NOT_UPDATED'),
+            ('success', '2026-10-25T06:00:00+00:00', 'RESTORED_OR_NOT_UPDATED')):
+            arms = {'CONTROL': {'as_of': stamp}}
+            with patch.dict(os.environ, {'BRAIN_AUDIT_STARTED_AT': '2026-10-25T04:30:00Z',
+                                         'BRAIN_ENGINE_OUTCOME': outcome,
+                                         'GITHUB_EVENT_NAME': 'workflow_dispatch'}):
+                provenance = v.run_provenance(arms, now)
+            self.assertEqual(arms['CONTROL']['data_status'], expected)
+            self.assertEqual(provenance['event'], 'workflow_dispatch')
+            self.assertFalse(provenance['scheduled_cadence_verified'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.old = os.getcwd()
@@ -170,3 +187,4 @@ class V12Tests(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+

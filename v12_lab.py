@@ -191,10 +191,34 @@ def wallet_outcomes(wallet):
     return {'cash_eur': number(wallet.get('cash')), 'reserve_eur': number(wallet.get('reserve')),
         'estimated_equity_eur': equity, 'valuation_complete': equity is not None,
         'as_of': obs.get('at'), 'open_positions': len(wallet.get('positions', [])),
+        'unknown_positions': sum(p.get('quote_status') != 'OK' for p in wallet.get('positions', [])),
+        'last_entry_audit': wallet.get('last_entry_audit'),
         'sale_legs': len(legs), 'unknown_sale_legs': unknown,
         'modeled_realized_net_pnl_eur': None if unknown else sum(row['modeled_net_pnl_eur'] for row in legs),
         'all_in_realized_net_pnl_eur': None if legs else 0.0,
         'model_currency': 'EUR with fixed USD/EUR=1; gas/MEV excluded', 'outcomes': legs}
+
+
+def run_provenance(arms, now):
+    """Report receipt freshness separately from valuation and execution evidence."""
+    started = os.getenv('BRAIN_AUDIT_STARTED_AT')
+    outcome = os.getenv('BRAIN_ENGINE_OUTCOME', 'unknown')
+    for arm in arms.values():
+        try:
+            stamp = instant(arm.get('as_of'))
+            age = (now - stamp).total_seconds()
+            current = started is not None and instant(started) <= stamp <= now
+        except (ValueError, TypeError):
+            age, current = None, False
+        arm['observation_age_seconds'] = age
+        arm['updated_this_run'] = current if started else None
+        arm['data_status'] = ('CURRENT_RUN' if current and outcome == 'success' else
+                              'PARTIAL_RUN' if current else
+                              'RESTORED_OR_NOT_UPDATED' if started else 'UNVERIFIED_RUN_CONTEXT')
+    return {'run_id': os.getenv('GITHUB_RUN_ID'), 'run_attempt': os.getenv('GITHUB_RUN_ATTEMPT'),
+            'event': os.getenv('GITHUB_EVENT_NAME'), 'commit_sha': os.getenv('GITHUB_SHA'),
+            'audit_started_at': started, 'engine_outcome': outcome,
+            'scheduled_cadence_verified': False}
 
 
 def build_report(state, wallets, now):
@@ -207,8 +231,10 @@ def build_report(state, wallets, now):
             'positive': sum(r > 0 for r in returns), 'negative': sum(r < 0 for r in returns),
             'mean_observed_return_pct': sum(returns) / len(returns) if returns else None}
     arms = {arm: wallet_outcomes(wallet) for arm, wallet in wallets.items()}
+    provenance = run_provenance(arms, now)
     control, net = (arms.get(arm, {}).get('estimated_equity_eur') for arm in ('CONTROL', 'NET'))
     return {'version': 'v12-r1', 'generated_at': now.isoformat(), 'mode': 'paper_observability_only',
+        'run_provenance': provenance,
         'forward_rejection_outcomes': 'integrated', 'net_execution_outcomes': 'integrated_modeled_only',
         'tracked_rejection_cases': len(state['cases']), 'evaluations': state['evaluations'],
         'invalid_references': state['invalid_references'], 'capacity_skips': state['capacity_skips'],
@@ -243,3 +269,4 @@ def write_report(now=None):
 
 if __name__ == '__main__':
     print(json.dumps(write_report(), indent=2, allow_nan=False))
+
