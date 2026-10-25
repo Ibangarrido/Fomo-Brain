@@ -330,7 +330,9 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         if snapshot["price"] > row["peak"]["price"]:
             row["peak"] = snapshot
         # Prospective sampled outcomes only; never claim an intrabar high or exact fill.
-        if snapshot["price"] < row.get("trough", row["first"])["price"]:
+        # Legacy cohorts may lack trough; start from their first observed quote.
+        row.setdefault("trough", row["first"])
+        if snapshot["price"] < row["trough"]["price"]:
             row["trough"] = snapshot
         if row["first"].get("entry_rejections") or row["first"].get("discovery_rejections"):
             checkpoints = row.setdefault("post_rejection_checkpoints", {})
