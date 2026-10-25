@@ -77,7 +77,8 @@ def isolate_inherited(state, path, now):
         epochs.append({"version": "m4-isolation-r1", "at": now.isoformat(),
                        "cash": state["cash"], "reserve": state["reserve"],
                        "closed_legs": len(state["closed"]), "open": len(state["positions"]),
-                       "unknown_risk_value": 0, "not_a_sale": True,
+                       "unknown_risk_value": None, "valuation_status": "UNVERIFIED",
+                       "not_a_sale": True,
                        "comparison": "compare results within the same isolation epoch"})
     return True
 
