@@ -28,6 +28,8 @@ RESEARCH_TARGETS = {
     ("robinhood", "0xb0f444a069d9264017610e0674ebf7e1d6e19cbb"),
     ("bsc", "0x7aede49f29bf7bc643853c1136854ea8e4da7777"),
     ("solana", "EaqXJVr1aFPhMyTJbDCpwvTeiKc8x4gueFjFKKBvtcWY"),
+    # FHOSTAGE: user-provided Solana crash video; retrospective risk study only.
+    ("solana", "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"),
     # POFD人生: user-provided BSC video; retrospective research only, unverified token.
     ("bsc", "0xc73ff93417777c31a579f5d48cbe0496da267777"),
 }
@@ -355,6 +357,23 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                                    "unique_sellers": None, "smart_money_net_usd": None,
                                    "cluster_independence_verified": False,
                                    "source": "not_available_in_pair_snapshot"}}
+        # Crash-risk observations are descriptive only. Transaction counts are
+        # NOT traded amounts, and a pair quote cannot establish sellability.
+        # Do not infer a rug pull or authorize a trade from these fields.
+        change5 = snapshot["change5m"]
+        buy_ratio = snapshot["buy_ratio5m"]
+        snapshot["crash_risk_research"] = {
+            "price_drop_5m_ge_70pct": ("UNKNOWN" if change5 is None else change5 <= -70),
+            "liquidity_below_20000": ("UNKNOWN" if liquidity is None else liquidity < 20000),
+            "buyers_outnumber_sellers_during_drop": (
+                "UNKNOWN" if change5 is None or buy_ratio is None else
+                change5 <= -30 and buy_ratio > 0.5),
+            "buy_sell_volume_usd": "UNKNOWN",
+            "liquidity_removed": "UNKNOWN",
+            "sell_execution_verified": False,
+            "source": "pair_snapshot_only; no wallet or executable exit verification",
+            "entry_authorized": False,
+        }
         snapshot["early_market_screens"] = {str(age): market_screen(snapshot, age_minutes, age)
                                             for age in (60, 1440)}
         snapshot["pre_spike_research"] = early_discovery_screen(snapshot, age_minutes)
