@@ -421,6 +421,30 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                         "sampled_down_20pct": (row["rejection_trough"]["price"] / baseline["price"] - 1) <= -0.20,
                         "entry_rejection_reasons": dict(baseline["entry_rejections"]),
                         "discovery_rejection_reasons": list(baseline["discovery_rejections"])}
+        # Research-only second-look screen: compare the current receipt with the
+        # first rejected snapshot. This never authorizes a simulated order.
+        if baseline and received > datetime.fromisoformat(baseline["received_at"]):
+            checks = market_screen(snapshot, age_minutes, 60)
+            history = row.setdefault("second_look_history", [])
+            history.append({
+                "observed_at": received.isoformat(),
+                "minutes_since_rejection": round((received - datetime.fromisoformat(
+                    baseline["received_at"])).total_seconds() / 60, 2),
+                "checks": checks,
+                "market_gates_pass": all(value == "PASS" for value in checks.values()),
+                "buy_ratio_delta": (snapshot["buy_ratio5m"] - baseline["buy_ratio5m"]
+                                    if snapshot["buy_ratio5m"] is not None
+                                    and baseline["buy_ratio5m"] is not None else None),
+                "liquidity_change_pct": ((snapshot["liquidity"] / baseline["liquidity"] - 1) * 100
+                                         if snapshot["liquidity"] is not None
+                                         and baseline["liquidity"] is not None
+                                         and baseline["liquidity"] > 0 else None),
+                "pair_changed": snapshot["pair"] != baseline["pair"],
+                "two_bullish_candles": "UNKNOWN",
+                "executable_quote": "UNKNOWN",
+                "entry_authorized": False,
+            })
+            del history[:-16]
         row["observed_price_change_pct"] = (snapshot["price"] / row["first"]["price"] - 1) * 100
         row["observed_peak_change_pct"] = (row["peak"]["price"] / row["first"]["price"] - 1) * 100
         row["observed_drawdown_from_peak_pct"] = (snapshot["price"] / row["peak"]["price"] - 1) * 100
