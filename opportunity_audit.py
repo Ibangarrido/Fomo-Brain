@@ -239,6 +239,25 @@ def watch_targets(now=None):
         "upcoming_due_by_horizon": upcoming,
         "scope": "schedule pressure only; actual run cadence, future quotes and execution unverified",
     }))
+    # Identify whether the fixed five-per-pool split crowds out urgent rejects.
+    # Diagnostic only: selection, quotas, entry gates and wallet logic unchanged.
+    selected_set = set(selected)
+    rejected_due = {(r["chain"], r["address"]) for r in rejected
+                    if checkpoint_deadline(r) is not None}
+    ordinary_due = {(r["chain"], r["address"]) for r in ordinary
+                    if checkpoint_deadline(r) is not None}
+    print("WATCH CHECKPOINT POOL GAPS " + json.dumps({
+        "at": now.isoformat(),
+        "rejected_due": len(rejected_due),
+        "rejected_due_selected": len(rejected_due & selected_set),
+        "rejected_due_missed": len(rejected_due - selected_set),
+        "ordinary_due": len(ordinary_due),
+        "ordinary_due_selected": len(ordinary_due & selected_set),
+        "ordinary_due_missed": len(ordinary_due - selected_set),
+        "selected_rejected_total": len(selected_set & {(r["chain"], r["address"]) for r in rejected}),
+        "selected_ordinary_total": len(selected_set & {(r["chain"], r["address"]) for r in ordinary}),
+        "scope": "research scheduling only; no quote freshness or execution verification",
+    }))
     # Research request pressure; not evidence of fresh observations or fills.
     print("WATCH CAPACITY " + json.dumps({
         "at": now.isoformat(),
