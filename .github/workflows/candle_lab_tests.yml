@@ -21,6 +21,8 @@ on:
       - "test_candle_lab.py"
       - "fomo_brain.py"
       - "test_fomo_v8.py"
+      - "opportunity_audit.py"
+      - "test_opportunity_audit.py"
       - "whale_paper.py"
       - "test_whale_paper.py"
       - ".github/workflows/candle_lab_tests.yml"
@@ -48,6 +50,9 @@ jobs:
           python test_whale_paper.py
       - name: Verificar laboratorio aislado sin red
         run: python -m unittest -v test_candle_lab.py
+
+      - name: Verificar seguimiento de descartes sin red
+        run: python -m unittest -v test_opportunity_audit.py
 
       - name: Verificar comparacion de umbrales sin red
         run: python -m unittest -v test_ratio_lab.py
