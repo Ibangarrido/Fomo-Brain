@@ -447,6 +447,36 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
           "cached_or_replayed_receipts": cached_or_replayed_receipts,
           "checkpoint_coverage": checkpoint_coverage,
           "no_trading_return": True}))
+    # Surface a bounded, auditable leaderboard in Actions logs. These are
+    # sampled price observations, never exact candle highs or executable P&L.
+    rejected_auto = []
+    for row in rows.values():
+        if row.get("cohort") == "manual_after_event":
+            continue
+        baseline = row.get("first_rejection")
+        peak = row.get("rejection_peak")
+        if not baseline or not peak or not baseline.get("price"):
+            continue
+        peak_pct = (peak["price"] / baseline["price"] - 1) * 100
+        rejected_auto.append({
+            "chain": row["chain"], "address": row["address"],
+            "symbol": row.get("symbol"),
+            "rejected_at": baseline["received_at"],
+            "peak_observed_at": peak["received_at"],
+            "sampled_peak_after_rejection_pct": round(peak_pct, 2),
+            "rejection_reasons": baseline.get("entry_rejections", {}),
+            "discovery_reasons": baseline.get("discovery_rejections", []),
+            "observations": row.get("observations", 0),
+            "max_gap_seconds": row.get("max_observation_gap_seconds"),
+            "pair_changes": row.get("pair_changes", 0),
+            "execution_verified": False})
+    rejected_auto.sort(key=lambda x: x["sampled_peak_after_rejection_pct"], reverse=True)
+    print("DESCARTES PICOS MUESTREADOS " + json.dumps({
+        "eligible_rows_with_rejection_anchor": len(rejected_auto),
+        "sampled_up_20pct": sum(x["sampled_peak_after_rejection_pct"] >= 20 for x in rejected_auto),
+        "top_10": rejected_auto[:10],
+        "scope": "automatic cohort, sampled observations only; not exact highs or trade profits"
+    }, allow_nan=False))
     for chain, address in sorted(MANUAL):
         row = rows.get(chain + ":" + address)
         if row:
