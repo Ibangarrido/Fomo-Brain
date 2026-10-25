@@ -422,6 +422,42 @@ class OpportunityTests(unittest.TestCase):
         self.assertIn("first_market_requalification", row)
         self.assertFalse(row["first_market_requalification"]["execution_verified"])
 
+    def test_market_pulse_counts_fresh_automatic_receipts_not_manual_or_replay(self):
+        second_kongo = "2Q3jYQWWzkfZotYMyxzAFwfpFT5RhhBvGS3mk8P7PryF"
+        self.assertIn(("solana", second_kongo), audit.RESEARCH_TARGETS)
+        automatic = pair(liquidity=12000)
+        automatic["marketCap"] = 45000
+        automatic["priceChange"] = {"m5": -1}
+        automatic["txns"] = {"m5": {"buys": 55, "sells": 45}}
+        manual = pair(address=second_kongo)
+        manual["marketCap"] = 190000
+        manual["priceChange"] = {"m5": 100}
+        self.observe([automatic, manual])
+        pulse = audit.read()["last_cycle_coverage"]["market_pulse"]
+        self.assertEqual(pulse["automatic_fresh_receipts"], 1)
+        self.assertEqual(pulse["cap_below_50000"], 1)
+        self.assertEqual(pulse["cap_180000_or_more"], 0)
+        self.assertEqual(pulse["rolling_5m_abs_change_below_2pct"], 1)
+        self.assertEqual(pulse["rolling_5m_negative_buy_count_majority"], 1)
+        self.assertEqual(pulse["buy_count_ratio_below_60pct"], 1)
+        self.assertEqual(pulse["liquidity_below_20000"], 1)
+        replay = pair()
+        replay["_brain_received_at"] = self.now.isoformat()
+        self.observe([replay], self.now + timedelta(minutes=1))
+        self.assertEqual(audit.read()["last_cycle_coverage"]["market_pulse"]["automatic_fresh_receipts"], 0)
+        missing = pair(price=1.2)
+        missing["marketCap"] = None
+        missing["priceChange"] = {}
+        missing["txns"] = {"m5": {}}
+        missing["liquidity"] = {}
+        self.observe([missing], self.now + timedelta(minutes=2))
+        pulse = audit.read()["last_cycle_coverage"]["market_pulse"]
+        self.assertEqual(pulse["automatic_fresh_receipts"], 1)
+        self.assertEqual(pulse["cap_unknown"], 1)
+        self.assertEqual(pulse["rolling_5m_change_unknown"], 1)
+        self.assertEqual(pulse["buy_count_ratio_unknown"], 1)
+        self.assertEqual(pulse["liquidity_unknown"], 1)
+
     def test_fhostage_crash_is_research_only_even_with_more_buys(self):
         address = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
         self.assertIn(("solana", address), audit.RESEARCH_TARGETS)
