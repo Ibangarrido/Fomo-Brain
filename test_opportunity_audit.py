@@ -219,6 +219,28 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(coverage["checkpoint_coverage"]["15m"]["on_time_within_120s"], 1)
         self.assertEqual(coverage["checkpoint_coverage"]["5m"]["late_over_120s"], 1)
 
+    def test_checkpoint_quality_keeps_late_and_missing_out_of_timely_rate(self):
+        audit.record_decisions("CONTROL", ["DESCARTE solana:a | ratio compras < 60%"])
+        market = pair(price=1)
+        market["_brain_received_at"] = self.now.isoformat()
+        self.observe([market])
+        self.observe([], self.now + timedelta(minutes=6))
+        quality = audit.read()["last_cycle_coverage"]["checkpoint_quality"]
+        self.assertEqual(quality["5m"]["due"], 1)
+        self.assertEqual(quality["5m"]["timely_pct"], 0.0)
+        self.assertEqual(quality["5m"]["late_or_missing_pct"], 100.0)
+        self.assertIsNone(quality["15m"]["timely_pct"])
+        market["_brain_received_at"] = (self.now + timedelta(minutes=8)).isoformat()
+        self.observe([market], self.now + timedelta(minutes=8))
+        quality = audit.read()["last_cycle_coverage"]["checkpoint_quality"]
+        self.assertEqual((quality["5m"]["late"], quality["5m"]["missing"]), (1, 0))
+        self.assertEqual(quality["5m"]["timely_pct"], 0.0)
+        market["_brain_received_at"] = (self.now + timedelta(minutes=16)).isoformat()
+        self.observe([market], self.now + timedelta(minutes=16))
+        quality = audit.read()["last_cycle_coverage"]["checkpoint_quality"]
+        self.assertEqual(quality["15m"]["timely_pct"], 100.0)
+        self.assertEqual(quality["5m"]["late_or_missing_pct"], 100.0)
+
     def test_receipt_time_is_distinct_from_evaluation_and_invalid_receipts_skip(self):
         market = pair()
         market["_brain_received_at"] = (self.now - timedelta(seconds=45)).isoformat()

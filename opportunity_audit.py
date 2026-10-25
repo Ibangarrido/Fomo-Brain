@@ -670,6 +670,28 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             else:
                 counts["late_over_120s"] += 1
         checkpoint_coverage[name] = counts
+    # Descriptive quality rates: never turn late/missing quotes into outcomes.
+    checkpoint_quality = {}
+    for name, counts in checkpoint_coverage.items():
+        due = counts["due"]
+        timely = counts["on_time_within_120s"]
+        late = counts["late_over_120s"]
+        missing = counts["missing"]
+        checkpoint_quality[name] = {
+            "due": due,
+            "timely": timely,
+            "late": late,
+            "missing": missing,
+            "timely_pct": round(100 * timely / due, 1) if due else None,
+            "late_or_missing_pct": round(100 * (late + missing) / due, 1) if due else None,
+            "timely_sampled_up_20pct": counts["on_time_sampled_up_20pct"],
+            "timely_sampled_down_20pct": counts["on_time_sampled_down_20pct"],
+        }
+    print("CHECKPOINT QUALITY " + json.dumps({
+        "at": now.isoformat(),
+        "horizons": checkpoint_quality,
+        "scope": "cumulative receipt-time coverage, not verified market freshness, exact highs, executable fills or returns",
+    }))
     # Separate observed market requalification from actual portfolio eligibility.
     # Never backfill missing checkpoints or interpret a later high as a fill.
     automatic_rejected = [row for row in rows.values()
@@ -702,6 +724,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "cached_or_replayed_receipts": cached_or_replayed_receipts,
         "market_pulse": market_pulse,
         "checkpoint_coverage": checkpoint_coverage,
+        "checkpoint_quality": checkpoint_quality,
         "scope": "Receipt-time sampling only; provider market freshness unknown. Timely sampled moves are NOT candle highs, executable fills, or trading returns; late/missing checkpoints are excluded from horizon outcomes."}
     state["last_cycle_at"] = now.isoformat()
     # Advance by the number of automatic slots actually allocated per pool.
