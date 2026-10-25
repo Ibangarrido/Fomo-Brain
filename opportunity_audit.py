@@ -188,8 +188,9 @@ def watch_targets(now=None):
             ((deadline, r["chain"], r["address"]) for r in rows
              if (deadline := checkpoint_deadline(r)) is not None))
         prioritized = [(chain, address) for _, chain, address in urgent]
+        priority_set = set(prioritized)
         return (prioritized + [target for target in rotated
-                               if target not in set(prioritized)])[:count]
+                               if target not in priority_set])[:count]
     automatic = [r for r in active if not is_manual(r["chain"], r["address"])]
     rejected = [r for r in automatic if r.get("admission_pool") == "rejected_reserve"]
     ordinary = [r for r in automatic if r.get("admission_pool") != "rejected_reserve"]
@@ -198,6 +199,14 @@ def watch_targets(now=None):
     selected += rotate(ordinary, 10 - len(selected))
     if len(selected) < 10:
         selected += [t for t in rotate(rejected, 10) if t not in selected][:10-len(selected)]
+    due_targets = {(r["chain"], r["address"]) for r in automatic
+                   if checkpoint_deadline(r) is not None}
+    if due_targets:
+        print("WATCH CHECKPOINT PRIORITY " + json.dumps({
+            "due_in_120s_window": len(due_targets),
+            "selected_due": len(due_targets.intersection(selected)),
+            "automatic_requests": len(selected),
+            "scope": "research quote requests only; provider freshness and fills unverified"}))
     return sorted(MANUAL) + selected
 
 
