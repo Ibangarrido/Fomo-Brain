@@ -215,6 +215,30 @@ def watch_targets(now=None):
             "selected_due": len(due_targets.intersection(selected)),
             "automatic_requests": len(selected),
             "scope": "research quote requests only; provider freshness and fills unverified"}))
+    # Measure checkpoints that will become due before the next nominal 15m run.
+    # This is a scheduling diagnostic, not a claim that those quotes were fetched.
+    upcoming = {"5m": 0, "15m": 0, "30m": 0, "60m": 0}
+    for row in automatic:
+        baseline = row.get("first_rejection")
+        if not baseline:
+            continue
+        try:
+            rejected_at = datetime.fromisoformat(baseline["received_at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        pending = row.get("post_rejection_checkpoints", {})
+        for minutes in (5, 15, 30, 60):
+            name = str(minutes) + "m"
+            due = rejected_at + timedelta(minutes=minutes)
+            if name not in pending and now < due <= now + timedelta(minutes=15):
+                upcoming[name] += 1
+    print("WATCH UPCOMING CHECKPOINTS " + json.dumps({
+        "at": now.isoformat(),
+        "next_nominal_run_minutes": 15,
+        "on_time_window_seconds": 120,
+        "upcoming_due_by_horizon": upcoming,
+        "scope": "schedule pressure only; actual run cadence, future quotes and execution unverified",
+    }))
     # Research request pressure; not evidence of fresh observations or fills.
     print("WATCH CAPACITY " + json.dumps({
         "at": now.isoformat(),
