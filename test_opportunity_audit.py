@@ -425,11 +425,12 @@ class OpportunityTests(unittest.TestCase):
         self.assertFalse(snapshot["execution_verified"])
 
     def test_crash_research_does_not_turn_missing_data_into_safe_signal(self):
-        market = pair()
+        address = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
+        market = pair(address=address)
         market["priceChange"] = {}
         market["liquidity"] = {}
         market["txns"] = {"m5": {}}
-        snapshot = self.observe([market])["solana:a"]["last"]
+        snapshot = self.observe([market])["solana:" + address]["last"]
         risk = snapshot["crash_risk_research"]
         self.assertEqual(risk["price_drop_5m_ge_70pct"], "UNKNOWN")
         self.assertEqual(risk["liquidity_below_20000"], "UNKNOWN")
