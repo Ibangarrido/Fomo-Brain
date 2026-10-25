@@ -427,6 +427,12 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         # first rejected snapshot. This never authorizes a simulated order.
         if baseline and received > datetime.fromisoformat(baseline["received_at"]):
             checks = market_screen(snapshot, age_minutes, 60)
+            # Requalification is a research screen, but must not silently
+            # ignore the simulator's 2M USD market-cap safety ceiling.
+            cap_at_second_look = snapshot["market_cap"]
+            checks["market_cap_max_2m"] = (
+                "UNKNOWN" if cap_at_second_look is None else
+                "PASS" if 0 < cap_at_second_look <= 2000000 else "FAIL")
             history = row.setdefault("second_look_history", [])
             history.append({
                 "observed_at": received.isoformat(),
