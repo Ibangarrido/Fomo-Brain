@@ -166,7 +166,7 @@ def m4_diagnostic(state, audit=None, now=None):
                     or record.get("status") != "QUOTE_ONLY"
                     or record.get("output_mint") != "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"):
                 continue
-            received = datetime.fromisoformat(record["received_at"])
+            received = datetime.fromisoformat(record.get("received_at") or record["snapshot_at"])
             age = (now - received).total_seconds()
             value = record["expected_out_usdc"]
             quantity = pos.get("quantity")
