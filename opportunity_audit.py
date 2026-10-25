@@ -391,6 +391,30 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         row = rows[key]
         if row.get("complete"):
             continue
+        # Compare actual receipts, never infer what happened between them.
+        # A changed pool invalidates price/liquidity comparisons.
+        previous = row["last"] if row["observations"] else None
+        risk = snapshot["crash_risk_research"]
+        comparable = previous is not None and previous["pair"] == snapshot["pair"]
+        risk["previous_receipt_comparable"] = comparable
+        risk["interval_minutes"] = (
+            round((received - datetime.fromisoformat(previous["received_at"])).total_seconds() / 60, 2)
+            if comparable else None)
+        risk["observed_price_change_between_receipts_pct"] = (
+            (snapshot["price"] / previous["price"] - 1) * 100
+            if comparable and previous["price"] > 0 else None)
+        risk["observed_liquidity_change_between_receipts_pct"] = (
+            (liquidity / previous["liquidity"] - 1) * 100
+            if comparable and liquidity is not None
+            and previous.get("liquidity") is not None
+            and previous["liquidity"] > 0 else None)
+        interval_drop = risk["observed_price_change_between_receipts_pct"]
+        risk["buy_count_majority_during_observed_interval_drop"] = (
+            "UNKNOWN" if interval_drop is None or buy_ratio is None else
+            interval_drop <= -30 and buy_ratio > 0.5)
+        risk["interval_scope"] = (
+            "Two sampled receipts, NOT continuous surveillance or a 5m candle; "
+            "transaction-count ratio is current rolling 5m, not interval flow")
         gap = (received - datetime.fromisoformat(row["last"]["received_at"])).total_seconds()
         if gap < 0:
             raise ValueError("Observaciones fuera de orden; no sobrescribir")
