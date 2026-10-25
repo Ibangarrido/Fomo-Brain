@@ -211,6 +211,19 @@ def watch_targets(now=None):
             "selected_due": len(due_targets.intersection(selected)),
             "automatic_requests": len(selected),
             "scope": "research quote requests only; provider freshness and fills unverified"}))
+    # Research request pressure; not evidence of fresh observations or fills.
+    print("WATCH CAPACITY " + json.dumps({
+        "at": now.isoformat(),
+        "active_automatic": len(automatic),
+        "active_rejected": len(rejected),
+        "active_ordinary": len(ordinary),
+        "due_checkpoint_targets": len(due_targets),
+        "due_selected": len(due_targets.intersection(selected)),
+        "due_unselected": len(due_targets - set(selected)),
+        "automatic_selected": len(selected),
+        "automatic_limit": 10,
+        "scope": "research requests only; provider freshness and execution unverified",
+    }))
     return sorted(MANUAL) + selected
 
 
