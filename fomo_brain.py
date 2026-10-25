@@ -1274,7 +1274,20 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                   f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
             if reason == "cartera sin valoracion completa":
-                m4_shadow_preflight["unknown_valuation_only_at_preflight"] += 1
+                # Check independent preflight constraints without altering the
+                # actual decision. Unknown NAV alone is not sufficient if the
+                # token was already traded, slots are full, or cash is short.
+                other_blockers = (
+                    key in state["seen"] or key in closed_this_run
+                    or sum(not (isolated_m4 and is_quarantined(p)
+                               and p.get("quote_status") != "OK")
+                           for p in state["positions"]) >= 3
+                    or state["cash"] < entry_budget
+                )
+                if other_blockers:
+                    m4_shadow_preflight["other_preflight_blockers"] += 1
+                else:
+                    m4_shadow_preflight["unknown_valuation_only_at_preflight"] += 1
             else:
                 m4_shadow_preflight["other_preflight_blockers"] += 1
             notes.append(f"DESCARTE {key} | {reason}")
