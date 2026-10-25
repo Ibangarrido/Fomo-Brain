@@ -112,6 +112,21 @@ class OpportunityTests(unittest.TestCase):
         gaps = next(json.loads(line.split("WATCH CHECKPOINT POOL GAPS ", 1)[1])
                     for line in lines if line.startswith("WATCH CHECKPOINT POOL GAPS "))
         self.assertEqual(upcoming["upcoming_due_by_horizon"]["5m"], 1)
+        self.assertEqual(upcoming["next_nominal_run_minutes"], 20)
+        # A 30m checkpoint 21 minutes away is outside the next scheduled run;
+        # at exactly 20 minutes away it must be counted.
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            audit.watch_targets(self.now + timedelta(minutes=9))
+        before = next(json.loads(line.split("WATCH UPCOMING CHECKPOINTS ", 1)[1])
+                      for line in output.getvalue().splitlines()
+                      if line.startswith("WATCH UPCOMING CHECKPOINTS "))
+        self.assertEqual(before["upcoming_due_by_horizon"]["30m"], 0)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            audit.watch_targets(self.now + timedelta(minutes=10))
+        boundary = next(json.loads(line.split("WATCH UPCOMING CHECKPOINTS ", 1)[1])
+                        for line in output.getvalue().splitlines()
+                        if line.startswith("WATCH UPCOMING CHECKPOINTS "))
+        self.assertEqual(boundary["upcoming_due_by_horizon"]["30m"], 1)
         self.assertEqual(gaps["rejected_due"], 0)
         with contextlib.redirect_stdout(io.StringIO()) as output:
             targets = audit.watch_targets(self.now + timedelta(minutes=5, seconds=30))
