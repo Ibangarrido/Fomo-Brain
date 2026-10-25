@@ -145,6 +145,28 @@ class OpportunityTests(unittest.TestCase):
         self.assertTrue(row["complete"])
         self.assertEqual(row["peak"]["price"], 10)
 
+    def test_coverage_distinguishes_cached_receipts_and_late_checkpoints(self):
+        audit.record_decisions("CONTROL", ["DESCARTE solana:a | cartera sin valoracion completa"])
+        market = pair(price=1)
+        market["_brain_received_at"] = self.now.isoformat()
+        self.observe([market])
+        self.observe([market], self.now + timedelta(minutes=6))
+        coverage = audit.read()["last_cycle_coverage"]
+        self.assertEqual(coverage["fresh_observations_accepted"], 0)
+        self.assertEqual(coverage["cached_or_replayed_receipts"], 1)
+        self.assertEqual(coverage["checkpoint_coverage"]["5m"]["missing"], 1)
+        market["_brain_received_at"] = (self.now + timedelta(minutes=8)).isoformat()
+        self.observe([market], self.now + timedelta(minutes=8))
+        coverage = audit.read()["last_cycle_coverage"]
+        self.assertEqual(coverage["fresh_observations_accepted"], 1)
+        self.assertEqual(coverage["checkpoint_coverage"]["5m"]["late_over_120s"], 1)
+        self.assertEqual(coverage["checkpoint_coverage"]["15m"]["not_due"], 1)
+        market["_brain_received_at"] = (self.now + timedelta(minutes=16)).isoformat()
+        self.observe([market], self.now + timedelta(minutes=16))
+        coverage = audit.read()["last_cycle_coverage"]
+        self.assertEqual(coverage["checkpoint_coverage"]["15m"]["on_time_within_120s"], 1)
+        self.assertEqual(coverage["checkpoint_coverage"]["5m"]["late_over_120s"], 1)
+
     def test_receipt_time_is_distinct_from_evaluation_and_invalid_receipts_skip(self):
         market = pair()
         market["_brain_received_at"] = (self.now - timedelta(seconds=45)).isoformat()
