@@ -517,6 +517,33 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(pulse["buy_count_ratio_unknown"], 1)
         self.assertEqual(pulse["liquidity_unknown"], 1)
 
+    def test_market_pulse_buyer_ratio_bands_are_disjoint_and_research_only(self):
+        # Four measured transaction-count ratios plus one unknown; these are
+        # NOT distinct wallets, verified candles or executable entries.
+        markets = []
+        for address, buys, sells in (
+                ("below50", 49, 51), ("at50", 50, 50),
+                ("below60", 59, 41), ("at60", 60, 40)):
+            market = pair(address=address, liquidity=25000)
+            market["txns"] = {"m5": {"buys": buys, "sells": sells}}
+            markets.append(market)
+        unknown = pair(address="unknown", liquidity=25000)
+        unknown["txns"] = {"m5": {}}
+        markets.append(unknown)
+        self.observe(markets)
+        pulse = audit.read()["last_cycle_coverage"]["market_pulse"]
+        self.assertEqual(pulse["automatic_fresh_receipts"], 5)
+        self.assertEqual(pulse["buy_count_ratio_below_50pct"], 1)
+        self.assertEqual(pulse["buy_count_ratio_50_to_60pct"], 2)
+        self.assertEqual(pulse["buy_count_ratio_at_least_60pct"], 1)
+        self.assertEqual(pulse["buy_count_ratio_unknown"], 1)
+        self.assertEqual(pulse["buy_count_ratio_below_60pct"], 3)
+        self.assertEqual(
+            pulse["buy_count_ratio_50_to_60pct_liquidity_at_least_20000"], 2)
+        self.assertEqual(sum(pulse[key] for key in (
+            "buy_count_ratio_below_50pct", "buy_count_ratio_50_to_60pct",
+            "buy_count_ratio_at_least_60pct", "buy_count_ratio_unknown")), 5)
+
     def test_fhostage_crash_is_research_only_even_with_more_buys(self):
         address = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
         self.assertIn(("solana", address), audit.RESEARCH_TARGETS)
