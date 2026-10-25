@@ -11,6 +11,8 @@ MANUAL_RESERVE = 32
 HORIZON_SECONDS = 72 * 3600
 MAX_TRACKING_SECONDS = HORIZON_SECONDS + 24 * 3600
 MANUAL = {
+    # WHITEWHALE: user-supplied 2026-10-25 video; research-only after the observed move.
+    ("solana", "AXoNsSQ2DjoBY8x8fP76pCeqrjhZEFRmRnnaM5hegVQx"),
     ("solana", "EcZndAERfzNhLirHwfsy44dAyPSZazjDU83pa6RApump"),
     ("solana", "HwJyyniKKDRLXxjRSzyLtpvxzqecqrhrbcSbKRm7STNK"),
     ("solana", "64oAuE88tNP7KsSyaiJTKGP4sWmLMFGWLUs9eBTLYgCp"),
