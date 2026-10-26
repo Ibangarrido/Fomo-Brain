@@ -54,6 +54,10 @@ class OpportunityTests(unittest.TestCase):
         self.assertFalse(top["sampled_peak_within_60m"])
         self.assertFalse(top["sampled_peak_same_pair"])
         self.assertFalse(top["execution_verified"])
+        self.assertEqual(summary["cross_pair_peak_cases"], 1)
+        self.assertEqual(summary["same_pair_peak_cases"], 0)
+        self.assertEqual(summary["top_10_same_pair"], [])
+        self.assertEqual(summary["top_10_cross_pair_unreliable"][0]["address"], "a")
         unknown = audit.sampled_peak_context(
             {"received_at": "bad-date", "pair": "a"},
             {"received_at": self.now.isoformat(), "pair": "a"})
