@@ -458,6 +458,34 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(counts["15m"]["on_time_pair_changed"], 1)
         self.assertEqual(counts["30m"]["not_due"], 1)
 
+    def test_checkpoint_same_pool_peak_separates_comparable_and_cross_pool(self):
+        # Timely snapshots can still be incomparable after a pool switch.
+        audit.record_decisions("CONTROL", [
+            "DESCARTE solana:a | ratio compras < 60%",
+            "DESCARTE solana:b | ratio compras < 60%"])
+        self.observe([pair(address="a", price=1, pool="first"),
+                      pair(address="b", price=1, pool="stable")])
+        rows = self.observe([pair(address="a", price=1.5, pool="switched"),
+                             pair(address="b", price=1.5, pool="stable")],
+                            self.now + timedelta(minutes=6))
+        changed = rows["solana:a"]["post_rejection_checkpoints"]["5m"]
+        stable = rows["solana:b"]["post_rejection_checkpoints"]["5m"]
+        self.assertTrue(changed["pair_changed"])
+        self.assertFalse(changed["sampled_peak_same_pair"])
+        self.assertFalse(stable["pair_changed"])
+        self.assertTrue(stable["sampled_peak_same_pair"])
+        coverage = audit.read()["last_cycle_coverage"]
+        five = coverage["checkpoint_coverage"]["5m"]
+        self.assertEqual(five["on_time_within_120s"], 2)
+        self.assertEqual(five["on_time_sampled_up_20pct"], 2)
+        self.assertEqual(five["on_time_same_pair"], 1)
+        self.assertEqual(five["on_time_peak_same_pair_up_20pct"], 1)
+        self.assertEqual(coverage["checkpoint_quality"]["5m"]["timely_peak_same_pair_up_20pct"], 1)
+        recent = coverage["recent_6h_rejection_cohort"]["5m"]
+        self.assertEqual(recent["timely_same_pair"], 1)
+        self.assertEqual(recent["timely_peak_same_pair_up_20pct"], 1)
+        self.assertEqual(recent["timely_peak_pair_unknown"], 0)
+
     def test_late_checkpoint_does_not_count_as_timely_winner(self):
         audit.record_decisions("CONTROL", ["DESCARTE solana:a | liquidity"])
         self.observe([pair(price=1)])
