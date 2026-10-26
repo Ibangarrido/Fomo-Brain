@@ -43,10 +43,12 @@ def summarize(tokens, cutoff, minimum=20):
             buckets[group]["eligible"] += 1
             buckets[group]["up20"] += int(checkpoint.get("sampled_up_20pct") is True)
             buckets[group]["down20"] += int(checkpoint.get("sampled_down_20pct") is True)
-    report = {k: {**v, "up20_rate": round(v["up20"]/v["eligible"], 3)}
+    report = {k: {**v, "up20_rate": round(v["up20"]/v["eligible"], 3),
+                  "down20_rate": round(v["down20"]/v["eligible"], 3),
+                  "sample_sufficient": v["eligible"] >= minimum}
               for k, v in buckets.items()}
-    return {"status": "EVIDENCE_ONLY" if sum(v["eligible"] for v in report.values()) >= minimum else "INSUFFICIENT_DATA",
-            "minimum": minimum, "groups": report, "excluded": dict(skipped),
+    return {"status": "EVIDENCE_ONLY" if len(report) >= 2 and all(v["eligible"] >= minimum for v in report.values()) else "INSUFFICIENT_DATA",
+            "minimum_per_group": minimum, "groups": report, "excluded": dict(skipped),
             "scope": "prospective same-pair timely 30m sampled observations; not trading P&L; no policy changes"}
 
 
