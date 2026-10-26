@@ -2164,6 +2164,18 @@ def main(refresh_events=True):
         try:
             from opportunity_audit import observe
             observe(pairs, sources, discovery_rejections=REJECTIONS)
+            # Observational learning only. Never modify trading policy or balances.
+            try:
+                from datetime import datetime, timezone
+                from learning_audit import summarize
+                from opportunity_audit import read as read_opportunity_audit
+                audit_state = read_opportunity_audit()
+                learning = summarize(audit_state.get("tokens", {}),
+                                     datetime.now(timezone.utc), minimum=20)
+                print("APRENDIZAJE PROSPECTIVO " + json.dumps(learning, ensure_ascii=False))
+            except Exception as learning_exc:
+                print("APRENDIZAJE PROSPECTIVO ERROR: " + str(learning_exc)
+                      + "; carteras conservadas")
         except Exception as exc:
             print("AUDITORIA OPORTUNIDADES ERROR: " + str(exc) + "; carteras conservadas")
     if os.getenv("BRAIN_V12_OBSERVABILITY", "0") == "1":
