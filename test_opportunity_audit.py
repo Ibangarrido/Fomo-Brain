@@ -39,6 +39,27 @@ class OpportunityTests(unittest.TestCase):
             audit.observe({str(i): p for i, p in enumerate(markets)}, {}, now or self.now)
         return audit.read()["tokens"]
 
+    def test_sampled_peak_timing_and_pair_comparability_are_research_only(self):
+        audit.record_decisions("CONTROL", ["DESCARTE solana:a | ratio compras < 60%"])
+        self.observe([pair(address="a", price=1)])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            audit.observe({"0": pair(address="a", price=2, pool="other_pool")},
+                          {}, self.now + timedelta(minutes=70))
+        summary = next(json.loads(line.split("DESCARTES PICOS MUESTREADOS ", 1)[1])
+                       for line in output.getvalue().splitlines()
+                       if line.startswith("DESCARTES PICOS MUESTREADOS "))
+        top = summary["top_10"][0]
+        self.assertEqual(top["sampled_peak_minutes_after_rejection"], 70)
+        self.assertFalse(top["sampled_peak_within_60m"])
+        self.assertFalse(top["sampled_peak_same_pair"])
+        self.assertFalse(top["execution_verified"])
+        unknown = audit.sampled_peak_context(
+            {"received_at": "bad-date", "pair": "a"},
+            {"received_at": self.now.isoformat(), "pair": "a"})
+        self.assertIsNone(unknown["sampled_peak_minutes_after_rejection"])
+        self.assertIsNone(unknown["sampled_peak_within_60m"])
+
     def test_keeps_baseline_peak_drawdown_and_wallet_reasons(self):
         audit.record_decisions("CONTROL", ["DESCARTE solana:a | cartera sin valoracion completa"])
         audit.record_decisions("VELAS", ["DESCARTE solana:a | ratio compras < 60%"])
