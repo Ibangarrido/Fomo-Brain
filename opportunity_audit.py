@@ -383,6 +383,8 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "buy_count_ratio_50_to_60pct_other_market_gates_pass": 0,
         "buy_count_ratio_50_to_60pct_other_market_gates_fail": 0,
         "buy_count_ratio_50_to_60pct_other_market_gates_unknown": 0,
+        "buy_count_ratio_50_to_60pct_other_market_gate_fail_reasons": {},
+        "buy_count_ratio_50_to_60pct_other_market_gate_unknown_reasons": {},
         "buy_count_ratio_unknown": 0,
         "liquidity_below_20000": 0,
         "liquidity_unknown": 0,
@@ -573,6 +575,15 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                     classification = ("fail" if "FAIL" in other_gates.values() else
                                       "unknown" if "UNKNOWN" in other_gates.values() else "pass")
                     market_pulse["buy_count_ratio_50_to_60pct_other_market_gates_" + classification] += 1
+                    # A single snapshot may fail multiple gates. Keep these
+                    # overlapping reasons separate from disjoint PASS/FAIL/UNKNOWN
+                    # token counts; never interpret this as entry eligibility.
+                    for gate, result in other_gates.items():
+                        if result in ("FAIL", "UNKNOWN"):
+                            field = ("buy_count_ratio_50_to_60pct_other_market_gate_"
+                                     + ("fail" if result == "FAIL" else "unknown") + "_reasons")
+                            reasons = market_pulse[field]
+                            reasons[gate] = reasons.get(gate, 0) + 1
             if liquidity is None:
                 market_pulse["liquidity_unknown"] += 1
             else:
