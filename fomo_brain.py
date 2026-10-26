@@ -107,10 +107,25 @@ def pedir_json(url):
         url,
         headers={"User-Agent": "FOMO-Brain/8.0"}
     )
-    if EXIT_WATCHDOG is not None or urllib.parse.urlsplit(url).netloc == "api.geckoterminal.com":
+    # Share one rate budget across discovery and exit-watchdog requests.
+    # Retry transient throttling only; never treat HTTP 429 as an empty market.
+    import urllib.error
+    for attempt in range(3):
         MARKET_RATE_LIMITER.wait(url)
-    with urllib.request.urlopen(req, timeout=15) as response:
-        data = json.loads(response.read().decode())
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                data = json.loads(response.read().decode())
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (429, 503) or attempt == 2:
+                raise
+            retry_after = exc.headers.get("Retry-After", "")
+            try:
+                delay = min(12.0, max(1.0, float(retry_after)))
+            except (TypeError, ValueError):
+                delay = 2.0 * (attempt + 1)
+            print(f"FUENTE RETRY HTTP {exc.code} intento={attempt + 1}/3 espera={delay:.1f}s")
+            time.sleep(delay)
     received_at = datetime.now(timezone.utc)
     received_monotonic = time.monotonic()
     JSON_CACHE[url] = data
