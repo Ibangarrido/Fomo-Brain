@@ -645,6 +645,11 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             checks["market_cap_max_2m"] = (
                 "UNKNOWN" if cap_at_second_look is None else
                 "PASS" if 0 < cap_at_second_look <= 2000000 else "FAIL")
+            # A new pool may satisfy market gates, but its price/liquidity
+            # cannot establish a recovery of the originally rejected pool.
+            # This is research-only and never changes paper entry gates.
+            checks["same_pair_as_rejection"] = (
+                "PASS" if snapshot["pair"] == baseline["pair"] else "FAIL")
             history = row.setdefault("second_look_history", [])
             history.append({
                 "observed_at": received.isoformat(),
@@ -825,6 +830,10 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "with_fresh_second_read": sum(bool(row.get("second_look_history"))
                                       for row in automatic_rejected),
         "first_market_requalification_observed": len(requalified),
+        "first_market_requalification_same_pair_observed": sum(
+            r.get("pair_changed") is False for r in requalified),
+        "first_market_requalification_cross_pair_legacy": sum(
+            r.get("pair_changed") is True for r in requalified),
         "first_requalified_within_15m_same_pair": sum(
             r["minutes_since_rejection"] <= 15 and not r["pair_changed"]
             for r in requalified),
