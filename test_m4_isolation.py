@@ -95,6 +95,26 @@ class IsolationTests(unittest.TestCase):
         self.assertTrue(any('FRENO V10' in n for n in state['last_run_notes']))
 
 
+    def test_control_requires_pinned_legacy_and_preserves_cash(self):
+        path = "fomo_lab_continuation_control_r1.json"
+        state = copy.deepcopy(self.seed)
+        original = copy.deepcopy(state)
+        now = datetime.now(timezone.utc)
+        with patch.dict(os.environ, {"BRAIN_UNKNOWN_ISOLATION": "1"}, clear=False):
+            self.assertEqual(brain.isolate_existing_unknowns(state, path, now), set())
+            self.assertNotIn("unknown_isolation_epoch", state)
+            with patch.dict(os.environ, {"BRAIN_CONTROL_LEGACY_ADDRESS": "wrong"}):
+                self.assertEqual(brain.isolate_existing_unknowns(state, path, now), set())
+            with patch.dict(os.environ, {"BRAIN_CONTROL_LEGACY_ADDRESS": lab.MINT}):
+                keys = brain.isolate_existing_unknowns(state, path, now)
+                self.assertEqual(len(keys), 1)
+                self.assertEqual((state["cash"], state["reserve"], state["closed"]),
+                                 (original["cash"], original["reserve"], original["closed"]))
+                state["positions"].append(dict(state["positions"][0], address="new_unknown"))
+                self.assertEqual(brain.isolate_existing_unknowns(state, path, now), keys)
+                self.assertNotIn(("solana", "new_unknown", state["positions"][-1]["opened_at"]), keys)
+
+
 if __name__ == '__main__':
     unittest.main()
 
