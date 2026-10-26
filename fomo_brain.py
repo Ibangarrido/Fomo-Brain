@@ -1074,6 +1074,7 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 UNKNOWN_ISOLATION_FILES = {
     "fomo_paper_v10.json", "fomo_paper_v10_impulse.json",
     "fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json",
+    "fomo_lab_continuation_control_r1.json",
 }
 
 
@@ -1082,6 +1083,17 @@ def isolate_existing_unknowns(state, path, now):
     if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "0") != "1"
             or os.path.basename(path) not in UNKNOWN_ISOLATION_FILES):
         return set()
+    # CONTROL requires an explicit contract pin. Never quarantine an arbitrary
+    # newly-unpriceable position merely because the policy was enabled.
+    if os.path.basename(path) == "fomo_lab_continuation_control_r1.json":
+        pinned = os.getenv("BRAIN_CONTROL_LEGACY_ADDRESS", "").strip()
+        if not pinned:
+            return set()
+        unknown = [p for p in state["positions"] if p.get("quote_status") != "OK"]
+        if state.get("unknown_isolation_epoch") is None and (
+                len(unknown) != 1 or unknown[0].get("chain") != "solana"
+                or unknown[0].get("address") != pinned):
+            return set()
     epoch = state.get("unknown_isolation_epoch")
     if epoch is None:
         keys = [[p.get("chain"), p.get("address"), p.get("opened_at")]
