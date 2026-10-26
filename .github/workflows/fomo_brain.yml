@@ -98,6 +98,7 @@ jobs:
           BRAIN_M4_ISOLATION: "1"
           BRAIN_UNKNOWN_ISOLATION: "1"
           BRAIN_OPPORTUNITY_AUDIT: "1"
+          BRAIN_WATCH_CONTRACTS: "solana:5Aa378KvCX3bz2dJ3YncoXijBBVvgvipQAXHWaBNNHRw"
           BRAIN_REBOUND_LAB: "1"
           BRAIN_TARGETS_LAB: "1"
           BRAIN_CONTINUATION_LAB: "1"
