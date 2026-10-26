@@ -1079,7 +1079,7 @@ UNKNOWN_ISOLATION_FILES = {
 
 def isolate_existing_unknowns(state, path, now):
     """One PAPER policy epoch; later unknown positions still block entries."""
-    if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "0") != "1"
+    if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "1") != "1"
             or os.path.basename(path) not in UNKNOWN_ISOLATION_FILES):
         return set()
     epoch = state.get("unknown_isolation_epoch")
@@ -1352,8 +1352,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                   "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
                   "token ya operado" if key in state["seen"] or key in closed_this_run else
-                  "maximo 3 posiciones" if sum(not (isolated_m4 and is_quarantined(p)
-                      and p.get("quote_status") != "OK") for p in state["positions"]) >= 3 else
+                  "maximo 3 posiciones" if sum(not ((isolated_m4 and is_quarantined(p) and p.get("quote_status") != "OK")
+                      or (p.get("chain"), p.get("address"), p.get("opened_at")) in isolated_unknowns)
+                      for p in state["positions"]) >= 3 else
                   f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
             if reason == "cartera sin valoracion completa":
@@ -2164,6 +2165,22 @@ def main(refresh_events=True):
         try:
             from opportunity_audit import observe
             observe(pairs, sources, discovery_rejections=REJECTIONS)
+            # Observational learning only. Never modify trading policy or balances.
+            try:
+                from datetime import datetime, timezone
+                from learning_audit import summarize
+                from opportunity_audit import read as read_opportunity_audit
+                audit_state = read_opportunity_audit()
+                learning = summarize(audit_state.get("tokens", {}),
+                                     datetime.now(timezone.utc), minimum=20)
+                print("APRENDIZAJE PROSPECTIVO " + json.dumps(learning, ensure_ascii=False))
+                from market_structure_audit import report as market_structure_report
+                market_report = market_structure_report(audit_state.get("tokens", {}),
+                                                        datetime.now(timezone.utc))
+                print("ESTRUCTURA MERCADO " + json.dumps(market_report, ensure_ascii=False))
+            except Exception as learning_exc:
+                print("APRENDIZAJE PROSPECTIVO ERROR: " + str(learning_exc)
+                      + "; carteras conservadas")
         except Exception as exc:
             print("AUDITORIA OPORTUNIDADES ERROR: " + str(exc) + "; carteras conservadas")
     if os.getenv("BRAIN_V12_OBSERVABILITY", "0") == "1":
