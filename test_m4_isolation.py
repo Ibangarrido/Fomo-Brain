@@ -87,6 +87,29 @@ class IsolationTests(unittest.TestCase):
         self.assertFalse(any("maximo 3 posiciones" in note for note in updated["last_run_notes"]))
         self.assertTrue(any("ENTRADA OMITIDA solana:candidate" in note for note in updated["last_run_notes"]))
 
+    def test_continuation_control_unknown_epoch_reaches_quote_preflight(self):
+        # Exact experimental wallet affected in production: preserve inherited
+        # accounting, exclude its old unknown mark, and still require a quote.
+        state = copy.deepcopy(self.seed)
+        state['continuation_experiment'] = {'version': 'continuation-r1', 'arm': 'control'}
+        path = 'fomo_lab_continuation_control_r1.json'
+        lab.write(path, state)
+        candidate = brain.analizar_par(pair(address='candidate_control', pool='pool'))
+        self.assertIsNotNone(candidate)
+        with patch.dict(os.environ, BRAIN_UNKNOWN_ISOLATION='1'), \
+             patch.object(brain, 'cotizar_posicion', side_effect=ValueError('No quote')), \
+             contextlib.redirect_stdout(io.StringIO()):
+            brain.simular_cartera([candidate], path, entry_mode='early', min_buy_ratio=.75)
+        updated = self.read(path)
+        self.assertEqual((updated['cash'], updated['reserve'], updated['closed']), (82, 10, []))
+        self.assertEqual(len(updated['positions']), 1)
+        self.assertIsNone(updated['observations'][-1]['estimated_equity'])
+        self.assertEqual(updated['last_m4_shadow_preflight']['unknown_valuation_only_at_preflight'], 0)
+        self.assertFalse(any('cartera sin valoracion completa' in n or 'maximo 3 posiciones' in n
+                             for n in updated['last_run_notes']))
+        self.assertTrue(any('ENTRADA OMITIDA solana:candidate_control' in n
+                            for n in updated['last_run_notes']))
+
     def test_capital_loss_and_existing_halt_still_apply(self):
         state = copy.deepcopy(self.seed)
         state['cash'] = 60
