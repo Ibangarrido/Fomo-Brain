@@ -528,6 +528,30 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(row["first_market_requalification"], recovery)
         self.assertEqual(audit.read()["second_look_summary"]["first_market_requalification_observed"], 1)
 
+    def test_second_look_cross_pool_is_not_requalification(self):
+        audit.record_decisions("EARLY", ["DESCARTE solana:a | ratio compras < 60%"])
+        baseline = pair(price=1, liquidity=25000)
+        baseline["pairCreatedAt"] = int((self.now - timedelta(minutes=3)).timestamp() * 1000)
+        baseline["txns"]["m5"] = {"buys": 40, "sells": 60}
+        self.observe([baseline])
+        other = pair(price=2, pool="different_pool", liquidity=30000)
+        other["pairCreatedAt"] = baseline["pairCreatedAt"]
+        other["txns"]["m5"] = {"buys": 70, "sells": 30}
+        row = self.observe([other], self.now + timedelta(minutes=5))["solana:a"]
+        self.assertEqual(row["second_look_history"][-1]["checks"]["same_pair_as_rejection"], "FAIL")
+        self.assertFalse(row["second_look_history"][-1]["market_gates_pass"])
+        self.assertNotIn("first_market_requalification", row)
+        self.assertEqual(audit.read()["second_look_summary"]["first_market_requalification_observed"], 0)
+        original = pair(price=1.1, liquidity=26000)
+        original["pairCreatedAt"] = baseline["pairCreatedAt"]
+        original["txns"]["m5"] = {"buys": 70, "sells": 30}
+        row = self.observe([original], self.now + timedelta(minutes=7))["solana:a"]
+        self.assertEqual(row["second_look_history"][-1]["checks"]["same_pair_as_rejection"], "PASS")
+        self.assertTrue(row["second_look_history"][-1]["market_gates_pass"])
+        self.assertFalse(row["first_market_requalification"]["pair_changed"])
+        self.assertEqual(audit.read()["second_look_summary"]["first_market_requalification_same_pair_observed"], 1)
+        self.assertEqual(audit.read()["second_look_summary"]["first_market_requalification_cross_pair_legacy"], 0)
+
     def test_second_look_never_requalifies_missing_or_excessive_market_cap(self):
         audit.record_decisions("EARLY", ["DESCARTE solana:a | ratio compras < 60%"])
         first = pair()
