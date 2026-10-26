@@ -37,6 +37,8 @@ RESEARCH_TARGETS = {
     ("solana", "BHUrqxqx6hMPFC7Mewfm4uJ5cAV2KZGvanwUeFEJpump"),
     # Kongo (second contract): flat/choppy user video; different Solana mint, post-event study only.
     ("solana", "2Q3jYQWWzkfZotYMyxzAFwfpFT5RhhBvGS3mk8P7PryF"),
+    # mwap: user-provided 2026-10-26 video shows fast rise with ~$9.5k liquidity; later crash reported but unverified. Research-only.
+    ("solana", "2qKQ7BCv7feB1q2DZe4G6m4bjBWk5k5rHHBgrTYGpump"),
     # POFD人生: user-provided BSC video; retrospective research only, unverified token.
     ("bsc", "0xc73ff93417777c31a579f5d48cbe0496da267777"),
 }
