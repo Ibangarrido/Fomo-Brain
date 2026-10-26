@@ -1095,6 +1095,9 @@ def isolate_existing_unknowns(state, path, now):
                 or unknown[0].get("address") != pinned):
             return set()
     epoch = state.get("unknown_isolation_epoch")
+    if os.path.basename(path) == "fomo_lab_continuation_control_r1.json" and epoch is not None:
+        if len(epoch.get("positions", [])) != 1 or epoch["positions"][0][1] != pinned:
+            return set()
     if epoch is None:
         keys = [[p.get("chain"), p.get("address"), p.get("opened_at")]
                 for p in state["positions"] if p.get("quote_status") != "OK"]
