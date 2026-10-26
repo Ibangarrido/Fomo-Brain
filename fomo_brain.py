@@ -1886,15 +1886,18 @@ def descubrir_pares():
     requested = dict.fromkeys(STUDY_TOKENS)
     # Observational watchlist: track exact contracts even when generic searches miss them.
     # This adds discovery coverage, not a buy signal or a risk-filter exception.
+    watch_contracts = set()
     for raw in os.getenv("BRAIN_WATCH_CONTRACTS", "").split(","):
         item = raw.strip()
         if not item:
             continue
-        parts = item.split(":", 1)
+        parts = [part.strip() for part in item.split(":", 1)]
         if len(parts) != 2 or not all(parts):
             print("RADAR WATCH INVALID | expected chain:address")
             continue
-        requested.setdefault((parts[0].strip(), parts[1].strip()), None)
+        key = tuple(parts)
+        requested.setdefault(key, None)
+        watch_contracts.add(key)
     if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         try:
             from opportunity_audit import watch_targets
@@ -1946,7 +1949,9 @@ def descubrir_pares():
             if not found:
                 found = pares_token(chain, address)
             for pair in found:
-                add(pair, "seguimiento" if (chain, address) in STUDY_TOKENS else "perfil/historial")
+                add(pair, "seguimiento" if (chain, address) in STUDY_TOKENS else ("watch:contrato" if (chain, address) in watch_contracts else "perfil/historial"))
+            if (chain, address) in watch_contracts:
+                print(f"RADAR WATCH {chain}:{address} | pares={len(found)} | solo observacion, no senal de compra")
             if (chain, address) in STUDY_TOKENS:
                 print(f"ESTUDIO {chain}:{address} | pares={len(found)} | fuera de cartera por defecto")
                 if found:
