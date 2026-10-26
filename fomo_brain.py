@@ -942,6 +942,43 @@ def record_confirmation(state, reference, fresh, now, status, reasons, had_previ
     print('CONFIRMACION AUDIT ' + json.dumps(row, ensure_ascii=False, allow_nan=False))
 
 
+
+def confirmation_audit_summary(rows):
+    """Bounded receipt evidence only; never implies an eligible or filled trade."""
+    recent = rows[-150:]
+    statuses, reasons = {}, {}
+    with_previous = within_window = expired_90 = expired_120 = 0
+    available_with_previous = 0
+    for row in recent:
+        status = row.get("status", "UNKNOWN")
+        statuses[status] = statuses.get(status, 0) + 1
+        for reason in row.get("reasons", []):
+            reasons[reason] = reasons.get(reason, 0) + 1
+        if not row.get("had_previous"):
+            continue
+        with_previous += 1
+        if status == "REFERENCE_AVAILABLE":
+            available_with_previous += 1
+        gap = row.get("receipt_gap_seconds")
+        window = row.get("confirmation_window_seconds")
+        if (isinstance(gap, (int, float)) and isinstance(window, (int, float))
+                and math.isfinite(gap) and 30 <= gap <= window):
+            within_window += 1
+        expired_90 += row.get("reference_expired_90s") is True
+        expired_120 += row.get("reference_expired_120s") is True
+    return {
+        "version": "confirmation-summary-r1",
+        "observations": len(recent),
+        "statuses": statuses, "renewal_reasons": reasons,
+        "with_previous_reference": with_previous,
+        "reference_available_with_previous": available_with_previous,
+        "previous_receipt_gap_within_window": within_window,
+        "expired_90s_with_previous": expired_90,
+        "expired_120s_with_previous": expired_120,
+        "scope": "last 150 local receipt events per paper wallet; not provider freshness, complete run, entry eligibility or fills",
+    }
+
+
 def recovery_signal_reference(state, token, fresh, now, *, confirmation_window_seconds=90):
     if confirmation_window_seconds not in (90, 120):
         raise ValueError('Invalid confirmation window')
@@ -1555,6 +1592,9 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         state["last_entry_audit"] = dict(entry_summary(len(ranking), notes),
                                          at=datetime.now(timezone.utc).isoformat())
         print("ENTRADAS RESUMEN " + json.dumps(dict(state["last_entry_audit"], label=label), ensure_ascii=False))
+    state["last_confirmation_summary"] = confirmation_audit_summary(state.get("confirmation_audit", []))
+    if state["last_confirmation_summary"]["observations"]:
+        print("CONFIRMACION RESUMEN " + json.dumps(dict(state["last_confirmation_summary"], label=label), ensure_ascii=False))
     state["last_rejections"] = REJECTIONS[-300:]
     state["last_run_notes"] = notes
     with open(paper_file + ".tmp", "w") as handle:
