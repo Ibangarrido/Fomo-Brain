@@ -294,6 +294,22 @@ def bootstrap():
     if len(targets) != 1:
         # No inventar ni reiniciar una cartera histórica si falta el activo heredado.
         print("LAB M4 SIN BASE HISTORICA: se esperaban 1 M4 heredada sin cotizacion; encontradas " + str(len(targets)) + "; carteras intactas; sin simulacion")
+        # Distinguish a missing mint from a now-verified mint or another
+        # unquoted position. This diagnostic is read-only and never forks funds.
+        positions = seed["positions"]
+        print("LAB M4 SOURCE DIAGNOSTIC " + json.dumps({
+            "source": SOURCE,
+            "positions_total": len(positions),
+            "legacy_mint_total": sum(p.get("chain") == "solana" and p.get("address") == MINT
+                                     for p in positions),
+            "legacy_mint_verified": sum(p.get("chain") == "solana" and p.get("address") == MINT
+                                        and p.get("quote_status") == "OK" for p in positions),
+            "other_unverified": sum(p.get("quote_status") != "OK" and not
+                                    (p.get("chain") == "solana" and p.get("address") == MINT)
+                                    for p in positions),
+            "fork_created": False, "accounting_changed": False,
+            "scope": "source identity/quote status only; no current market valuation"
+        }, sort_keys=True))
         return None
     known = seed["cash"] + seed["reserve"] + sum(
         p["mark_net"] for p in seed["positions"] if p.get("quote_status") == "OK")
