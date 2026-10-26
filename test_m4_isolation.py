@@ -98,6 +98,9 @@ class IsolationTests(unittest.TestCase):
     def test_control_requires_pinned_legacy_and_preserves_cash(self):
         path = "fomo_lab_continuation_control_r1.json"
         state = copy.deepcopy(self.seed)
+        coin_mint = "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"
+        state["positions"][0]["address"] = coin_mint
+        state["positions"][0]["symbol"] = "Coin"
         original = copy.deepcopy(state)
         now = datetime.now(timezone.utc)
         with patch.dict(os.environ, {"BRAIN_UNKNOWN_ISOLATION": "1"}, clear=False):
@@ -105,7 +108,7 @@ class IsolationTests(unittest.TestCase):
             self.assertNotIn("unknown_isolation_epoch", state)
             with patch.dict(os.environ, {"BRAIN_CONTROL_LEGACY_ADDRESS": "wrong"}):
                 self.assertEqual(brain.isolate_existing_unknowns(state, path, now), set())
-            with patch.dict(os.environ, {"BRAIN_CONTROL_LEGACY_ADDRESS": lab.MINT}):
+            with patch.dict(os.environ, {"BRAIN_CONTROL_LEGACY_ADDRESS": coin_mint}):
                 keys = brain.isolate_existing_unknowns(state, path, now)
                 self.assertEqual(len(keys), 1)
                 with patch.dict(os.environ, {"BRAIN_CONTROL_LEGACY_ADDRESS": "wrong"}):
