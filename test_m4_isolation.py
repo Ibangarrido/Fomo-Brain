@@ -123,8 +123,8 @@ class IsolationTests(unittest.TestCase):
         for enabled in ('0', '1'):
             with self.subTest(unknown_isolation=enabled):
                 lab.write(path, copy.deepcopy(state))
-                with patch.dict(os.environ, BRAIN_UNKNOWN_ISOLATION=enabled), \\
-                     patch.object(brain, 'cotizar_posicion', side_effect=ValueError('No quote')), \\
+                with patch.dict(os.environ, BRAIN_UNKNOWN_ISOLATION=enabled), \
+                     patch.object(brain, 'cotizar_posicion', side_effect=ValueError('No quote')), \
                      contextlib.redirect_stdout(io.StringIO()):
                     brain.simular_cartera([candidate], path, entry_mode='early', min_buy_ratio=.75)
                 updated = self.read(path)
