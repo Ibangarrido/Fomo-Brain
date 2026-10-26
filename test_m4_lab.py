@@ -434,6 +434,32 @@ class M4Tests(unittest.TestCase):
         self.assertTrue(lab.is_quarantined(self.read(lab.RECOVERY)["positions"][0]))
         self.assertFalse(lab.is_quarantined(self.read(lab.CONTROL)["positions"][0]))
 
+    def test_missing_historical_m4_reports_source_mismatch_without_mutation(self):
+        cases = [
+            ({"address": "another_token"}, 0, 0, 1),
+            ({"quote_status": "OK"}, 1, 1, 0),
+        ]
+        for changes, mint_count, verified_count, other_unknown in cases:
+            with self.subTest(changes=changes):
+                state = copy.deepcopy(self.seed)
+                state["positions"][0].update(changes)
+                lab.write(lab.SOURCE, state)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertIsNone(lab.bootstrap())
+                diagnostic = next(json.loads(line.split("LAB M4 SOURCE DIAGNOSTIC ", 1)[1])
+                                  for line in output.getvalue().splitlines()
+                                  if line.startswith("LAB M4 SOURCE DIAGNOSTIC "))
+                self.assertEqual(diagnostic["positions_total"], 1)
+                self.assertEqual(diagnostic["legacy_mint_total"], mint_count)
+                self.assertEqual(diagnostic["legacy_mint_verified"], verified_count)
+                self.assertEqual(diagnostic["other_unverified"], other_unknown)
+                self.assertFalse(diagnostic["fork_created"])
+                self.assertFalse(diagnostic["accounting_changed"])
+                self.assertEqual(self.read(lab.SOURCE), state)
+                for path in (lab.CONTROL, lab.RECOVERY, lab.MARKER):
+                    self.assertFalse(os.path.exists(path))
+
     def test_missing_arm_never_resets_capital(self):
         lab.bootstrap()
         os.remove(lab.RECOVERY)
