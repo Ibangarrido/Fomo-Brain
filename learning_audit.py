@@ -29,7 +29,9 @@ def summarize(tokens, cutoff, minimum=20):
             continue
         # All groups are defined at the rejection timestamp, not by future highs.
         reasons = baseline.get("entry_rejections") or {}
-        group = "buy_ratio" if any("buy" in str(k).lower() for k in reasons) else "other"
+        group = "buy_ratio" if isinstance(reasons, dict) and any(
+            "ratio compras" in str(reason).lower() or "buy_ratio" in str(reason).lower()
+            for reason in reasons.values()) else "other"
         checkpoint = row.get("post_rejection_checkpoints", {}).get("30m")
         if at + timedelta(minutes=30) > cutoff:
             skipped["not_mature"] += 1
