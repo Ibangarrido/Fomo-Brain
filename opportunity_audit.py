@@ -286,6 +286,19 @@ def watch_targets(now=None):
         "selected_ordinary_total": len(selected_set & {(r["chain"], r["address"]) for r in ordinary}),
         "scope": "research scheduling only; no quote freshness or execution verification",
     }))
+    # Quantify unavoidable misses even with perfect prioritization: the 10-request
+    # budget cannot serve more than ten distinct due checkpoints in this cycle.
+    # This is an upper bound on requests, not evidence of received quotes.
+    due_capacity = min(len(due_targets), 10)
+    print("WATCH CHECKPOINT CAPACITY BOUND " + json.dumps({
+        "at": now.isoformat(),
+        "due_distinct_tokens": len(due_targets),
+        "maximum_serviceable_due": due_capacity,
+        "minimum_unserviceable_due": max(0, len(due_targets) - 10),
+        "actual_due_selected": len(due_targets.intersection(selected)),
+        "avoidable_selection_gap": due_capacity - len(due_targets.intersection(selected)),
+        "scope": "theoretical research-request capacity, not verified quotes or executable entries",
+    }))
     # Research request pressure; not evidence of fresh observations or fills.
     print("WATCH CAPACITY " + json.dumps({
         "at": now.isoformat(),
