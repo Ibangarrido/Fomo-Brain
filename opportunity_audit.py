@@ -714,10 +714,45 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             "timely_sampled_up_20pct": counts["on_time_sampled_up_20pct"],
             "timely_sampled_down_20pct": counts["on_time_sampled_down_20pct"],
         }
+    # Rolling six-hour rejection cohort separates new sampling performance
+    # from the cumulative legacy backlog. It is not a trade-return measure.
+    recent_since = now - timedelta(hours=6)
+    recent_checkpoint_quality = {}
+    for minutes in (5, 15, 30, 60):
+        name = str(minutes) + "m"
+        counts = {"due": 0, "timely": 0, "late": 0, "missing": 0}
+        for row in rows.values():
+            if row.get("cohort") == "manual_after_event":
+                continue
+            baseline = row.get("first_rejection")
+            if not baseline:
+                continue
+            try:
+                rejected_at = datetime.fromisoformat(baseline["received_at"])
+                due_at = rejected_at + timedelta(minutes=minutes)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not recent_since <= rejected_at <= now or due_at > now:
+                continue
+            counts["due"] += 1
+            checkpoint = row.get("post_rejection_checkpoints", {}).get(name)
+            if checkpoint is None:
+                counts["missing"] += 1
+            elif checkpoint.get("lag_seconds") is not None and 0 <= checkpoint["lag_seconds"] <= 120:
+                counts["timely"] += 1
+            else:
+                counts["late"] += 1
+        due = counts["due"]
+        recent_checkpoint_quality[name] = {
+            **counts,
+            "timely_pct": round(100 * counts["timely"] / due, 1) if due else None,
+            "late_or_missing_pct": round(100 * (counts["late"] + counts["missing"]) / due, 1) if due else None,
+        }
     print("CHECKPOINT QUALITY " + json.dumps({
         "at": now.isoformat(),
         "horizons": checkpoint_quality,
-        "scope": "cumulative receipt-time coverage, not verified market freshness, exact highs, executable fills or returns",
+        "recent_6h_rejection_cohort": recent_checkpoint_quality,
+        "scope": "cumulative and rolling-6h receipt-time coverage; only active tracked cohorts, not verified market freshness, exact highs, executable fills or returns",
     }))
     # Separate observed market requalification from actual portfolio eligibility.
     # Never backfill missing checkpoints or interpret a later high as a fill.
@@ -752,6 +787,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "market_pulse": market_pulse,
         "checkpoint_coverage": checkpoint_coverage,
         "checkpoint_quality": checkpoint_quality,
+        "recent_6h_rejection_cohort": recent_checkpoint_quality,
         "scope": "Receipt-time sampling only; provider market freshness unknown. Timely sampled moves are NOT candle highs, executable fills, or trading returns; late/missing checkpoints are excluded from horizon outcomes."}
     state["last_cycle_at"] = now.isoformat()
     # Advance by the number of automatic slots actually allocated per pool.
