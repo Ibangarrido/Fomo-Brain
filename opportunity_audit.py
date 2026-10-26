@@ -625,6 +625,8 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                         "sampled_peak_pct": (row["rejection_peak"]["price"] / baseline["price"] - 1) * 100,
                         "sampled_trough_pct": (row["rejection_trough"]["price"] / baseline["price"] - 1) * 100,
                         "pair_changed": snapshot["pair"] != baseline["pair"],
+                        "sampled_peak_same_pair": row["rejection_peak"]["pair"] == baseline["pair"],
+                        "sampled_trough_same_pair": row["rejection_trough"]["pair"] == baseline["pair"],
                         "exact_horizon": elapsed_seconds == minutes * 60,
                         "execution_verified": False,
                         "sampled_up_20pct": (row["rejection_peak"]["price"] / baseline["price"] - 1) >= 0.20,
@@ -700,7 +702,11 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                   "manual_after_event_excluded": 0,
                   "on_time_sampled_up_20pct": 0,
                   "on_time_sampled_down_20pct": 0,
-                  "on_time_pair_changed": 0}
+                  "on_time_pair_changed": 0,
+                  "on_time_same_pair": 0,
+                  "on_time_peak_same_pair_up_20pct": 0,
+                  "on_time_trough_same_pair_down_20pct": 0,
+                  "on_time_peak_pair_unknown": 0}
         for row in rows.values():
             baseline = row.get("first_rejection")
             if not baseline:
@@ -728,6 +734,12 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                 counts["on_time_sampled_up_20pct"] += bool(checkpoint.get("sampled_up_20pct"))
                 counts["on_time_sampled_down_20pct"] += bool(checkpoint.get("sampled_down_20pct"))
                 counts["on_time_pair_changed"] += bool(checkpoint.get("pair_changed"))
+                counts["on_time_same_pair"] += checkpoint.get("pair_changed") is False
+                counts["on_time_peak_same_pair_up_20pct"] += (checkpoint.get("sampled_peak_same_pair") is True
+                                                                and bool(checkpoint.get("sampled_up_20pct")))
+                counts["on_time_trough_same_pair_down_20pct"] += (checkpoint.get("sampled_trough_same_pair") is True
+                                                                  and bool(checkpoint.get("sampled_down_20pct")))
+                counts["on_time_peak_pair_unknown"] += "sampled_peak_same_pair" not in checkpoint
             else:
                 counts["late_over_120s"] += 1
         checkpoint_coverage[name] = counts
@@ -747,6 +759,10 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             "late_or_missing_pct": round(100 * (late + missing) / due, 1) if due else None,
             "timely_sampled_up_20pct": counts["on_time_sampled_up_20pct"],
             "timely_sampled_down_20pct": counts["on_time_sampled_down_20pct"],
+            "timely_same_pair": counts["on_time_same_pair"],
+            "timely_peak_same_pair_up_20pct": counts["on_time_peak_same_pair_up_20pct"],
+            "timely_trough_same_pair_down_20pct": counts["on_time_trough_same_pair_down_20pct"],
+            "timely_peak_pair_unknown": counts["on_time_peak_pair_unknown"],
         }
     # Rolling six-hour rejection cohort separates new sampling performance
     # from the cumulative legacy backlog. It is not a trade-return measure.
@@ -754,7 +770,9 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
     recent_checkpoint_quality = {}
     for minutes in (5, 15, 30, 60):
         name = str(minutes) + "m"
-        counts = {"due": 0, "timely": 0, "late": 0, "missing": 0}
+        counts = {"due": 0, "timely": 0, "late": 0, "missing": 0,
+                  "timely_same_pair": 0, "timely_peak_same_pair_up_20pct": 0,
+                  "timely_peak_pair_unknown": 0}
         for row in rows.values():
             if row.get("cohort") == "manual_after_event":
                 continue
@@ -774,6 +792,10 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
                 counts["missing"] += 1
             elif checkpoint.get("lag_seconds") is not None and 0 <= checkpoint["lag_seconds"] <= 120:
                 counts["timely"] += 1
+                counts["timely_same_pair"] += checkpoint.get("pair_changed") is False
+                counts["timely_peak_same_pair_up_20pct"] += (checkpoint.get("sampled_peak_same_pair") is True
+                                                              and bool(checkpoint.get("sampled_up_20pct")))
+                counts["timely_peak_pair_unknown"] += "sampled_peak_same_pair" not in checkpoint
             else:
                 counts["late"] += 1
         due = counts["due"]
@@ -786,7 +808,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "at": now.isoformat(),
         "horizons": checkpoint_quality,
         "recent_6h_rejection_cohort": recent_checkpoint_quality,
-        "scope": "cumulative and rolling-6h receipt-time coverage; only active tracked cohorts, not verified market freshness, exact highs, executable fills or returns",
+        "scope": "cumulative and rolling-6h receipt-time coverage; comparable sampled peaks require same rejection pool; legacy unknown remains unknown; not verified market freshness, exact highs, executable fills or returns",
     }))
     # Separate observed market requalification from actual portfolio eligibility.
     # Never backfill missing checkpoints or interpret a later high as a fill.
