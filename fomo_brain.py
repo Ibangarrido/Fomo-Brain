@@ -680,11 +680,10 @@ def freno_cartera_v10(state, now, conservative_unknown=False):
     control["version"] = V10_RISK_VERSION
     if control.get("halted_at"):
         return control["halt_reason"]
-    # Unknown marks are not zero-valued losses. Preserve the existing halt,
-    # but only trigger a new NAV-based halt when every open mark is verifiable.
-    if all(p.get("quote_status") == "OK" for p in state["positions"]):
+    if conservative_unknown or all(p.get("quote_status") == "OK" for p in state["positions"]):
         equity = (state["cash"] + state["reserve"]
-                  + sum(p["mark_net"] for p in state["positions"]))
+                  + sum(p["mark_net"] for p in state["positions"]
+                        if not conservative_unknown or p.get("quote_status") == "OK"))
         floor = 100.0 * (1 - V10_MAX_TOTAL_LOSS_PCT / 100)
         if equity <= floor:
             reason = (f"riesgo capital-r1: patrimonio EUR {equity:.2f} <= {floor:.2f};"
