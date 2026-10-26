@@ -110,6 +110,40 @@ class IsolationTests(unittest.TestCase):
         self.assertTrue(any('ENTRADA OMITIDA solana:candidate_control' in n
                             for n in updated['last_run_notes']))
 
+    def test_real_continuation_coin_is_not_legacy_m4_and_requires_opt_in(self):
+        # The observed CONTINUATION CONTROL unknown is Coin, not the M4 mint.
+        # Compare the unchanged policy with an explicitly enabled PAPER epoch.
+        path = 'fomo_lab_continuation_control_r1.json'
+        state = copy.deepcopy(self.seed)
+        state['positions'][0]['address'] = 'CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3'
+        state['continuation_experiment'] = {'version': 'continuation-r1', 'arm': 'control'}
+        self.assertNotEqual(state['positions'][0]['address'], lab.MINT)
+        candidate = brain.analizar_par(pair(address='coin_epoch_candidate', pool='pool'))
+        self.assertIsNotNone(candidate)
+        for enabled in ('0', '1'):
+            with self.subTest(unknown_isolation=enabled):
+                lab.write(path, copy.deepcopy(state))
+                with patch.dict(os.environ, BRAIN_UNKNOWN_ISOLATION=enabled), \\
+                     patch.object(brain, 'cotizar_posicion', side_effect=ValueError('No quote')), \\
+                     contextlib.redirect_stdout(io.StringIO()):
+                    brain.simular_cartera([candidate], path, entry_mode='early', min_buy_ratio=.75)
+                updated = self.read(path)
+                self.assertEqual((updated['cash'], updated['reserve'], updated['closed']),
+                                 (82, 10, []))
+                self.assertEqual(len(updated['positions']), 1)
+                self.assertEqual(updated['positions'][0]['address'],
+                                 state['positions'][0]['address'])
+                self.assertIsNone(updated['observations'][-1]['estimated_equity'])
+                notes = updated['last_run_notes']
+                if enabled == '0':
+                    self.assertTrue(any('cartera sin valoracion completa' in n for n in notes))
+                    self.assertNotIn('unknown_isolation_epoch', updated)
+                else:
+                    self.assertFalse(any('cartera sin valoracion completa' in n for n in notes))
+                    self.assertTrue(any('ENTRADA OMITIDA solana:coin_epoch_candidate' in n
+                                        for n in notes))
+                    self.assertEqual(len(updated['unknown_isolation_epoch']['positions']), 1)
+
     def test_capital_loss_and_existing_halt_still_apply(self):
         state = copy.deepcopy(self.seed)
         state['cash'] = 60
