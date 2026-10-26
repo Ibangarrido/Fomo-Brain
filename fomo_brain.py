@@ -1079,7 +1079,7 @@ UNKNOWN_ISOLATION_FILES = {
 
 def isolate_existing_unknowns(state, path, now):
     """One PAPER policy epoch; later unknown positions still block entries."""
-    if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "0") != "1"
+    if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "1") != "1"
             or os.path.basename(path) not in UNKNOWN_ISOLATION_FILES):
         return set()
     epoch = state.get("unknown_isolation_epoch")
