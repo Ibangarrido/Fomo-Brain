@@ -1059,6 +1059,7 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 UNKNOWN_ISOLATION_FILES = {
     "fomo_paper_v10.json", "fomo_paper_v10_impulse.json",
     "fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json",
+    "fomo_lab_continuation_control_r1.json",
 }
 
 
@@ -1337,8 +1338,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                   "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
                   "token ya operado" if key in state["seen"] or key in closed_this_run else
-                  "maximo 3 posiciones" if sum(not (isolated_m4 and is_quarantined(p)
-                      and p.get("quote_status") != "OK") for p in state["positions"]) >= 3 else
+                  "maximo 3 posiciones" if sum(not ((isolated_m4 and is_quarantined(p) and p.get("quote_status") != "OK")
+                      or (p.get("chain"), p.get("address"), p.get("opened_at")) in isolated_unknowns) for p in state["positions"]) >= 3 else
                   f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
             if reason == "cartera sin valoracion completa":
@@ -1347,8 +1348,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 # token was already traded, slots are full, or cash is short.
                 other_blockers = (
                     key in state["seen"] or key in closed_this_run
-                    or sum(not (isolated_m4 and is_quarantined(p)
-                               and p.get("quote_status") != "OK")
+                    or sum(not ((isolated_m4 and is_quarantined(p) and p.get("quote_status") != "OK")
+                               or (p.get("chain"), p.get("address"), p.get("opened_at")) in isolated_unknowns)
                            for p in state["positions"]) >= 3
                     or state["cash"] < entry_budget
                 )
@@ -1607,6 +1608,18 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if ranking and os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         from opportunity_audit import record_decisions
         record_decisions(label, notes)
+    # Aggregate first rejection reasons: diagnose the bottleneck without changing trades.
+    from collections import Counter
+    rejection_counts = Counter()
+    for note in notes:
+        if note.startswith("DESCARTE "):
+            rejection_counts[note.split(" | ", 1)[1].split(" | ", 1)[0] if " | " in note else "sin detalle"] += 1
+        elif note.startswith("ENTRADA OMITIDA "):
+            rejection_counts["entrada omitida: error o cotizacion final"] += 1
+    print("EMBUDO ENTRADAS " + json.dumps({
+        "cartera": label, "candidatos": len(ranking),
+        "descartes_por_primera_causa": dict(rejection_counts.most_common(12)),
+        "solo_diagnostico": True}, ensure_ascii=False))
     print(f"\nCARTERA VIRTUAL {label} — NO EJECUTA ORDENES REALES")
     for note in notes:
         print(note)
