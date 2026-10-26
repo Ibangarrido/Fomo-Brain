@@ -74,6 +74,29 @@ def entry_summary(candidate_count, notes):
             "scope": "first blocking reason per candidate; virtual entries only"}
 
 
+
+def sampled_peak_context(baseline, peak):
+    """Receipt-time context for a sampled peak; not a 5/15/30/60m fill."""
+    try:
+        first_at = datetime.fromisoformat(baseline["received_at"])
+        peak_at = datetime.fromisoformat(peak["received_at"])
+        if first_at.tzinfo is None or peak_at.tzinfo is None:
+            raise ValueError("naive timestamp")
+        elapsed = (peak_at - first_at).total_seconds() / 60
+        if elapsed < 0:
+            raise ValueError("peak predates rejection")
+        minutes = round(elapsed, 2)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        minutes = None
+    first_pair, peak_pair = baseline.get("pair"), peak.get("pair")
+    return {
+        "sampled_peak_minutes_after_rejection": minutes,
+        "sampled_peak_within_60m": minutes <= 60 if minutes is not None else None,
+        "sampled_peak_same_pair": (first_pair == peak_pair
+                                   if first_pair and peak_pair else None),
+    }
+
+
 def begin_cycle():
     DECISIONS.clear()
 
@@ -829,6 +852,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             "symbol": row.get("symbol"),
             "rejected_at": baseline["received_at"],
             "peak_observed_at": peak["received_at"],
+            **sampled_peak_context(baseline, peak),
             "sampled_peak_after_rejection_pct": round(peak_pct, 2),
             "rejection_reasons": baseline.get("entry_rejections", {}),
             "discovery_reasons": baseline.get("discovery_rejections", []),
@@ -841,7 +865,7 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "eligible_rows_with_rejection_anchor": len(rejected_auto),
         "sampled_up_20pct": sum(x["sampled_peak_after_rejection_pct"] >= 20 for x in rejected_auto),
         "top_10": rejected_auto[:10],
-        "scope": "automatic cohort, sampled observations only; not exact highs or trade profits"
+        "scope": "automatic cohort, sampled observations only; peak timing and pair comparability descriptive, not exact horizon prices, executable fills or trade profits"
     }, allow_nan=False))
     for chain, address in sorted(MANUAL):
         row = rows.get(chain + ":" + address)
