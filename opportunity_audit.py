@@ -857,6 +857,35 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
         "executable_fills_verified": 0,
         "scope": "Research market screens only; missing candles, wallet valuation, security and execution not bypassed",
     }
+    # Descriptive learning report only: use timely, same-pair snapshots.
+    # No automatic threshold changes or claims of executable opportunities.
+    learning = {}
+    for row in automatic_rejected:
+        baseline = row.get("first_rejection") or {}
+        reasons = baseline.get("entry_rejections") or {}
+        if not isinstance(reasons, dict):
+            continue
+        checkpoint = row.get("post_rejection_checkpoints", {}).get("15m")
+        valid = (isinstance(checkpoint, dict)
+                 and checkpoint.get("lag_seconds") is not None
+                 and 0 <= checkpoint["lag_seconds"] <= 120
+                 and checkpoint.get("pair_changed") is False)
+        for arm, reason in reasons.items():
+            label = str(arm) + ": " + str(reason)
+            bucket = learning.setdefault(label, {
+                "rejected": 0, "timely_same_pair_15m": 0,
+                "sampled_up_20pct_15m": 0, "sampled_down_20pct_15m": 0})
+            bucket["rejected"] += 1
+            if valid:
+                bucket["timely_same_pair_15m"] += 1
+                bucket["sampled_up_20pct_15m"] += int(bool(checkpoint.get("sampled_up_20pct")))
+                bucket["sampled_down_20pct_15m"] += int(bool(checkpoint.get("sampled_down_20pct")))
+    learning_report = {
+        "version": "rejection-learning-descriptive-r1",
+        "horizon": "15m", "groups": learning,
+        "scope": "Timely receipt snapshots on the original pair only; missing/late excluded from outcomes. Descriptive, not executable PnL or causal filter performance; no policy mutation."}
+    state["rejection_learning_report"] = learning_report
+    print("DESCARTES APRENDIZAJE " + json.dumps(learning_report, allow_nan=False))
     state["second_look_summary"] = second_look_summary
     print("SECOND LOOK REQUALIFICATION " + json.dumps(second_look_summary))
     state["last_cycle_coverage"] = {
