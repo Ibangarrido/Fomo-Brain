@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Validate observer without network
-        run: python -m unittest -v test_cooker_watch.py
+        run: python -m unittest -v test_cooker_watch.py test_source_health.py
       - name: Restore Cooker cursor and history
         uses: dawidd6/action-download-artifact@v11
         with:
