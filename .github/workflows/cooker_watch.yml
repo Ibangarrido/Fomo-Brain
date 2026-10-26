@@ -32,11 +32,16 @@ jobs:
           if_no_artifact_found: ignore
       - name: Observe public wallet without orders or paper fills
         run: python cooker_watch.py
+      - name: Audit Cooker source health offline
+        if: always()
+        run: python source_health.py --source cooker --output source_health_cooker.json
       - name: Persist observer state and source health
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cooker-tracking
-          path: cooker_tracking_r1.json
+          path: |
+            cooker_tracking_r1.json
+            source_health_cooker.json
           retention-days: 30
           if-no-files-found: error
