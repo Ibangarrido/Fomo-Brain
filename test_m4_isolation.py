@@ -82,6 +82,10 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(updated["cash"], 82)
         self.assertEqual(updated["closed"], [])
         self.assertEqual(updated["last_m4_shadow_preflight"]["unknown_valuation_only_at_preflight"], 0)
+        # The quote is deliberately unavailable: prove that the isolated
+        # historical slots did not stop the candidate before quote preflight.
+        self.assertFalse(any("maximo 3 posiciones" in note for note in updated["last_run_notes"]))
+        self.assertTrue(any("ENTRADA OMITIDA solana:candidate" in note for note in updated["last_run_notes"]))
 
     def test_capital_loss_and_existing_halt_still_apply(self):
         state = copy.deepcopy(self.seed)
