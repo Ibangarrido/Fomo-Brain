@@ -896,11 +896,22 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
             "pair_changes": row.get("pair_changes", 0),
             "execution_verified": False})
     rejected_auto.sort(key=lambda x: x["sampled_peak_after_rejection_pct"], reverse=True)
+    # A cross-pool price ratio is not a comparable return. Keep the legacy
+    # leaderboard for diagnosis, but separate same-pool peaks from pool switches.
+    comparable = [r for r in rejected_auto if r["sampled_peak_same_pair"] is True]
+    cross_pool = [r for r in rejected_auto if r["sampled_peak_same_pair"] is False]
+    unknown_pool = [r for r in rejected_auto if r["sampled_peak_same_pair"] is None]
     print("DESCARTES PICOS MUESTREADOS " + json.dumps({
         "eligible_rows_with_rejection_anchor": len(rejected_auto),
         "sampled_up_20pct": sum(x["sampled_peak_after_rejection_pct"] >= 20 for x in rejected_auto),
-        "top_10": rejected_auto[:10],
-        "scope": "automatic cohort, sampled observations only; peak timing and pair comparability descriptive, not exact horizon prices, executable fills or trade profits"
+        "same_pair_peak_cases": len(comparable),
+        "cross_pair_peak_cases": len(cross_pool),
+        "unknown_pair_peak_cases": len(unknown_pool),
+        "same_pair_sampled_up_20pct": sum(x["sampled_peak_after_rejection_pct"] >= 20 for x in comparable),
+        "top_10_same_pair": comparable[:10],
+        "top_10_cross_pair_unreliable": cross_pool[:10],
+        "top_10": rejected_auto[:10],  # legacy, mixed-pool ranking; NOT comparable
+        "scope": "automatic cohort, sampled receipts only; top_10 is legacy mixed-pool data, top_10_same_pair compares the rejection pool. A pool switch may hide earlier same-pool highs. No exact highs, executable fills or returns."
     }, allow_nan=False))
     for chain, address in sorted(MANUAL):
         row = rows.get(chain + ":" + address)
