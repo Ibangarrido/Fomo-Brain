@@ -585,6 +585,37 @@ class V10Tests(unittest.TestCase):
             self.quote([pair(pool='old', price='NaN')], [])
 
 
+    def test_confirmation_summary_distinguishes_renewals_and_prior_receipts(self):
+        rows = [
+            {"status": "RENEWED", "reasons": ["PRICE_DRIFT_GT_5PCT"],
+             "had_previous": True, "receipt_gap_seconds": 70,
+             "confirmation_window_seconds": 90, "reference_expired_90s": False,
+             "reference_expired_120s": False},
+            {"status": "RENEWED", "reasons": ["REFERENCE_EXPIRED_OR_INVALID"],
+             "had_previous": True, "receipt_gap_seconds": 150,
+             "confirmation_window_seconds": 90, "reference_expired_90s": True,
+             "reference_expired_120s": True},
+            {"status": "REFERENCE_AVAILABLE", "reasons": [],
+             "had_previous": False, "receipt_gap_seconds": 40,
+             "confirmation_window_seconds": 90, "reference_expired_90s": False,
+             "reference_expired_120s": False},
+            {"status": "REFERENCE_AVAILABLE", "reasons": [],
+             "had_previous": True, "receipt_gap_seconds": 60,
+             "confirmation_window_seconds": 90, "reference_expired_90s": False,
+             "reference_expired_120s": False},
+        ]
+        summary = b.confirmation_audit_summary(rows)
+        self.assertEqual(summary["observations"], 4)
+        self.assertEqual(summary["statuses"], {"RENEWED": 2, "REFERENCE_AVAILABLE": 2})
+        self.assertEqual(summary["renewal_reasons"],
+                         {"PRICE_DRIFT_GT_5PCT": 1, "REFERENCE_EXPIRED_OR_INVALID": 1})
+        self.assertEqual(summary["with_previous_reference"], 3)
+        self.assertEqual(summary["reference_available_with_previous"], 1)
+        self.assertEqual(summary["previous_receipt_gap_within_window"], 2)
+        self.assertEqual(summary["expired_90s_with_previous"], 1)
+        self.assertEqual(summary["expired_120s_with_previous"], 1)
+        self.assertEqual(b.confirmation_audit_summary(rows * 40)["observations"], 150)
+
     def test_receipt_confirmation_uses_real_separation_and_original_age(self):
         now = datetime.now(timezone.utc)
         t = b.analizar_par(pair())
