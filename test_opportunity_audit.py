@@ -241,6 +241,26 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(quality["15m"]["timely_pct"], 100.0)
         self.assertEqual(quality["5m"]["late_or_missing_pct"], 100.0)
 
+    def test_recent_six_hour_checkpoint_cohort_excludes_legacy_and_manual(self):
+        manual = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
+        audit.record_decisions("CONTROL", [
+            "DESCARTE solana:old | ratio compras < 60%",
+            "DESCARTE solana:fresh | ratio compras < 60%",
+            "DESCARTE solana:late | ratio compras < 60%",
+            "DESCARTE solana:" + manual + " | liquidez insuficiente"])
+        self.observe([pair(address="old")], self.now - timedelta(hours=7))
+        self.observe([pair(address="fresh"), pair(address="late"),
+                      pair(address=manual)], self.now)
+        self.observe([pair(address="fresh")], self.now + timedelta(minutes=6))
+        self.observe([pair(address="late")], self.now + timedelta(minutes=8))
+        coverage = audit.read()["last_cycle_coverage"]
+        recent = coverage["recent_6h_rejection_cohort"]
+        self.assertEqual((recent["5m"]["due"], recent["5m"]["timely"],
+                          recent["5m"]["late"], recent["5m"]["missing"]), (2, 1, 1, 0))
+        self.assertEqual(recent["5m"]["timely_pct"], 50.0)
+        self.assertEqual(coverage["checkpoint_quality"]["5m"]["due"], 3)
+        self.assertIsNone(recent["15m"]["timely_pct"])
+
     def test_receipt_time_is_distinct_from_evaluation_and_invalid_receipts_skip(self):
         market = pair()
         market["_brain_received_at"] = (self.now - timedelta(seconds=45)).isoformat()
