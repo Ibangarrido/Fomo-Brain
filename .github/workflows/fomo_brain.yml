@@ -58,6 +58,7 @@ jobs:
           python -m unittest -v test_continuation_lab.py
           python -m unittest -v test_pair_batch.py
           python -m unittest -v test_discovery_watch.py
+          python -m unittest -v test_source_health.py
 
       - name: Verificar laboratorio de velas sin red
         id: candle_tests
@@ -119,6 +120,10 @@ jobs:
         if: always()
         run: python discovery_watch.py
 
+      - name: Auditar disponibilidad GeckoTerminal sin red ni compras
+        if: always()
+        run: python source_health.py --source geckoterminal --output source_health_gecko.json
+
       - name: Registrar estado de observabilidad V11 V12
         if: always()
         env:
@@ -150,6 +155,7 @@ jobs:
             paper_observability_status.json
             fomo_v12_observations_r1.json
             discovery_watch.json
+            source_health_gecko.json
             fomo_opportunity_audit_r1.json
             fomo_lab_rebound_control_r1.json
             fomo_lab_rebound_extended_r1.json
@@ -225,6 +231,9 @@ jobs:
             v13-ledger-r1-${{ github.ref_name }}-
       - name: Scan public markets PAPER only
         run: python v13_runner.py
+      - name: Auditar salud de fuentes V13 sin red
+        if: always()
+        run: python source_health.py --source v13 --output source_health_v13.json
       - name: Save V13 history
         if: success()
         uses: actions/cache/save@v4
@@ -243,6 +252,7 @@ jobs:
           name: v13-paper-${{ github.run_id }}
           path: |
             v13_report.json
+            source_health_v13.json
             v13_history.json
             v13_paper_state.json
           if-no-files-found: warn
@@ -272,11 +282,16 @@ jobs:
         env:
           GMGN_API_KEY: ${{ secrets.GMGN_API_KEY }}
         run: python gmgn_readonly.py
+      - name: Auditar disponibilidad GMGN sin red
+        if: always()
+        run: python source_health.py --source gmgn --output source_health_gmgn.json
       - name: Guardar diagnostico GMGN
         uses: actions/upload-artifact@v4
         with:
           name: gmgn-preflight
-          path: gmgn_preflight.json
+          path: |
+            gmgn_preflight.json
+            source_health_gmgn.json
           retention-days: 7
       - name: Registrar cartera virtual GMGN
         run: python gmgn_paper.py
