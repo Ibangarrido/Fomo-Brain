@@ -1566,6 +1566,18 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     if ranking and os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         from opportunity_audit import record_decisions
         record_decisions(label, notes)
+    # Aggregate first rejection reasons: diagnose the bottleneck without changing trades.
+    from collections import Counter
+    rejection_counts = Counter()
+    for note in notes:
+        if note.startswith("DESCARTE "):
+            rejection_counts[note.split(" | ", 1)[1].split(" | ", 1)[0] if " | " in note else "sin detalle"] += 1
+        elif note.startswith("ENTRADA OMITIDA "):
+            rejection_counts["entrada omitida: error o cotizacion final"] += 1
+    print("EMBUDO ENTRADAS " + json.dumps({
+        "cartera": label, "candidatos": len(ranking),
+        "descartes_por_primera_causa": dict(rejection_counts.most_common(12)),
+        "solo_diagnostico": True}, ensure_ascii=False))
     print(f"\nCARTERA VIRTUAL {label} — NO EJECUTA ORDENES REALES")
     for note in notes:
         print(note)
