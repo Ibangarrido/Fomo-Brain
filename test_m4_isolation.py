@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 import test_m4_lab
+from test_fomo_v8 import pair
 import m4_lab as lab
 import fomo_brain as brain
 
@@ -71,7 +72,7 @@ class IsolationTests(unittest.TestCase):
         state["cash"] = 82
         path = "fomo_paper_v10.json"
         lab.write(path, state)
-        candidate = brain.analizar_par(test_m4_lab.pair(address="candidate", pool="pool"))
+        candidate = brain.analizar_par(pair(address="candidate", pool="pool"))
         with patch.dict(os.environ, BRAIN_UNKNOWN_ISOLATION="1"), \
              patch.object(brain, "cotizar_posicion", side_effect=ValueError("No quote")), \
              contextlib.redirect_stdout(io.StringIO()):
