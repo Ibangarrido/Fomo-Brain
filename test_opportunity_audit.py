@@ -593,8 +593,11 @@ class OpportunityTests(unittest.TestCase):
             market = pair(address=address, liquidity=liquidity)
             market["txns"] = {"m5": {"buys": 55, "sells": 45}}
             market["pairCreatedAt"] = int((self.now - timedelta(minutes=30)).timestamp() * 1000)
+            if address == "fails":
+                market.setdefault("priceChange", {})["m5"] = -5
             if address == "unknown":
                 market["pairCreatedAt"] = None
+                market.setdefault("priceChange", {})["m5"] = None
             markets.append(market)
         self.observe(markets)
         pulse = audit.read()["last_cycle_coverage"]["market_pulse"]
@@ -603,6 +606,15 @@ class OpportunityTests(unittest.TestCase):
         self.assertEqual(pulse["buy_count_ratio_50_to_60pct_other_market_gates_fail"], 1)
         self.assertEqual(pulse["buy_count_ratio_50_to_60pct_other_market_gates_unknown"], 1)
         self.assertEqual(pulse["buy_count_ratio_50_to_60pct_liquidity_at_least_20000"], 2)
+        # Per-gate reasons overlap: one token can fail liquidity AND momentum.
+        self.assertEqual(pulse["buy_count_ratio_50_to_60pct_other_market_gate_fail_reasons"],
+                         {"liquidity_20000": 1, "momentum5m_2_60": 1})
+        self.assertEqual(pulse["buy_count_ratio_50_to_60pct_other_market_gate_unknown_reasons"],
+                         {"momentum5m_2_60": 1, "pair_age_2_60": 1})
+        self.assertEqual(sum(pulse[key] for key in (
+            "buy_count_ratio_50_to_60pct_other_market_gates_pass",
+            "buy_count_ratio_50_to_60pct_other_market_gates_fail",
+            "buy_count_ratio_50_to_60pct_other_market_gates_unknown")), 3)
 
     def test_fhostage_crash_is_research_only_even_with_more_buys(self):
         address = "DgpKqhvjwtsFUqyuBhaZxtp62nCWwJoKpx77iDUpump"
