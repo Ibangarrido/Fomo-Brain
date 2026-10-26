@@ -20,13 +20,16 @@ class LearningAuditTests(unittest.TestCase):
                   "late": row("ratio compras < 60%", lag=300),
                   "different_pool": row("ratio compras < 60%", same_pair=False),
                   "manual": row("ratio compras < 60%", cohort="manual_after_event")}
-        result = summarize(tokens, now, minimum=2)
+        result = summarize(tokens, now, minimum=1)
         self.assertEqual(result["groups"]["buy_ratio"]["eligible"], 1)
         self.assertEqual(result["groups"]["other"]["eligible"], 1)
         self.assertEqual(result["excluded"]["missing_or_late"], 1)
         self.assertEqual(result["excluded"]["changed_or_unknown_pair"], 1)
         self.assertEqual(result["excluded"]["retrospective"], 1)
         self.assertEqual(result["status"], "EVIDENCE_ONLY")
+        self.assertEqual(result["groups"]["buy_ratio"]["down20_rate"], 0.0)
+        self.assertTrue(result["groups"]["other"]["sample_sufficient"])
+        self.assertEqual(summarize(tokens, now, minimum=20)["status"], "INSUFFICIENT_DATA")
 
 
 if __name__ == "__main__":
