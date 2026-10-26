@@ -108,6 +108,8 @@ class IsolationTests(unittest.TestCase):
             with patch.dict(os.environ, {"BRAIN_CONTROL_LEGACY_ADDRESS": lab.MINT}):
                 keys = brain.isolate_existing_unknowns(state, path, now)
                 self.assertEqual(len(keys), 1)
+                with patch.dict(os.environ, {"BRAIN_CONTROL_LEGACY_ADDRESS": "wrong"}):
+                    self.assertEqual(brain.isolate_existing_unknowns(state, path, now), set())
                 self.assertEqual((state["cash"], state["reserve"], state["closed"]),
                                  (original["cash"], original["reserve"], original["closed"]))
                 state["positions"].append(dict(state["positions"][0], address="new_unknown"))
