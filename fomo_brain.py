@@ -2173,6 +2173,10 @@ def main(refresh_events=True):
                 learning = summarize(audit_state.get("tokens", {}),
                                      datetime.now(timezone.utc), minimum=20)
                 print("APRENDIZAJE PROSPECTIVO " + json.dumps(learning, ensure_ascii=False))
+                from market_structure_audit import report as market_structure_report
+                market_report = market_structure_report(audit_state.get("tokens", {}),
+                                                        datetime.now(timezone.utc))
+                print("ESTRUCTURA MERCADO " + json.dumps(market_report, ensure_ascii=False))
             except Exception as learning_exc:
                 print("APRENDIZAJE PROSPECTIVO ERROR: " + str(learning_exc)
                       + "; carteras conservadas")
