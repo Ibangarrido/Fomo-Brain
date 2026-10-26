@@ -2,6 +2,7 @@ from datetime import datetime, timezone, timedelta
 import json
 import urllib.parse
 import urllib.request
+import urllib.error
 import os
 import math
 import time
@@ -109,7 +110,6 @@ def pedir_json(url):
     )
     # Share one rate budget across discovery and exit-watchdog requests.
     # Retry transient throttling only; never treat HTTP 429 as an empty market.
-    import urllib.error
     for attempt in range(3):
         MARKET_RATE_LIMITER.wait(url)
         try:
