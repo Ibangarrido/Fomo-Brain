@@ -74,6 +74,29 @@ class PairBatchTests(unittest.TestCase):
         report,_=self.run_batch(lambda url: (_ for _ in ()).throw(OSError('failed')))
         self.assertEqual(report['errors'],1);self.assertEqual(report['seeded'],0)
         self.assertEqual(self.ranking,before)
+    def test_trumpdollar_exact_watch_is_discovered_without_generic_search_hit(self):
+        contract = '5Aa378KvCX3bz2dJ3YncoXijBBVvgvipQAXHWaBNNHRw'
+        row = pair(address=contract, pool='trump-pool')
+        def source(url):
+            if '/latest/dex/search/' in url:
+                return {'pairs': []}
+            if '/token-profiles/' in url or '/token-boosts/' in url:
+                return []
+            if '/tokens/v1/solana/' in url:
+                return [row] if contract in url else []
+            if '/token-pairs/v1/' in url:
+                return []
+            raise AssertionError('unexpected provider endpoint: ' + url)
+        with patch.dict(brain.os.environ, {'BRAIN_WATCH_CONTRACTS': 'solana:' + contract}), \\
+             patch.object(brain, 'STUDY_TOKENS', []), \\
+             patch.object(brain, 'cargar_memoria', return_value=[]), \\
+             patch.object(brain, 'pedir_json', side_effect=source), \\
+             contextlib.redirect_stdout(io.StringIO()) as log:
+            pairs, sources = brain.descubrir_pares()
+        self.assertIn(('solana', 'trump-pool'), pairs)
+        self.assertIn('watch:contrato', sources[('solana', 'trump-pool')])
+        self.assertIn('RADAR WATCH solana:' + contract + ' | pares=1', log.getvalue())
+
     def test_request_budget_bounds_candidates_and_chunk_size(self):
         self.ranking=[dict(self.ranking[0],pair='p'+str(i),address='a'+str(i)) for i in range(45)]
         report,getter=self.run_batch(self.fetch(rows=[]))
