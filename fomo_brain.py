@@ -933,6 +933,9 @@ def record_confirmation(state, reference, fresh, now, status, reasons, had_previ
            'reference_receipt_age_seconds': old_age, 'fresh_receipt_age_seconds': fresh_age,
            'receipt_gap_seconds': old_age-fresh_age if old_age is not None and fresh_age is not None else None,
            'price_drift_pct': drift, 'provider_market_age': None,
+           'confirmation_window_seconds': 120 if state.get('continuation_experiment', {}).get('arm') == 'shallow_pullback' else 90,
+           'reference_expired_90s': old_age is not None and old_age > 90,
+           'reference_expired_120s': old_age is not None and old_age > 120,
            'scope': 'local receipt diagnostics only; not eligibility, a fill or provider freshness'}
     state.setdefault('confirmation_audit', []).append(row)
     state['confirmation_audit'] = state['confirmation_audit'][-150:]
