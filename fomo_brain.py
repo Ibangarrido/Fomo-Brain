@@ -1884,6 +1884,17 @@ def descubrir_pares():
 
     # Perfiles no equivalen a todos los lanzamientos ni a una recomendacion.
     requested = dict.fromkeys(STUDY_TOKENS)
+    # Observational watchlist: track exact contracts even when generic searches miss them.
+    # This adds discovery coverage, not a buy signal or a risk-filter exception.
+    for raw in os.getenv("BRAIN_WATCH_CONTRACTS", "").split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        parts = item.split(":", 1)
+        if len(parts) != 2 or not all(parts):
+            print("RADAR WATCH INVALID | expected chain:address")
+            continue
+        requested.setdefault((parts[0].strip(), parts[1].strip()), None)
     if os.getenv("BRAIN_OPPORTUNITY_AUDIT", "0") == "1":
         try:
             from opportunity_audit import watch_targets
