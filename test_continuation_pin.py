@@ -11,7 +11,7 @@ class ContinuationPinTests(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 10, 27, tzinfo=timezone.utc)
         self.path = "fomo_lab_continuation_control_r1.json"
-        self.legacy = {"chain": "solana", "address": "CJYxdC79legacy",
+        self.legacy = {"chain": "solana", "address": "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3",
                        "opened_at": "2026-10-01T00:00:00+00:00",
                        "quote_status": "UNKNOWN", "quantity": 7}
         self.state = {"cash": 98.58, "reserve": 1.08,
@@ -46,6 +46,13 @@ class ContinuationPinTests(unittest.TestCase):
         state["positions"].append(dict(self.legacy, address="new_unknown"))
         self.assertEqual(self.isolate(state, self.legacy["address"]), set())
         self.assertNotIn("unknown_isolation_epoch", state)
+
+    def test_other_wallet_never_inherits_continuation_pin(self):
+        with patch.dict(os.environ, {"BRAIN_UNKNOWN_ISOLATION": "1",
+                                      "BRAIN_CONTROL_LEGACY_ADDRESS": self.legacy["address"]}):
+            self.assertEqual(brain.isolate_existing_unknowns(
+                self.state, "fomo_lab_continuation_50_r1.json", self.now), set())
+        self.assertNotIn("unknown_isolation_epoch", self.state)
 
     def test_epoch_drift_fails_closed(self):
         self.isolate(self.state, self.legacy["address"])
