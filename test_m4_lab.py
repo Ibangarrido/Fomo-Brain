@@ -434,6 +434,29 @@ class M4Tests(unittest.TestCase):
         self.assertTrue(lab.is_quarantined(self.read(lab.RECOVERY)["positions"][0]))
         self.assertFalse(lab.is_quarantined(self.read(lab.CONTROL)["positions"][0]))
 
+    def test_missing_legacy_mint_reports_source_without_reset(self):
+        seed = copy.deepcopy(self.seed)
+        seed["positions"][0]["address"] = "JIFFPOM_MINT"
+        seed["positions"][0]["symbol"] = "JIFFPOM"
+        seed["cash"] = 90.89
+        seed["reserve"] = 0
+        lab.write(lab.SOURCE, seed)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = lab.bootstrap()
+        self.assertIsNone(result)
+        message = output.getvalue()
+        self.assertIn("LAB M4 SIN BASE HISTORICA", message)
+        diagnostic = json.loads(message.split("sin simulacion; ", 1)[1])
+        self.assertEqual(diagnostic["expected_mint"], lab.MINT)
+        self.assertEqual(diagnostic["observed_positions"][0]["address"], "JIFFPOM_MINT")
+        self.assertEqual(diagnostic["cash"], 90.89)
+        self.assertEqual(diagnostic["reserve"], 0)
+        self.assertEqual(diagnostic["next_action"], "reconcile_original_artifact_not_reset")
+        self.assertEqual(self.read(lab.SOURCE), seed)
+        for path in (lab.CONTROL, lab.RECOVERY, lab.MARKER):
+            self.assertFalse(os.path.exists(path))
+
     def test_missing_arm_never_resets_capital(self):
         lab.bootstrap()
         os.remove(lab.RECOVERY)
