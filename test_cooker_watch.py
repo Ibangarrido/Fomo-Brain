@@ -66,6 +66,52 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(state['cursor'], 'a')
         self.assertEqual([e['signature'] for e in state['events']], ['b'])
 
+
+    def test_large_gap_resumes_scan_and_decodes_in_bounded_batches(self):
+        signatures = ['s' + str(i) for i in range(125, 0, -1)] + ['anchor']
+        calls = []
+        def fetch(method, params):
+            if method == 'getTransaction':
+                return transaction()
+            opts = params[1]
+            calls.append(opts.get('before'))
+            offset = signatures.index(opts['before']) + 1 if opts.get('before') else 0
+            return [{'signature': s} for s in signatures[offset:offset+20]]
+        state = {'cursor': 'anchor', 'events': []}
+        collect(state, fetch, lambda _: None)
+        self.assertEqual(state['status'], 'HISTORY_CATCHUP_SCANNING')
+        self.assertEqual(state['cursor'], 'anchor')
+        self.assertEqual(len(state['catchup']['rows']), 100)
+        collect(state, fetch, lambda _: None)
+        self.assertEqual(calls[5], 's26')
+        self.assertEqual(state['status'], 'HISTORY_CATCHUP_DECODING')
+        self.assertEqual(len(state['events']), 20)
+        self.assertEqual(state['cursor'], 'anchor')
+        for _ in range(6):
+            collect(state, fetch, lambda _: None)
+        self.assertEqual(state['status'], 'SYNCED')
+        self.assertEqual(state['cursor'], 's125')
+        self.assertNotIn('catchup', state)
+        self.assertEqual([e['signature'] for e in state['events']],
+                         ['s' + str(i) for i in range(1, 126)])
+        self.assertTrue(all(not e['paper_fill'] for e in state['events']))
+
+    def test_decode_retry_preserves_pending_row_without_duplicate(self):
+        state = {'cursor': 'a', 'events': []}
+        failed = [True]
+        def fetch(method, params):
+            if method == 'getSignaturesForAddress':
+                return [{'signature': s} for s in ['c', 'b', 'a']]
+            if params[0] == 'c' and failed[0]:
+                return None
+            return transaction()
+        with self.assertRaises(ValueError):
+            collect(state, fetch, lambda _: None)
+        failed[0] = False
+        collect(state, fetch, lambda _: None)
+        self.assertEqual(state['cursor'], 'c')
+        self.assertEqual([e['signature'] for e in state['events']], ['b', 'c'])
+
     def test_wrong_wallet(self):
         with self.assertRaises(ValueError):
             collect({'wallet': 'other'})
