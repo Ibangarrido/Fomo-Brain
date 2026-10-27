@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "mode": "paper_research_only",
+  "subject": {
+    "handle": "kimchi1x",
+    "platform": "X",
+    "identity_verification": "pending"
+  },
+  "event_types": [
+    "new_token_mention",
+    "post_deleted",
+    "repost_added",
+    "repost_removed",
+    "profile_bio_changed",
+    "token_launch"
+  ],
+  "watch_contracts": [
+    {
+      "chain": "solana",
+      "address": "CSocnzcRpgSCr1naKcNTieWZUxb6rABe45j844m7pump",
+      "label": "KIMCHI Aura Final Boss",
+      "source": "https://www.bitquery.io/investigations/kimchi-pumpfun-launch-snipers"
+    }
+  ],
+  "safety": {
+    "real_trading": false,
+    "copy_trading": false,
+    "require_verified_source": true,
+    "require_exact_mint": true,
+    "require_fresh_liquidity_and_quote": true,
+    "require_wallet_concentration_check": true,
+    "do_not_override_existing_risk_filters": true
+  },
+  "notes": "Research-only configuration; no automatic social feed or polling is connected. Other KIMCHI tickers must never be conflated with this mint."
+}
