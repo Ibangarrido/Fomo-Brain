@@ -11,7 +11,8 @@ on:
 concurrency:
   group: fomo-brain-state-${{ github.ref }}
   cancel-in-progress: false
-  queue: max
+  # Conservar solo la peticion pendiente mas reciente, sin interrumpir la activa.
+  queue: single
 
 jobs:
   analyze:
