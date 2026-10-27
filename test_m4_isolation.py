@@ -130,6 +130,48 @@ class IsolationTests(unittest.TestCase):
                 self.assertNotIn(("solana", "new_unknown", state["positions"][-1]["opened_at"]), keys)
 
 
+    def test_control_real_coin_cash_preserved_and_new_unknown_still_blocks(self):
+        path = "fomo_lab_continuation_control_r1.json"
+        coin = "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"
+        state = copy.deepcopy(self.seed)
+        state["positions"][0].update(address=coin, symbol="Coin")
+        state["cash"], state["reserve"] = 98.58, 1.08
+        before = copy.deepcopy(state)
+        def run(snapshot, pin):
+            lab.write(path, snapshot)
+            with patch.dict(os.environ, {"BRAIN_UNKNOWN_ISOLATION": "1",
+                                       "BRAIN_CONTROL_LEGACY_ADDRESS": pin}), \\
+                 patch.object(brain, "cotizar_posicion",
+                              side_effect=ValueError("No verified quote")), \\
+                 contextlib.redirect_stdout(io.StringIO()):
+                brain.simular_cartera([], path, label="LAB CONTINUATION control",
+                                      entry_mode="early", min_buy_ratio=.75)
+            return self.read(path)
+        # No pin means the historical unknown remains an active safety blocker.
+        unpinned = run(copy.deepcopy(before), "")
+        self.assertTrue(any("ENTRADAS PAUSADAS" in n
+                            for n in unpinned["last_run_notes"]))
+        self.assertNotIn("unknown_isolation_epoch", unpinned)
+        # Exact pin permits a PAPER-only policy epoch; it is not a sale.
+        isolated = run(copy.deepcopy(before), coin)
+        self.assertFalse(any("ENTRADAS PAUSADAS" in n
+                             for n in isolated["last_run_notes"]))
+        self.assertEqual((isolated["cash"], isolated["reserve"], isolated["closed"]),
+                         (before["cash"], before["reserve"], before["closed"]))
+        self.assertEqual(isolated["positions"][0]["quantity"],
+                         before["positions"][0]["quantity"])
+        self.assertIsNone(isolated["observations"][-1]["estimated_equity"])
+        self.assertEqual(len(isolated["unknown_isolation_epoch"]["positions"]), 1)
+        # A second, later unknown must never be silently isolated.
+        isolated["positions"].append(dict(isolated["positions"][0],
+                                          address="unverified_new_token"))
+        blocked = run(isolated, coin)
+        self.assertTrue(any("ENTRADAS PAUSADAS" in n
+                            for n in blocked["last_run_notes"]))
+        self.assertEqual((blocked["cash"], blocked["reserve"], blocked["closed"]),
+                         (before["cash"], before["reserve"], before["closed"]))
+
+
 if __name__ == '__main__':
     unittest.main()
 
