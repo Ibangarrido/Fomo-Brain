@@ -47,6 +47,7 @@ jobs:
           python test_fomo_v8.py
           python -m unittest -v test_quote_safety.py
           python -m unittest -v test_m4_lab.py
+          python -m unittest -v test_m4_fresh_lab.py
           python -m unittest -v test_exit_watchdog.py
           python -m unittest -v test_social_radar.py
           python test_whale_paper.py
