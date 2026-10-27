@@ -1093,6 +1093,14 @@ def isolate_existing_unknowns(state, path, now):
         if state.get("unknown_isolation_epoch") is None and (
                 len(unknown) != 1 or unknown[0].get("chain") != "solana"
                 or unknown[0].get("address") != pinned):
+            print("CONTROL ISOLATION GUARD BLOCKED " + json.dumps({
+                "reason": "legacy_position_does_not_match_pin",
+                "expected_address": pinned,
+                "observed_unknown": [{"chain": p.get("chain"),
+                                      "address": p.get("address")}
+                                     for p in unknown],
+                "action": "no_isolation_no_accounting_change"},
+                sort_keys=True))
             return set()
     epoch = state.get("unknown_isolation_epoch")
     if os.path.basename(path) == "fomo_lab_continuation_control_r1.json" and epoch is not None:
