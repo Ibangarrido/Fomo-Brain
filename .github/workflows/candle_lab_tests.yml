@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - "m4_lab.py"
+      - "m4_fresh_lab.py"
+      - "test_m4_fresh_lab.py"
       - "test_m4_lab.py"
       - "social_radar.py"
       - "test_social_radar.py"
