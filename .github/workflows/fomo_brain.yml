@@ -51,7 +51,7 @@ jobs:
           python -m unittest -v test_quote_audit.py
           python -m unittest -v test_m4_lab.py
           python -m unittest -v test_m4_isolation.py
-          python -m unittest -v test_opportunity_audit.py
+          python -m unittest -v test_opportunity_audit.py test_trading_learning.py
           python -m unittest -v test_rebound_lab.py
           python -m unittest -v test_targets_lab.py
           python -m unittest -v test_social_radar.py
@@ -118,6 +118,10 @@ jobs:
           trap 'kill -TERM "$whale_pid" "$unipcs_pid" 2>/dev/null || true; wait "$whale_pid" || true; wait "$unipcs_pid" || true' EXIT
           python fomo_brain.py
 
+      - name: Resumir aprendizaje PAPER sin operar
+        if: always()
+        run: python trading_learning.py
+
       - name: Descubrir pools Solana para estudio (sin compras)
         if: always()
         run: python discovery_watch.py
@@ -139,6 +143,7 @@ jobs:
         with:
           name: fomo-memory
           path: |
+            fomo_learning_report_r1.json
             fomo_lab_targets_control_r1.json
             fomo_lab_targets_staged_r1.json
             fomo_lab_targets_start_r1.json
