@@ -225,5 +225,34 @@ class HunterTests(unittest.TestCase):
         self.assertFalse(r["market_gates_pass"])
         self.assertFalse(r["entry_authorized"])
 
+from v13_runner import select_revisits, MAX_REVISIT
+
+class NearMissTests(unittest.TestCase):
+    def row(self, address, **kwargs):
+        row = observe(pair(**kwargs), NOW)
+        row["address"] = address
+        return row
+
+    def test_reserves_slots_under_alert_pressure_without_relaxing_gates(self):
+        near = self.row("near", txns={"m5": {"buys": 28, "sells": 22}})
+        low = self.row("low", priceChange={"m5": 1.5, "h1": 20})
+        alerts = [dict(self.row(str(i)), received_at=(NOW+timedelta(seconds=1)).isoformat())
+                  for i in range(30)]
+        keys, _ = select_revisits([near, low] + alerts, NOW+timedelta(seconds=1))
+        self.assertIn(("solana", "near"), keys)
+        self.assertIn(("solana", "low"), keys)
+        self.assertEqual(len(keys), MAX_REVISIT)
+        self.assertFalse(near["market_gates_pass"])
+        self.assertFalse(low["entry_authorized"])
+
+    def test_stale_multiblocker_and_unknown_never_receive_reserved_slots(self):
+        valid = self.row("valid", txns={"m5": {"buys": 28, "sells": 22}})
+        stale = dict(valid, address="stale", received_at=(NOW-timedelta(hours=2)).isoformat(), discovery_alert=False)
+        multi = dict(valid, address="multi", blockers=valid["blockers"]+["LIQUIDITY_UNVERIFIED_OR_LOW"], discovery_alert=False)
+        unknown = dict(valid, address="unknown", buy_ratio_5m=None, discovery_alert=False)
+        keys, _ = select_revisits([stale, multi, unknown], NOW)
+        self.assertEqual(keys, ())
+
+
 if __name__ == "__main__":
     unittest.main()
