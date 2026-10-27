@@ -293,7 +293,15 @@ def bootstrap():
                and p.get("address") == MINT and p.get("quote_status") != "OK"]
     if len(targets) != 1:
         # No inventar ni reiniciar una cartera histórica si falta el activo heredado.
-        print("LAB M4 SIN BASE HISTORICA: se esperaban 1 M4 heredada sin cotizacion; encontradas " + str(len(targets)) + "; carteras intactas; sin simulacion")
+        observed = [{"chain": p.get("chain"), "address": p.get("address"),
+                     "symbol": p.get("symbol"), "quote_status": p.get("quote_status")}
+                    for p in seed.get("positions", [])]
+        print("LAB M4 SIN BASE HISTORICA: se esperaban 1 M4 heredada sin cotizacion; encontradas "
+              + str(len(targets)) + "; carteras intactas; sin simulacion; "
+              + json.dumps({"expected_mint": MINT, "observed_positions": observed,
+                            "cash": seed.get("cash"), "reserve": seed.get("reserve"),
+                            "next_action": "reconcile_original_artifact_not_reset"},
+                           allow_nan=False))
         return None
     known = seed["cash"] + seed["reserve"] + sum(
         p["mark_net"] for p in seed["positions"] if p.get("quote_status") == "OK")
