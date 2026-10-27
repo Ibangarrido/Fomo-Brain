@@ -1074,14 +1074,32 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 UNKNOWN_ISOLATION_FILES = {
     "fomo_paper_v10.json", "fomo_paper_v10_impulse.json",
     "fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json",
+    "fomo_lab_continuation_control_r1.json",
 }
 
 
 def isolate_existing_unknowns(state, path, now):
-    """One PAPER policy epoch; later unknown positions still block entries."""
+    """Pin CONTINUATION's inherited unknown; never isolate a new unknown."""
+    basename = os.path.basename(path)
     if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "0") != "1"
-            or os.path.basename(path) not in UNKNOWN_ISOLATION_FILES):
+            or basename not in UNKNOWN_ISOLATION_FILES):
         return set()
+    if basename == "fomo_lab_continuation_control_r1.json":
+        pinned = os.getenv("BRAIN_CONTROL_LEGACY_ADDRESS", "").strip()
+        if not pinned:
+            return set()
+        epoch = state.get("unknown_isolation_epoch")
+        if epoch is None:
+            unknown = [p for p in state["positions"] if p.get("quote_status") != "OK"]
+            if (len(unknown) != 1 or unknown[0].get("chain") != "solana"
+                    or unknown[0].get("address") != pinned):
+                return set()
+        else:
+            keys = epoch.get("positions")
+            if (not isinstance(keys, list) or len(keys) != 1
+                    or not isinstance(keys[0], (list, tuple)) or len(keys[0]) != 3
+                    or keys[0][0] != "solana" or keys[0][1] != pinned):
+                return set()
     epoch = state.get("unknown_isolation_epoch")
     if epoch is None:
         keys = [[p.get("chain"), p.get("address"), p.get("opened_at")]
@@ -1092,7 +1110,6 @@ def isolate_existing_unknowns(state, path, now):
                  "comparison": "new policy epoch; not an unchanged-policy comparison"}
         state["unknown_isolation_epoch"] = epoch
     return {tuple(key) for key in epoch["positions"]}
-
 
 @measure_wallet_latency
 @wallet_transaction
