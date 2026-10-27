@@ -95,6 +95,16 @@ class IsolationTests(unittest.TestCase):
         self.assertTrue(any('FRENO V10' in n for n in state['last_run_notes']))
 
 
+    def test_control_workflow_pins_exact_legacy_contract(self):
+        from pathlib import Path
+        workflow = Path(__file__).resolve().parent / ".github/workflows/fomo_brain.yml"
+        source = workflow.read_text(encoding="utf-8")
+        self.assertIn('BRAIN_UNKNOWN_ISOLATION: "1"', source)
+        self.assertIn(
+            'BRAIN_CONTROL_LEGACY_ADDRESS: "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"',
+            source,
+        )
+
     def test_control_requires_pinned_legacy_and_preserves_cash(self):
         path = "fomo_lab_continuation_control_r1.json"
         state = copy.deepcopy(self.seed)
