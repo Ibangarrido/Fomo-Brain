@@ -71,37 +71,60 @@ def collect(state, fetch=rpc, pause=time.sleep):
                  paper_entries_enabled=False, checked_at=stamp())
     state.setdefault('events', [])
     cursor = state.get('cursor')
-    rows, before, found = [], None, False
-    for _ in range(5):
-        opts = {'limit': 20, 'commitment': 'finalized'}
-        if before:
-            opts['before'] = before
-        page = fetch('getSignaturesForAddress', [WALLET, opts])
-        if not isinstance(page, list):
-            raise ValueError('Invalid signatures response')
-        if not cursor:
-            if page:
-                state['cursor'] = page[0]['signature']
-                state['started_at'] = stamp()
-            state['status'] = 'BASELINE_SET' if page else 'WAITING_FOR_BASELINE'
-            state['new_events'] = 0
-            return state
-        for row in page:
-            if row['signature'] == cursor:
-                found = True
+    # Resume a bounded history scan across runs instead of restarting at the
+    # newest 100 signatures forever. Never rebaseline an existing cursor.
+    pending = state.setdefault('catchup', {
+        'cursor': cursor, 'rows': [], 'before': None, 'found': False})
+    if pending.get('cursor') != cursor:
+        raise ValueError('Catchup cursor mismatch; refusing to skip history')
+    rows = pending['rows']
+    if not pending['found']:
+        for _ in range(5):
+            opts = {'limit': 20, 'commitment': 'finalized'}
+            if pending['before']:
+                opts['before'] = pending['before']
+            page = fetch('getSignaturesForAddress', [WALLET, opts])
+            if not isinstance(page, list):
+                raise ValueError('Invalid signatures response')
+            if not cursor:
+                if page:
+                    state['cursor'] = page[0]['signature']
+                    state['started_at'] = stamp()
+                state.pop('catchup', None)
+                state['status'] = 'BASELINE_SET' if page else 'WAITING_FOR_BASELINE'
+                state['new_events'] = 0
+                return state
+            seen_rows = {r['signature'] for r in rows}
+            for row in page:
+                if row['signature'] == cursor:
+                    pending['found'] = True
+                    break
+                if row['signature'] not in seen_rows:
+                    rows.append(row)
+                    seen_rows.add(row['signature'])
+            if pending['found']:
                 break
-            rows.append(row)
-        if found or len(page) < 20:
-            break
-        before = page[-1]['signature']
-        pause(1)
-    if not found:
-        state.update(status='HISTORY_GAP_CURSOR_RETAINED', new_events=0)
-        return state
+            if len(page) < 20:
+                state.update(status='HISTORY_GAP_CURSOR_RETAINED', new_events=0)
+                return state
+            next_before = page[-1]['signature']
+            if next_before == pending['before']:
+                raise ValueError('History pagination did not advance')
+            pending['before'] = next_before
+            pause(1)
+        if not pending['found']:
+            state.update(status='HISTORY_CATCHUP_SCANNING', new_events=0,
+                         pending_signatures=len(rows))
+            return state
+        pending['newest'] = rows[0]['signature'] if rows else cursor
     seen = {e['signature'] for e in state['events']}
     count = 0
-    for row in reversed(rows):
+    # Decode oldest first, at most 20 per run. On error, keep the failed row
+    # and completed events so a retry neither skips nor duplicates a receipt.
+    while rows and count < 20:
+        row = rows[-1]
         if row['signature'] in seen:
+            rows.pop()
             continue
         pause(1)
         tx = fetch('getTransaction', [row['signature'], {
@@ -109,12 +132,17 @@ def collect(state, fetch=rpc, pause=time.sleep):
         event = classify(tx, row['signature'])
         state['events'].append(event)
         seen.add(row['signature'])
+        rows.pop()
         count += 1
-    # Advance only after every transaction is decoded. On error, retry next run.
-    if rows:
-        state['cursor'] = rows[0]['signature']
     state['events'] = state['events'][-5000:]
-    state.update(status='SYNCED', new_events=count, last_success_at=stamp())
+    state.update(new_events=count, pending_signatures=len(rows))
+    if rows:
+        state['status'] = 'HISTORY_CATCHUP_DECODING'
+    else:
+        state['cursor'] = pending['newest']
+        state.pop('catchup', None)
+        state.update(status='SYNCED', last_success_at=stamp())
+        state.pop('error_type', None)
     return state
 
 
