@@ -23,6 +23,27 @@ class LearningReportTests(unittest.TestCase):
         self.assertEqual(report["requalified_market_only_same_pair"], 1)
         self.assertEqual(report["real_orders"], 0)
 
+    def test_rejection_reasons_and_15_minute_second_look(self):
+        state = {"tokens": {
+            "a": {"cohort": "automatic_prospective",
+                  "first": {"entry_rejections": ["CONTROL | liquidity low"]},
+                  "second_look_history": [{"market_gates_pass": True,
+                      "minutes_since_rejection": 12,
+                      "checks": {"same_pair_as_rejection": True}}]},
+            "b": {"cohort": "automatic_prospective",
+                  "first": {"entry_rejections": ["CONTROL | liquidity low"]},
+                  "second_look_history": []},
+            "c": {"cohort": "automatic_prospective",
+                  "first": {"entry_rejections": ["CONTROL | ratio low"]},
+                  "second_look_history": [{"market_gates_pass": True,
+                      "minutes_since_rejection": 3,
+                      "checks": {"same_pair_as_rejection": False}}]}
+        }}
+        report = summarize(state)
+        self.assertEqual(report["requalified_within_15m_same_pair"], 1)
+        self.assertEqual(report["missing_second_look"], 1)
+        self.assertEqual(report["rejection_reason_occurrences"]["liquidity low"], 2)
+
     def test_missing_data_does_not_count_as_requalified(self):
         self.assertEqual(summarize({"tokens": {"x": {
             "cohort": "automatic_prospective",
