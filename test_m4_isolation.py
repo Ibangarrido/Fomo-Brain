@@ -139,11 +139,13 @@ class IsolationTests(unittest.TestCase):
         before = copy.deepcopy(state)
         def run(snapshot, pin):
             lab.write(path, snapshot)
-            with patch.dict(os.environ, {"BRAIN_UNKNOWN_ISOLATION": "1",
-                                       "BRAIN_CONTROL_LEGACY_ADDRESS": pin}), \\
-                 patch.object(brain, "cotizar_posicion",
-                              side_effect=ValueError("No verified quote")), \\
-                 contextlib.redirect_stdout(io.StringIO()):
+            with (
+                patch.dict(os.environ, {"BRAIN_UNKNOWN_ISOLATION": "1",
+                                       "BRAIN_CONTROL_LEGACY_ADDRESS": pin}),
+                patch.object(brain, "cotizar_posicion",
+                             side_effect=ValueError("No verified quote")),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 brain.simular_cartera([], path, label="LAB CONTINUATION control",
                                       entry_mode="early", min_buy_ratio=.75)
             return self.read(path)
