@@ -130,6 +130,28 @@ class IsolationTests(unittest.TestCase):
                 self.assertNotIn(("solana", "new_unknown", state["positions"][-1]["opened_at"]), keys)
 
 
+    def test_control_observed_coin_pin_drift_blocks_without_mutating_accounting(self):
+        # Observed in run #2338 on 2026-10-27; do not silently repin a
+        # historical wallet based on a symbol shared by different contracts.
+        path = "fomo_lab_continuation_control_r1.json"
+        observed_coin = "BGReQ4GxD1Dq5TNbNbcCZ9K1Vk9eAKTZNTFZPXgRbxF9"
+        stale_pin = "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"
+        state = copy.deepcopy(self.seed)
+        state["positions"][0].update(address=observed_coin, symbol="Coin",
+                                     quote_status="NO_VERIFICABLE")
+        state["cash"], state["reserve"] = 98.58, 1.08
+        original = copy.deepcopy(state)
+        output = io.StringIO()
+        with patch.dict(os.environ, {"BRAIN_UNKNOWN_ISOLATION": "1",
+                                      "BRAIN_CONTROL_LEGACY_ADDRESS": stale_pin}), contextlib.redirect_stdout(output):
+            isolated = brain.isolate_existing_unknowns(state, path, datetime.now(timezone.utc))
+        self.assertEqual(isolated, set())
+        self.assertEqual(state, original)
+        self.assertNotIn("unknown_isolation_epoch", state)
+        self.assertIn("CONTROL ISOLATION GUARD BLOCKED", output.getvalue())
+        self.assertIn(observed_coin, output.getvalue())
+        self.assertIn(stale_pin, output.getvalue())
+
     def test_control_real_coin_cash_preserved_and_new_unknown_still_blocks(self):
         path = "fomo_lab_continuation_control_r1.json"
         coin = "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"
