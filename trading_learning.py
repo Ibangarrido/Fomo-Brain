@@ -1,6 +1,7 @@
 """Research-only report: quantify rejected-token second looks without trading."""
 import json
 import os
+from memecoin_trap_research import assess
 
 SOURCE = "fomo_opportunity_audit_r1.json"
 OUTPUT = "fomo_learning_report_r1.json"
@@ -14,12 +15,20 @@ def summarize(state):
     first_blockers = {}
     requalified_within_15m = 0
     missing_second_look = 0
+    trap_flags = {}
+    trap_evaluable = 0
     for row in rows:
         first = row.get("first") or {}
         for rejection in first.get("entry_rejections") or []:
             reason = str(rejection).split(" | ", 1)[-1][:120]
             first_blockers[reason] = first_blockers.get(reason, 0) + 1
         history = row.get("second_look_history") or []
+        # Only evaluate a raw pair snapshot when it exists; do not invent market data.
+        raw_pair = row.get("last_raw_pair")
+        if isinstance(raw_pair, dict):
+            trap_evaluable += 1
+            for flag in assess(raw_pair)["risk_flags"]:
+                trap_flags[flag] = trap_flags.get(flag, 0) + 1
         matching = [h for h in history if h.get("market_gates_pass") is True
                     and h.get("checks", {}).get("same_pair_as_rejection") is True]
         if not history:
@@ -36,6 +45,8 @@ def summarize(state):
         "requalified_market_only_same_pair": len(requalified),
         "requalified_within_15m_same_pair": requalified_within_15m,
         "missing_second_look": missing_second_look,
+        "trap_snapshots_evaluable": trap_evaluable,
+        "trap_flag_counts": trap_flags,
         "rejection_reason_occurrences": dict(sorted(first_blockers.items(), key=lambda kv: (-kv[1], kv[0]))[:15]),
         "unverified_full_eligibility": True,
         "real_orders": 0,
