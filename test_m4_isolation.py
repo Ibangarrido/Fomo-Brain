@@ -135,6 +135,7 @@ class IsolationTests(unittest.TestCase):
         coin = "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"
         state = copy.deepcopy(self.seed)
         state["positions"][0].update(address=coin, symbol="Coin")
+        state["continuation_experiment"] = {"version": "continuation-r1", "arm": "control"}
         state["cash"], state["reserve"] = 98.58, 1.08
         before = copy.deepcopy(state)
         def run(snapshot, pin):
