@@ -51,7 +51,7 @@ jobs:
           python -m unittest -v test_quote_audit.py
           python -m unittest -v test_m4_lab.py
           python -m unittest -v test_m4_isolation.py
-          python -m unittest -v test_opportunity_audit.py test_trading_learning.py
+          python -m unittest -v test_opportunity_audit.py test_trading_learning.py test_memecoin_trap_research.py
           python -m unittest -v test_rebound_lab.py
           python -m unittest -v test_targets_lab.py
           python -m unittest -v test_social_radar.py
