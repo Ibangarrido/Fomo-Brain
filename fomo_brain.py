@@ -2137,6 +2137,12 @@ def main(refresh_events=True):
             run_m4_lab(ranking, simular_cartera)
         except Exception as exc:
             print("LAB M4 ERROR: " + str(exc) + "; historiales originales conservados")
+    if os.getenv("BRAIN_M4_FRESH_LAB", "0") == "1":
+        try:
+            from m4_fresh_lab import run as run_m4_fresh
+            run_m4_fresh(ranking, simular_cartera)
+        except Exception as exc:
+            print("LAB M4 FRESH ERROR: " + str(exc) + "; historiales originales conservados")
     if os.getenv("BRAIN_REBOUND_LAB", "0") == "1":
         try:
             from rebound_lab import run as run_rebound_lab
