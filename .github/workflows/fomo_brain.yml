@@ -58,6 +58,7 @@ jobs:
           python -m unittest -v test_targets_lab.py
           python -m unittest -v test_social_radar.py
           python -m unittest -v test_continuation_lab.py
+          python -m unittest -v test_continuation_pin.py
           python -m unittest -v test_pair_batch.py
           python -m unittest -v test_discovery_watch.py
           python -m unittest -v test_source_health.py
