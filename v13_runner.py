@@ -37,6 +37,7 @@ WATCH = (("solana", "6vwkHvvoJujaPy6SWdjqE2fFc1V3AW6pj6KTh9jipump"),
          ("bsc", "0xb10b2c022a717a66fa627c9c9ce73779b5347777"))
 MAX_HISTORY = 120000
 MAX_REVISIT = 18
+MAX_NEAR_MISS_REVISIT = 6
 MAX_DORMANT_REVISIT = 12
 
 def fetch(url):
@@ -118,12 +119,22 @@ def select_revisits(prior, now):
             continue
         if key not in latest or stamp > latest[key][0]:
             latest[key] = (stamp, row)
-    alerts, quiet = [], []
+    alerts, quiet, near_misses = [], [], []
     for key, (stamp, row) in latest.items():
         if (row.get("discovery_alert") or row.get("trend_watch") or
             row.get("continuation_watch") or row.get("mature_watch") or
             row.get("dormant_wakeup_watch")):
             alerts.append((stamp, key))
+        # Research follow-up only: unknown safety fields never pass.
+        blockers = row.get("blockers", [])
+        ratio = row.get("buy_ratio_5m")
+        momentum = row.get("change_5m_pct")
+        if (now - stamp <= timedelta(hours=1) and (
+                (blockers == ["BUY_PRESSURE_UNVERIFIED_OR_LOW"]
+                 and isinstance(ratio, (int, float)) and .55 <= ratio < .60)
+                or (blockers == ["MOMENTUM_OUT_OF_RANGE"]
+                    and isinstance(momentum, (int, float)) and 1 <= momentum < 2))):
+            near_misses.append((stamp, key))
         if (row.get("volume_5m_usd") is not None and
             0 <= row["volume_5m_usd"] <= 1000 and
             row.get("trades_5m") is not None and
@@ -137,7 +148,11 @@ def select_revisits(prior, now):
             quiet.append((stamp, key))
     alerts.sort(reverse=True)
     quiet.sort(reverse=True)
-    active = [key for _, key in alerts[:MAX_REVISIT]]
+    # Reserve six existing slots; unused slots return to alerts.
+    # Total request budget stays unchanged.
+    near_misses.sort(reverse=True)
+    active = [key for _, key in near_misses[:MAX_NEAR_MISS_REVISIT]]
+    active += [key for _, key in alerts if key not in active][:MAX_REVISIT-len(active)]
     dormant = [key for _, key in quiet if key not in active][:MAX_DORMANT_REVISIT]
     return tuple(active + dormant), len(dormant)
 
