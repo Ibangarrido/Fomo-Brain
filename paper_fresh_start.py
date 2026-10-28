@@ -36,7 +36,7 @@ def initialize(name, directory=".", now=None):
         json.dump(state, handle, indent=2, ensure_ascii=False)
     return path
 
-def resume_or_initialize(directory="."):
+def resume_or_initialize(directory=".", *, allow_initialize=False):
     """Never overwrite a cohort, and refuse incomplete/corrupt restoration."""
     paths = {name: os.path.join(directory, filename) for name, filename in WALLETS.items()}
     present = {name: os.path.lexists(path) for name, path in paths.items()}
@@ -58,6 +58,8 @@ def resume_or_initialize(directory="."):
                                for k in ("cash", "reserve"))):
                 raise ValueError("Invalid PAPER r2 state; do not overwrite")
         return "RESUMED"
+    if not allow_initialize:
+        raise ValueError("PAPER r2 state missing; explicit first-run bootstrap required")
     for name in WALLETS:
         initialize(name, directory)
     return "INITIALIZED"
