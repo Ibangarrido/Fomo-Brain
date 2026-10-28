@@ -275,13 +275,20 @@ jobs:
         run: python -m unittest -v test_gmgn_readonly.py test_gmgn_paper.py
       - name: Verificar reinicio PAPER r2 sin red
         run: python -m unittest -v test_paper_fresh_start.py
-      - name: Inicializar carteras PAPER r2 independientes
+      - name: Restaurar carteras PAPER r2 de esta rama
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: fomo_brain.yml
+          branch: ${{ github.ref_name }}
+          name: paper-r2-state
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: ignore
+      - name: Inicializar o reanudar carteras PAPER r2
         run: |
           python - <<'PY'
-          from paper_fresh_start import initialize
-          for name in ("m4_fresh", "continuation_control"):
-              path = initialize(name)
-              print("PAPER R2 INITIALIZED", path)
+          from paper_fresh_start import resume_or_initialize
+          print("PAPER R2", resume_or_initialize())
           PY
       - name: Recuperar cartera virtual GMGN
         uses: dawidd6/action-download-artifact@v11
@@ -302,7 +309,8 @@ jobs:
       - name: Publicar carteras PAPER r2 iniciales
         uses: actions/upload-artifact@v4
         with:
-          name: paper-r2-initial-${{ github.run_id }}
+          name: paper-r2-state
+          overwrite: true
           path: |
             fomo_lab_m4_fresh_r2.json
             fomo_lab_continuation_control_r2.json
