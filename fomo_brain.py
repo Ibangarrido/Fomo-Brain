@@ -1074,6 +1074,7 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 UNKNOWN_ISOLATION_FILES = {
     "fomo_paper_v10.json", "fomo_paper_v10_impulse.json",
     "fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json",
+    "fomo_lab_continuation_control_r1.json",
 }
 
 
@@ -1362,9 +1363,8 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 # token was already traded, slots are full, or cash is short.
                 other_blockers = (
                     key in state["seen"] or key in closed_this_run
-                    or sum(not (isolated_m4 and is_quarantined(p)
-                               and p.get("quote_status") != "OK")
-                           for p in state["positions"]) >= 3
+                    or sum(not ((isolated_m4 and is_quarantined(p) and p.get("quote_status") != "OK")
+                       or (p.get("chain"), p.get("address"), p.get("opened_at")) in isolated_unknowns) for p in state["positions"]) >= 3
                     or state["cash"] < entry_budget
                 )
                 if other_blockers:
