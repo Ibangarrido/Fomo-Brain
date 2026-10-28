@@ -1,4 +1,12 @@
 import copy
+import contextlib
+import io
+import json
+import tempfile
+from datetime import timedelta
+
+import continuation_lab as lab
+from test_fomo_v8 import pair
 import os
 import unittest
 from datetime import datetime, timezone
@@ -69,6 +77,61 @@ class ContinuationPinTests(unittest.TestCase):
         self.assertEqual(self.state["cash"], 98.58)
         self.assertEqual(self.state["reserve"], 1.08)
         self.assertEqual(len(self.state["closed"]), 1)
+
+    def test_full_paper_entry_with_legacy_unknown_keeps_ledger(self):
+        """Offline integration: real simulator decision, mocked market, no trading."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                lab.bootstrap()
+                path = lab.ARMS["control"][0]
+                raw = pair(address="control_fixture", pool="control_pair",
+                           liquidity=25000, price=1)
+                raw["_brain_received_at"] = datetime.now(timezone.utc).isoformat()
+                token = brain.analizar_par(raw)
+                self.assertIsNotNone(token)
+                old = dict(token, received_at=(datetime.now(timezone.utc) -
+                           timedelta(seconds=60)).isoformat())
+                with open(path) as f:
+                    state = json.load(f)
+                legacy = dict(self.legacy, symbol="Coin", pair="legacy_pair",
+                              budget=5, entry_price=1, last_quote_at=old["received_at"])
+                state.update(cash=98.58, reserve=1.08,
+                             positions=[legacy],
+                             closed=[{"profit": .70}, {"profit": .70}, {"profit": .77}],
+                             recovery_pending_signals={
+                                 token["chain"] + ":" + token["address"]: old})
+                with open(path, "w") as f:
+                    json.dump(state, f)
+                def offline_quote(pos):
+                    if pos["address"] == legacy["address"]:
+                        raise ValueError("Sin par verificable del mismo contrato y cadena")
+                    return (1, 25000, raw)
+                with (patch.dict(os.environ, {
+                          "BRAIN_UNKNOWN_ISOLATION": "1",
+                          "BRAIN_CONTROL_LEGACY_ADDRESS": legacy["address"],
+                          "BRAIN_QUOTE_GUARD": "0"}),
+                      patch.object(brain, "cotizar_posicion", side_effect=offline_quote),
+                      patch.object(brain, "pedir_json",
+                                   side_effect=AssertionError("No network allowed")),
+                      contextlib.redirect_stdout(io.StringIO())):
+                    brain.simular_cartera([token], path, entry_mode="early",
+                                         min_buy_ratio=.75)
+                with open(path) as f:
+                    after = json.load(f)
+                self.assertEqual(len(after["positions"]), 2)
+                self.assertEqual(after["positions"][0]["address"], legacy["address"])
+                self.assertEqual(after["positions"][0]["quote_status"], "NO VERIFICABLE")
+                self.assertEqual(after["positions"][1]["address"], token["address"])
+                self.assertEqual(after["cash"], 93.58)
+                self.assertEqual(after["reserve"], 1.08)
+                self.assertEqual(after["closed"], state["closed"])
+                self.assertEqual(after["last_entry_audit"]["entered"], 1)
+                self.assertIsNone(after["observations"][-1]["estimated_equity"])
+                self.assertEqual(len(after["unknown_isolation_epoch"]["positions"]), 1)
+            finally:
+                os.chdir(cwd)
 
     def test_epoch_drift_fails_closed(self):
         self.isolate(self.state, self.legacy["address"])
