@@ -1542,8 +1542,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                      + f" | precio={price} | liquidez={fresh['liquidity']:.0f}"
                      + f" | trades5m={fresh['trades5m']} | compras={fresh['buyRatio5m']:.1%}"
                      + f" | volumen5m={fresh['vol5m']:.0f} | cambio5m={fresh['change5m']:.2f}%")
-    equity = (state["cash"] + state["reserve"]
-              + sum(p["mark_net"] for p in state["positions"]))
+    # A legacy unquoted position may have no mark_net at all. Never invent a
+    # zero-valued mark or turn an unknown holding into verified equity.
+    marks = [p.get("mark_net") for p in state["positions"]]
+    equity = (state["cash"] + state["reserve"] + sum(marks)
+              if all(isinstance(mark, (int, float)) and math.isfinite(mark)
+                     for mark in marks) else None)
     stale = sum(p["quote_status"] != "OK" for p in state["positions"])
     realized = sum(x["profit"] for x in state["closed"])
     known_value = state["cash"] + state["reserve"] + sum(
