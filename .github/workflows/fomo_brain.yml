@@ -102,6 +102,9 @@ jobs:
           BRAIN_M4_FRESH_LAB: "1"
           BRAIN_M4_ISOLATION: "1"
           BRAIN_UNKNOWN_ISOLATION: "1"
+          # Only these exact inherited PAPER contracts may be isolated.
+          BRAIN_CONTROL_LEGACY_ADDRESS: "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"
+          BRAIN_PATTERN_LEGACY_ADDRESS: "9DGb9TWswLUqu85reo2kNoZkKkME9nB9YVfjYkqopump"
           BRAIN_OPPORTUNITY_AUDIT: "1"
           BRAIN_REBOUND_LAB: "1"
           BRAIN_TARGETS_LAB: "1"
