@@ -91,7 +91,7 @@ class ContinuationPinTests(unittest.TestCase):
                 raw["_brain_received_at"] = datetime.now(timezone.utc).isoformat()
                 token = brain.analizar_par(raw)
                 self.assertIsNotNone(token)
-                old = dict(token, received_at=(datetime.now(timezone.utc) -
+                old = dict(token, price=.98, received_at=(datetime.now(timezone.utc) -
                            timedelta(seconds=60)).isoformat())
                 with open(path) as f:
                     state = json.load(f)
