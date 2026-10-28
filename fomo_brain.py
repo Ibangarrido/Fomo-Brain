@@ -1074,6 +1074,7 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 UNKNOWN_ISOLATION_FILES = {
     "fomo_paper_v10.json", "fomo_paper_v10_impulse.json",
     "fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json",
+    "fomo_lab_continuation_control_r1.json", "fomo_lab_pattern_pullback_r1.json",
 }
 
 
@@ -1328,6 +1329,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
     cash_only_unknowns = bool(isolated_unknowns)
     if cash_only_unknowns:
         notes.append("PAPER: posiciones desconocidas heredadas aisladas; sin venta ni efectivo recuperado")
+    def active_position_slots():
+        """Legacy unknowns isolated in the policy epoch do not consume new PAPER slots."""
+        return sum(not ((p.get("chain"), p.get("address"), p.get("opened_at")) in isolated_unknowns
+                        or (isolated_m4 and is_quarantined(p) and p.get("quote_status") != "OK"))
+                   for p in state["positions"])
+
     quotes_blocked = any(p["quote_status"] != "OK" and
                         (p.get("chain"), p.get("address"), p.get("opened_at")) not in isolated_unknowns and not
                         (isolated_m4 and is_quarantined(p)) for p in state["positions"])
@@ -1352,8 +1359,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                   "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
                   "token ya operado" if key in state["seen"] or key in closed_this_run else
-                  "maximo 3 posiciones" if sum(not (isolated_m4 and is_quarantined(p)
-                      and p.get("quote_status") != "OK") for p in state["positions"]) >= 3 else
+                  "maximo 3 posiciones" if active_position_slots() >= 3 else
                   f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
             if reason == "cartera sin valoracion completa":
@@ -1362,9 +1368,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 # token was already traded, slots are full, or cash is short.
                 other_blockers = (
                     key in state["seen"] or key in closed_this_run
-                    or sum(not (isolated_m4 and is_quarantined(p)
-                               and p.get("quote_status") != "OK")
-                           for p in state["positions"]) >= 3
+                    or active_position_slots() >= 3
                     or state["cash"] < entry_budget
                 )
                 if other_blockers:
