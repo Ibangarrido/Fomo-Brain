@@ -121,7 +121,7 @@ jobs:
           WHALE_TRADER=unipcs python whale_paper.py &
           unipcs_pid=$!
           trap 'kill -TERM "$whale_pid" "$unipcs_pid" 2>/dev/null || true; wait "$whale_pid" || true; wait "$unipcs_pid" || true' EXIT
-          python fomo_brain.py
+          python brain_paper_entry.py
 
       - name: Descubrir pools Solana para estudio (sin compras)
         if: always()
