@@ -1096,7 +1096,27 @@ def isolate_existing_unknowns(state, path, now):
     if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "0") != "1"
             or os.path.basename(path) not in UNKNOWN_ISOLATION_FILES):
         return set()
+    basename = os.path.basename(path)
+    pinned_env = {
+        "fomo_lab_continuation_control_r1.json": "BRAIN_CONTROL_LEGACY_ADDRESS",
+        "fomo_lab_pattern_pullback_r1.json": "BRAIN_PATTERN_LEGACY_ADDRESS",
+    }.get(basename)
     epoch = state.get("unknown_isolation_epoch")
+    if pinned_env:
+        pinned = os.getenv(pinned_env, "").strip()
+        if not pinned:
+            return set()
+        if epoch is None:
+            unknown = [p for p in state["positions"] if p.get("quote_status") != "OK"]
+            if (len(unknown) != 1 or unknown[0].get("chain") != "solana"
+                    or unknown[0].get("address") != pinned):
+                return set()
+        else:
+            keys = epoch.get("positions")
+            if (not isinstance(keys, list) or len(keys) != 1
+                    or not isinstance(keys[0], (list, tuple)) or len(keys[0]) != 3
+                    or keys[0][0] != "solana" or keys[0][1] != pinned):
+                return set()
     if epoch is None:
         keys = [[p.get("chain"), p.get("address"), p.get("opened_at")]
                 for p in state["positions"] if p.get("quote_status") != "OK"]
