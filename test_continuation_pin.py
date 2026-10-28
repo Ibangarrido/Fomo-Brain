@@ -54,6 +54,22 @@ class ContinuationPinTests(unittest.TestCase):
                 self.state, "fomo_lab_continuation_50_r1.json", self.now), set())
         self.assertNotIn("unknown_isolation_epoch", self.state)
 
+    def test_isolated_legacy_does_not_consume_paper_slot(self):
+        keys = self.isolate(self.state, self.legacy["address"])
+        self.assertEqual(brain.active_paper_slots(self.state["positions"], keys), 0)
+        self.state["positions"].append(dict(self.legacy, address="new_unknown"))
+        self.assertEqual(brain.active_paper_slots(self.state["positions"], keys), 1)
+        self.assertEqual(brain.active_paper_slots(self.state["positions"], set()), 2)
+
+    def test_three_new_positions_exhaust_capacity(self):
+        keys = self.isolate(self.state, self.legacy["address"])
+        for i in range(3):
+            self.state["positions"].append(dict(self.legacy, address=f"new_{i}", quote_status="OK"))
+        self.assertEqual(brain.active_paper_slots(self.state["positions"], keys), 3)
+        self.assertEqual(self.state["cash"], 98.58)
+        self.assertEqual(self.state["reserve"], 1.08)
+        self.assertEqual(len(self.state["closed"]), 1)
+
     def test_epoch_drift_fails_closed(self):
         self.isolate(self.state, self.legacy["address"])
         self.assertEqual(self.isolate(self.state, "different"), set())
