@@ -3,6 +3,12 @@ name: FOMO Brain
 on:
   # Respaldo manual y punto de entrada para un reloj externo fiable.
   workflow_dispatch:
+    inputs:
+      paper_r2_bootstrap:
+        description: "Explicit first initialization of two PAPER r2 wallets; never use for restoring history"
+        required: false
+        type: boolean
+        default: false
 
   # Respaldo nativo de GitHub. Puede sufrir retrasos o saltos bajo carga.
   schedule:
@@ -273,6 +279,27 @@ jobs:
           python-version: "3.12"
       - name: Validar lector GMGN sin red
         run: python -m unittest -v test_gmgn_readonly.py test_gmgn_paper.py
+      - name: Verificar reinicio PAPER r2 sin red
+        run: python -m unittest -v test_paper_fresh_start.py
+      - name: Restaurar carteras PAPER r2 de esta rama
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: fomo_brain.yml
+          branch: ${{ github.ref_name }}
+          name: paper-r2-state
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: ignore
+      - name: Inicializar o reanudar carteras PAPER r2
+        env:
+          BRAIN_PAPER_R2_BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.paper_r2_bootstrap && '1' || '0' }}
+        run: |
+          python - <<'PY'
+          import os
+          from paper_fresh_start import resume_or_initialize
+          print("PAPER R2", resume_or_initialize(
+              allow_initialize=os.getenv("BRAIN_PAPER_R2_BOOTSTRAP") == "1"))
+          PY
       - name: Recuperar cartera virtual GMGN
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -289,6 +316,15 @@ jobs:
       - name: Auditar disponibilidad GMGN sin red
         if: always()
         run: python source_health.py --source gmgn --output source_health_gmgn.json
+      - name: Publicar carteras PAPER r2 iniciales
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-r2-state
+          overwrite: true
+          path: |
+            fomo_lab_m4_fresh_r2.json
+            fomo_lab_continuation_control_r2.json
+          retention-days: 30
       - name: Guardar diagnostico GMGN
         uses: actions/upload-artifact@v4
         with:

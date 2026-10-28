@@ -28,6 +28,9 @@ on:
       - "whale_paper.py"
       - "test_whale_paper.py"
       - ".github/workflows/candle_lab_tests.yml"
+      - "paper_fresh_start.py"
+      - "test_paper_fresh_start.py"
+      - ".github/workflows/fomo_brain.yml"
   workflow_dispatch:
 
 permissions:
@@ -51,6 +54,9 @@ jobs:
           python -m unittest -v test_exit_watchdog.py
           python -m unittest -v test_social_radar.py
           python test_whale_paper.py
+      - name: Verificar persistencia PAPER r2 sin red
+        run: python -m unittest -v test_paper_fresh_start.py
+
       - name: Verificar laboratorio aislado sin red
         run: python -m unittest -v test_candle_lab.py
 
