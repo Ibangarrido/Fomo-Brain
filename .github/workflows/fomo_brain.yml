@@ -273,6 +273,16 @@ jobs:
           python-version: "3.12"
       - name: Validar lector GMGN sin red
         run: python -m unittest -v test_gmgn_readonly.py test_gmgn_paper.py
+      - name: Verificar reinicio PAPER r2 sin red
+        run: python -m unittest -v test_paper_fresh_start.py
+      - name: Inicializar carteras PAPER r2 independientes
+        run: |
+          python - <<'PY'
+          from paper_fresh_start import initialize
+          for name in ("m4_fresh", "continuation_control"):
+              path = initialize(name)
+              print("PAPER R2 INITIALIZED", path)
+          PY
       - name: Recuperar cartera virtual GMGN
         uses: dawidd6/action-download-artifact@v11
         with:
@@ -289,6 +299,14 @@ jobs:
       - name: Auditar disponibilidad GMGN sin red
         if: always()
         run: python source_health.py --source gmgn --output source_health_gmgn.json
+      - name: Publicar carteras PAPER r2 iniciales
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-r2-initial-${{ github.run_id }}
+          path: |
+            fomo_lab_m4_fresh_r2.json
+            fomo_lab_continuation_control_r2.json
+          retention-days: 30
       - name: Guardar diagnostico GMGN
         uses: actions/upload-artifact@v4
         with:
