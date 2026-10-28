@@ -21,7 +21,7 @@ class FreshStartTests(unittest.TestCase):
             with open(legacy) as f: self.assertEqual(f.read(), '{"cash":95.55,"positions":[{"symbol":"MACCA"}]}')
     def test_cohort_resumes_without_resetting_balances_or_positions(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(resume_or_initialize(d), "INITIALIZED")
+            self.assertEqual(resume_or_initialize(d, allow_initialize=True), "INITIALIZED")
             m4 = os.path.join(d, WALLETS["m4_fresh"])
             with open(m4) as f: state = json.load(f)
             state["cash"] = 93.0
@@ -29,6 +29,12 @@ class FreshStartTests(unittest.TestCase):
             with open(m4, "w") as f: json.dump(state, f)
             self.assertEqual(resume_or_initialize(d), "RESUMED")
             with open(m4) as f: self.assertEqual(json.load(f), state)
+
+    def test_missing_artifact_requires_explicit_first_run_bootstrap(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, "explicit first-run"):
+                resume_or_initialize(d)
+            self.assertEqual(os.listdir(d), [])
 
     def test_partial_or_invalid_restore_fails_closed(self):
         with tempfile.TemporaryDirectory() as d:
