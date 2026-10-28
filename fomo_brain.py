@@ -1074,14 +1074,32 @@ def recovery_ratio_audit(fresh, previous, wait_reason, entry_guard=None):
 UNKNOWN_ISOLATION_FILES = {
     "fomo_paper_v10.json", "fomo_paper_v10_impulse.json",
     "fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json",
+    "fomo_lab_continuation_control_r1.json",
 }
 
 
 def isolate_existing_unknowns(state, path, now):
-    """One PAPER policy epoch; later unknown positions still block entries."""
+    """Pin CONTINUATION's inherited unknown; never isolate a new unknown."""
+    basename = os.path.basename(path)
     if (os.getenv("BRAIN_UNKNOWN_ISOLATION", "0") != "1"
-            or os.path.basename(path) not in UNKNOWN_ISOLATION_FILES):
+            or basename not in UNKNOWN_ISOLATION_FILES):
         return set()
+    if basename == "fomo_lab_continuation_control_r1.json":
+        pinned = os.getenv("BRAIN_CONTROL_LEGACY_ADDRESS", "").strip()
+        if not pinned:
+            return set()
+        epoch = state.get("unknown_isolation_epoch")
+        if epoch is None:
+            unknown = [p for p in state["positions"] if p.get("quote_status") != "OK"]
+            if (len(unknown) != 1 or unknown[0].get("chain") != "solana"
+                    or unknown[0].get("address") != pinned):
+                return set()
+        else:
+            keys = epoch.get("positions")
+            if (not isinstance(keys, list) or len(keys) != 1
+                    or not isinstance(keys[0], (list, tuple)) or len(keys[0]) != 3
+                    or keys[0][0] != "solana" or keys[0][1] != pinned):
+                return set()
     epoch = state.get("unknown_isolation_epoch")
     if epoch is None:
         keys = [[p.get("chain"), p.get("address"), p.get("opened_at")]
@@ -1093,6 +1111,14 @@ def isolate_existing_unknowns(state, path, now):
         state["unknown_isolation_epoch"] = epoch
     return {tuple(key) for key in epoch["positions"]}
 
+def active_paper_slots(positions, isolated_unknowns, isolated_m4=False):
+    """Count positions that still consume PAPER entry capacity."""
+    from m4_lab import is_quarantined
+    return sum(
+        (p.get("chain"), p.get("address"), p.get("opened_at")) not in isolated_unknowns
+        and not (isolated_m4 and is_quarantined(p) and p.get("quote_status") != "OK")
+        for p in positions
+    )
 
 @measure_wallet_latency
 @wallet_transaction
@@ -1352,8 +1378,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                   "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
                   "token ya operado" if key in state["seen"] or key in closed_this_run else
-                  "maximo 3 posiciones" if sum(not (isolated_m4 and is_quarantined(p)
-                      and p.get("quote_status") != "OK") for p in state["positions"]) >= 3 else
+                  "maximo 3 posiciones" if active_paper_slots(state["positions"], isolated_unknowns, isolated_m4) >= 3 else
                   f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
             if reason == "cartera sin valoracion completa":
@@ -1362,9 +1387,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 # token was already traded, slots are full, or cash is short.
                 other_blockers = (
                     key in state["seen"] or key in closed_this_run
-                    or sum(not (isolated_m4 and is_quarantined(p)
-                               and p.get("quote_status") != "OK")
-                           for p in state["positions"]) >= 3
+                    or active_paper_slots(state["positions"], isolated_unknowns, isolated_m4) >= 3
                     or state["cash"] < entry_budget
                 )
                 if other_blockers:
@@ -1519,8 +1542,12 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                      + f" | precio={price} | liquidez={fresh['liquidity']:.0f}"
                      + f" | trades5m={fresh['trades5m']} | compras={fresh['buyRatio5m']:.1%}"
                      + f" | volumen5m={fresh['vol5m']:.0f} | cambio5m={fresh['change5m']:.2f}%")
-    equity = (state["cash"] + state["reserve"]
-              + sum(p["mark_net"] for p in state["positions"]))
+    # A legacy unquoted position may have no mark_net at all. Never invent a
+    # zero-valued mark or turn an unknown holding into verified equity.
+    marks = [p.get("mark_net") for p in state["positions"]]
+    equity = (state["cash"] + state["reserve"] + sum(marks)
+              if all(isinstance(mark, (int, float)) and math.isfinite(mark)
+                     for mark in marks) else None)
     stale = sum(p["quote_status"] != "OK" for p in state["positions"])
     realized = sum(x["profit"] for x in state["closed"])
     known_value = state["cash"] + state["reserve"] + sum(

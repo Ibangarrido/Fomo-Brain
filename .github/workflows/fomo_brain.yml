@@ -58,6 +58,7 @@ jobs:
           python -m unittest -v test_targets_lab.py
           python -m unittest -v test_social_radar.py
           python -m unittest -v test_continuation_lab.py
+          python -m unittest -v test_continuation_pin.py
           python -m unittest -v test_pair_batch.py
           python -m unittest -v test_discovery_watch.py
           python -m unittest -v test_source_health.py
@@ -101,6 +102,8 @@ jobs:
           BRAIN_M4_FRESH_LAB: "1"
           BRAIN_M4_ISOLATION: "1"
           BRAIN_UNKNOWN_ISOLATION: "1"
+          # Pin confirmed in PAPER log; never infer a legacy position from symbol.
+          BRAIN_CONTROL_LEGACY_ADDRESS: "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"
           BRAIN_OPPORTUNITY_AUDIT: "1"
           BRAIN_REBOUND_LAB: "1"
           BRAIN_TARGETS_LAB: "1"
