@@ -3,6 +3,12 @@ name: FOMO Brain
 on:
   # Respaldo manual y punto de entrada para un reloj externo fiable.
   workflow_dispatch:
+    inputs:
+      paper_r2_bootstrap:
+        description: "Explicit first initialization of two PAPER r2 wallets; never use for restoring history"
+        required: false
+        type: boolean
+        default: false
 
   # Respaldo nativo de GitHub. Puede sufrir retrasos o saltos bajo carga.
   schedule:
@@ -285,10 +291,14 @@ jobs:
           search_artifacts: true
           if_no_artifact_found: ignore
       - name: Inicializar o reanudar carteras PAPER r2
+        env:
+          BRAIN_PAPER_R2_BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.paper_r2_bootstrap && '1' || '0' }}
         run: |
           python - <<'PY'
+          import os
           from paper_fresh_start import resume_or_initialize
-          print("PAPER R2", resume_or_initialize())
+          print("PAPER R2", resume_or_initialize(
+              allow_initialize=os.getenv("BRAIN_PAPER_R2_BOOTSTRAP") == "1"))
           PY
       - name: Recuperar cartera virtual GMGN
         uses: dawidd6/action-download-artifact@v11
