@@ -70,8 +70,8 @@ class IsolationTests(unittest.TestCase):
             self.assertEqual(isolate_existing_unknowns(self.state, path, datetime.now(timezone.utc)), set())
 
     def test_full_paper_entry_with_legacy_unknown_keeps_ledger(self):
-        """Offline integration: real simulator decision, mocked market, no trading."""
-        for arm in ("control", "pattern_pullback"):
+        """CONTROL EARLY offline entry; PATTERN requires a different candle-gated policy."""
+        for arm in ("control",):
             with self.subTest(arm=arm):
                 with tempfile.TemporaryDirectory() as tmp:
                     cwd = os.getcwd()
@@ -127,6 +127,25 @@ class IsolationTests(unittest.TestCase):
                         self.assertEqual(len(after["unknown_isolation_epoch"]["positions"]), 1)
                     finally:
                         os.chdir(cwd)
+
+    def test_pattern_pullback_cannot_be_relabelled_as_early_to_force_entry(self):
+        """Regression: preserve the pattern arm's required continuation policy."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                lab.bootstrap()
+                lab.bootstrap_pattern()
+                path = lab.ARMS["pattern_pullback"][0]
+                with open(path, encoding="utf-8") as f:
+                    before = f.read()
+                with self.assertRaisesRegex(ValueError, "Politica continuation incompatible"):
+                    brain.simular_cartera([], path, entry_mode="early",
+                                         min_buy_ratio=.75)
+                with open(path, encoding="utf-8") as f:
+                    self.assertEqual(f.read(), before)
+            finally:
+                os.chdir(cwd)
 
     def test_opt_in_only(self):
         with patch.dict(os.environ, {"BRAIN_UNKNOWN_ISOLATION": "0"}):
