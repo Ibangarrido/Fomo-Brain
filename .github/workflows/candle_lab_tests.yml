@@ -24,6 +24,8 @@ on:
       - "fomo_brain.py"
       - "test_fomo_v8.py"
       - "test_unknown_isolation_continuation.py"
+      - "brain_paper_entry.py"
+      - "test_brain_paper_entry.py"
       - "opportunity_audit.py"
       - "test_opportunity_audit.py"
       - "whale_paper.py"
@@ -53,7 +55,7 @@ jobs:
           python -m unittest -v test_social_radar.py
           python test_whale_paper.py
       - name: Verificar aislamiento CONTINUATION con contrato exacto
-        run: python -m unittest -v test_unknown_isolation_continuation.py
+        run: python -m unittest -v test_unknown_isolation_continuation.py test_brain_paper_entry.py
 
       - name: Verificar laboratorio aislado sin red
         run: python -m unittest -v test_candle_lab.py
