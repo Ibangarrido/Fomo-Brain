@@ -35,3 +35,29 @@ def initialize(name, directory=".", now=None):
     with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8") as handle:
         json.dump(state, handle, indent=2, ensure_ascii=False)
     return path
+
+def resume_or_initialize(directory="."):
+    """Never overwrite a cohort, and refuse incomplete/corrupt restoration."""
+    paths = {name: os.path.join(directory, filename) for name, filename in WALLETS.items()}
+    present = {name: os.path.lexists(path) for name, path in paths.items()}
+    if any(present.values()) and not all(present.values()):
+        raise ValueError("Incomplete PAPER r2 cohort; restore both wallets, never reset")
+    if all(present.values()):
+        for name, path in paths.items():
+            with open(path, encoding="utf-8") as handle:
+                state = json.load(handle)
+            if (state.get("fresh_start", {}).get("wallet") != name
+                    or state.get("fresh_start", {}).get("version") != "paper-r2"
+                    or state.get("version") != 1
+                    or not isinstance(state.get("positions"), list)
+                    or not isinstance(state.get("closed"), list)
+                    or not isinstance(state.get("observations"), list)
+                    or type(state.get("cash")) not in (int, float)
+                    or type(state.get("reserve")) not in (int, float)
+                    or not all(__import__("math").isfinite(state[k]) and state[k] >= 0
+                               for k in ("cash", "reserve"))):
+                raise ValueError("Invalid PAPER r2 state; do not overwrite")
+        return "RESUMED"
+    for name in WALLETS:
+        initialize(name, directory)
+    return "INITIALIZED"
