@@ -1111,6 +1111,15 @@ def isolate_existing_unknowns(state, path, now):
         state["unknown_isolation_epoch"] = epoch
     return {tuple(key) for key in epoch["positions"]}
 
+def active_paper_slots(positions, isolated_unknowns, isolated_m4=False):
+    """Count positions that still consume PAPER entry capacity."""
+    from m4_lab import is_quarantined
+    return sum(
+        (p.get("chain"), p.get("address"), p.get("opened_at")) not in isolated_unknowns
+        and not (isolated_m4 and is_quarantined(p) and p.get("quote_status") != "OK")
+        for p in positions
+    )
+
 @measure_wallet_latency
 @wallet_transaction
 def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=True, entry_mode="early", entry_guard=None, min_buy_ratio=0.60, profit_protection=False, quarantine_m4=False, max_pair_age_minutes=60, staged_targets=False, require_liquidity_growth=False, net_scenario_gate=False):
@@ -1369,8 +1378,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                   "caso de estudio: no comprar automaticamente" if (token["chain"], token["address"]) in STUDY_TOKENS else
                   "cartera sin valoracion completa" if quotes_blocked else
                   "token ya operado" if key in state["seen"] or key in closed_this_run else
-                  "maximo 3 posiciones" if sum(not (isolated_m4 and is_quarantined(p)
-                      and p.get("quote_status") != "OK") for p in state["positions"]) >= 3 else
+                  "maximo 3 posiciones" if active_paper_slots(state["positions"], isolated_unknowns, isolated_m4) >= 3 else
                   f"efectivo < {entry_budget:.2f} EUR" if state["cash"] < entry_budget else None)
         if reason:
             if reason == "cartera sin valoracion completa":
@@ -1379,9 +1387,7 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
                 # token was already traded, slots are full, or cash is short.
                 other_blockers = (
                     key in state["seen"] or key in closed_this_run
-                    or sum(not (isolated_m4 and is_quarantined(p)
-                               and p.get("quote_status") != "OK")
-                           for p in state["positions"]) >= 3
+                    or active_paper_slots(state["positions"], isolated_unknowns, isolated_m4) >= 3
                     or state["cash"] < entry_budget
                 )
                 if other_blockers:
