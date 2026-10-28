@@ -43,7 +43,7 @@ class FreshStartTests(unittest.TestCase):
                 resume_or_initialize(d)
             self.assertFalse(os.path.exists(os.path.join(d, WALLETS["continuation_control"])))
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(resume_or_initialize(d), "INITIALIZED")
+            self.assertEqual(resume_or_initialize(d, allow_initialize=True), "INITIALIZED")
             path = os.path.join(d, WALLETS["m4_fresh"])
             with open(path, "w") as f: f.write('{"broken":true}')
             with self.assertRaisesRegex(ValueError, "Invalid"):
