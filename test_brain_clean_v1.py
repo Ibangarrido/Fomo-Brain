@@ -49,6 +49,19 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(report["counts"]["low_liquidity"], 1)
         self.assertEqual(state["cash"], 100)
 
+    def test_rejection_outcome_needs_future_quote(self):
+        state = brain.new_state()
+        first = sample(60000, 1000)
+        brain.step(state, [first], 1000)
+        self.assertEqual(len(state["outcomes"]), 0)
+        second = sample(90000, 1899)
+        brain.step(state, [second], 1899)
+        self.assertEqual(len(state["outcomes"]), 0)
+        third = sample(90000, 1900)
+        brain.step(state, [third], 1900)
+        self.assertEqual(state["outcomes"][0]["label"], "rally_25pct")
+        self.assertEqual(state["outcomes"][0]["reason"], "waiting_for_5_observations")
+
     def test_no_legacy_portfolio_import(self):
         import tempfile
         import json
