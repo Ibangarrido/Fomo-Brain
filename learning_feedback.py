@@ -118,6 +118,15 @@ def evaluate(state, now=None):
             "sampled_up_20pct": stats["up20"], "sampled_down_20pct": stats["down20"],
             "mean_sampled_change_pct": round(stats["sum_pct"] / count, 2),
             "sufficient_for_review": count >= MIN_EVIDENCE,
+            # Emerging patterns become visible after three comparable receipts,
+            # without relaxing the evidence threshold for strategy changes.
+            "early_signal": (
+                "possible_missed_upside" if 3 <= count < MIN_EVIDENCE
+                and stats["up20"] >= 2 and stats["up20"] / count >= 0.6
+                else "possible_downside_protection" if 3 <= count < MIN_EVIDENCE
+                and stats["down20"] >= 2 and stats["down20"] / count >= 0.6
+                else "insufficient_evidence"
+            ),
             "action": "review_offline_only" if count >= MIN_EVIDENCE else "collect_more",
         })
     return {
