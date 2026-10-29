@@ -64,7 +64,7 @@ def save_json(path, obj):
     os.replace(temp, path)
 
 
-def fetch_pairs(queries=SEARCHES):
+def fetch_pairs(queries=SEARCHES, tracked_addresses=()):
     pairs = {}
     for query in queries:
         url = "https://api.dexscreener.com/latest/dex/search?q=" + urllib.parse.quote(query)
@@ -81,6 +81,28 @@ def fetch_pairs(queries=SEARCHES):
                     pairs[key] = pair
         except (OSError, ValueError, KeyError) as exc:
             print("SOURCE_ERROR", query, str(exc)[:160], flush=True)
+        time.sleep(0.35)
+    # Follow known pools directly: a broad search may stop returning a token
+    # before the next confirmation or PAPER exit observation.
+    for address in list(dict.fromkeys(tracked_addresses))[:8]:
+        if not address or not address.isalnum():
+            continue
+        url = "https://api.dexscreener.com/token-pairs/v1/solana/" + address
+        req = urllib.request.Request(url, headers={"User-Agent": "BrainCleanV1/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=8) as response:
+                tracked = json.load(response)
+            if not isinstance(tracked, list):
+                continue
+            for pair in tracked:
+                if pair.get("chainId") != "solana":
+                    continue
+                token = (pair.get("baseToken") or {}).get("address")
+                pool = pair.get("pairAddress")
+                if token == address and pool:
+                    pairs[token + ":" + pool] = pair
+        except (OSError, ValueError, KeyError) as exc:
+            print("TRACKED_SOURCE_ERROR", address[:12], str(exc)[:100], flush=True)
         time.sleep(0.35)
     return list(pairs.values())
 
@@ -245,7 +267,12 @@ def main():
     aggregate = Counter()
     for cycle in range(POLL_CYCLES):
         now = time.time()
-        raw = fetch_pairs()
+        recent = sorted(state["history"].items(),
+                        key=lambda item: item[1][-1]["ts"] if item[1] else 0,
+                        reverse=True)
+        priority = [key.split(":", 1)[0] for key in state["positions"]]
+        priority += [key.split(":", 1)[0] for key, _ in recent[:8]]
+        raw = fetch_pairs(tracked_addresses=priority)
         samples = [sample(p, now) for p in raw]
         report = step(state, samples, now)
         aggregate.update(report["counts"])
