@@ -235,11 +235,13 @@ def main():
     state = load_state()
     now = time.time()
     report = None
+    aggregate = Counter()
     for cycle in range(POLL_CYCLES):
         now = time.time()
         raw = fetch_pairs()
         samples = [sample(p, now) for p in raw]
         report = step(state, samples, now)
+        aggregate.update(report["counts"])
         save_json(STATE_FILE, state)
         print("CLEAN_POLL", cycle + 1, report["counts"], flush=True)
         if cycle < POLL_CYCLES - 1:
@@ -250,6 +252,8 @@ def main():
             p["units"] * quotes[k]["price"] * 0.99 for k, p in state["positions"].items()), 4)
         report["equity_note"] = "Mark-to-market estimate with 1% exit cost; no guaranteed fills"
     save_json(STATE_FILE, state)
+    report["polls_completed"] = POLL_CYCLES
+    report["aggregate_counts"] = dict(aggregate)
     save_json(REPORT_FILE, report)
     print("BRAIN_CLEAN_V1 " + json.dumps(report, ensure_ascii=False), flush=True)
 
