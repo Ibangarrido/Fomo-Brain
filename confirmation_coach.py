@@ -96,3 +96,42 @@ def diagnose(rows, now=None):
         "automatic_fetches": False, "entry_authorized": False,
         "scope": "Local receipt diagnostics only; suggestions are not quote validity, full entry eligibility, provider freshness or fills. No portfolio or strategy mutations.",
     }
+
+
+def report_paper_files(paths, now=None):
+    """Read PAPER memories, produce a separate diagnostic report only."""
+    import json
+    from pathlib import Path
+    now = now or datetime.now(timezone.utc)
+    reports = {}
+    for filename in paths:
+        path = Path(filename)
+        if not path.is_file():
+            reports[path.name] = {"status": "missing_file"}
+            continue
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict) or not isinstance(state.get("confirmation_audit", []), list):
+                raise ValueError("invalid confirmation memory")
+            reports[path.name] = {"status": "analyzed", **diagnose(state.get("confirmation_audit", []), now)}
+        except (OSError, ValueError, TypeError) as exc:
+            reports[path.name] = {"status": "unreadable", "error_type": type(exc).__name__}
+    return {"version": "confirmation-coach-files-r1", "at": now.isoformat(),
+            "reports": reports, "wallet_state_modified": False,
+            "entry_authorized": False}
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+    from pathlib import Path
+    filenames = sys.argv[1:] or [
+        "fomo_lab_m4_fresh_r1.json",
+        "fomo_lab_continuation_control_r1.json",
+        "fomo_lab_pattern_pullback_r1.json",
+        "fomo_lab_shallow_pullback_r1.json",
+    ]
+    report = report_paper_files(filenames)
+    Path("confirmation_coach_report.json").write_text(
+        json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
+    print("CONFIRMATION COACH REPORT " + json.dumps(report, allow_nan=False))
