@@ -63,6 +63,22 @@ class LearningFeedbackTests(unittest.TestCase):
         report = evaluate({"tokens": {"one": row}}, self.NOW)
         self.assertEqual(report["cohorts"][0]["observations"], 1)
 
+    def test_three_fresh_examples_raise_early_signal_but_never_modify_gates(self):
+        state = {"tokens": {str(i): case(str(i), pct=25) for i in range(3)}}
+        report = evaluate(state, self.NOW)
+        cohort = next(c for c in report["cohorts"] if c["blocker"] == "buy_pressure")
+        self.assertEqual(cohort["early_signal"], "possible_missed_upside")
+        self.assertFalse(cohort["sufficient_for_review"])
+        self.assertEqual(cohort["action"], "collect_more")
+        self.assertFalse(report["auto_parameter_changes"])
+
+    def test_early_downside_protection_and_single_example_are_not_overstated(self):
+        state = {"tokens": {str(i): case(str(i), pct=-23) for i in range(3)}}
+        cohort = evaluate(state, self.NOW)["cohorts"][0]
+        self.assertEqual(cohort["early_signal"], "possible_downside_protection")
+        one = evaluate({"tokens": {"one": case("one", pct=50)}}, self.NOW)
+        self.assertEqual(one["cohorts"][0]["early_signal"], "insufficient_evidence")
+
     def test_unpriced_or_absent_historic_positions_are_never_valued(self):
         state = {"cash": 89.83, "reserve": 0.55,
                  "positions": [{"address": "MACCA", "price": None}],
