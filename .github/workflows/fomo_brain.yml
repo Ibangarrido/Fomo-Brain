@@ -1,6 +1,11 @@
 name: FOMO Brain Clean V1 - PAPER
 
 on:
+  pull_request:
+    paths:
+      - brain_clean_v1.py
+      - test_brain_clean_v1.py
+      - .github/workflows/fomo_brain.yml
   workflow_dispatch:
   # GitHub only schedules workflows from the default branch.
   # This schedule starts after a reviewed merge, not on the experiment branch.
@@ -33,6 +38,7 @@ jobs:
         run: python -m unittest -v test_brain_clean_v1.py
 
       - name: Restore only clean V1 ledger (never legacy M4)
+        if: github.event_name != 'pull_request'
         uses: dawidd6/action-download-artifact@v11
         with:
           workflow: fomo_brain.yml
@@ -43,12 +49,13 @@ jobs:
           if_no_artifact_found: ignore
 
       - name: Scan and update PAPER experiment
+        if: github.event_name != 'pull_request'
         env:
           PYTHONUNBUFFERED: "1"
         run: python brain_clean_v1.py
 
       - name: Persist clean V1 ledger and report
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: brain-clean-v1-state
