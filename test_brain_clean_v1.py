@@ -37,6 +37,10 @@ class CleanPaperTests(unittest.TestCase):
                   zip([60000, 42000, 45000, 50000], [1000, 1100, 1200, 2000])]
         self.assertFalse(brain.staircase(series)[0])
 
+    def test_bell_case_study_uses_exact_contract(self):
+        self.assertIn("4SiuAiB3xbE1Se9qxPfmGDZY812SxaeLRg4gwgNLpump",
+                      brain.CASE_STUDY_ADDRESSES)
+
     def test_tracked_token_is_refetched_without_search(self):
         import io
         import json
