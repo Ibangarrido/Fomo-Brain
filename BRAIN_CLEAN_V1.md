@@ -68,3 +68,9 @@ Known contracts are revisited directly through DexScreener's token-pairs
 endpoint (bounded to eight per scan), because search results alone are
 unstable. No rule assumes a quote is guaranteed fresh or executable. Tests
 must pass before promoting the PR to main.
+
+## Case study: 剑来 (Jian Lai), BNB Chain, 2026-10-29 05:39 Europe/Madrid
+
+User-supplied FOMO video (16 seconds) and token contract `0x80a5961bae1463a12772ec086904bbe229f27777`, chainId 56. Observed market cap approximately $41.1k, 1-hour change +138.81%, liquidity $8.8k, 1,926 holders, 402 buys versus 165 sells (1h), 292 unique buyers versus 131 sellers, top-10 holding 19.53%. The chart shows a progressive staircase/continuation with shallow pauses, **not a verified 15-40% pullback**. Token was marked unverified. These values are from the video, not fresh API quotes or confirmed future outcomes.
+
+**Expected Clean V1 decision:** no PAPER entry. The scanner is Solana-only and this is BNB Chain; observed liquidity is below the $10k minimum. Label as `CONTINUATION_STAIRCASE_WATCH_ONLY`, not as an erroneously missed eligible trade. Do not loosen the liquidity guard or add BNB execution based on this one example. Study continuation patterns separately offline, with later independent quotes and controls for survivorship bias.
