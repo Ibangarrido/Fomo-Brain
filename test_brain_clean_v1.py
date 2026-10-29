@@ -37,6 +37,18 @@ class CleanPaperTests(unittest.TestCase):
                   zip([60000, 42000, 45000, 50000], [1000, 1100, 1200, 2000])]
         self.assertFalse(brain.staircase(series)[0])
 
+    def test_tracked_token_is_refetched_without_search(self):
+        import io
+        import json
+        payload = [{"chainId": "solana", "pairAddress": "pool",
+                    "baseToken": {"address": "mint", "symbol": "TEST"}}]
+        with patch("brain_clean_v1.urllib.request.urlopen",
+                   return_value=io.BytesIO(json.dumps(payload).encode())) as mocked:
+            with patch("brain_clean_v1.time.sleep"):
+                pairs = brain.fetch_pairs(queries=(), tracked_addresses=("mint",))
+        self.assertEqual(len(pairs), 1)
+        self.assertIn("/solana/mint", mocked.call_args.args[0].full_url)
+
     def test_unquoted_position_does_not_disappear(self):
         state = brain.new_state()
         state["positions"]["lost:pool"] = {"key": "lost:pool", "units": 2,
