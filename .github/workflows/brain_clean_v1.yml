@@ -1,0 +1,52 @@
+name: Brain Clean V1 - isolated PAPER launch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: brain-clean-v1-paper-ledger
+  cancel-in-progress: false
+
+jobs:
+  clean_paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout experimental branch
+        uses: actions/checkout@v4
+        with:
+          ref: brain-clean-v1
+          persist-credentials: false
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Offline regression tests
+        run: python -m unittest -v test_brain_clean_v1.py
+      - name: Restore Clean V1 ledger only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: brain_clean_v1.yml
+          branch: main
+          name: brain-clean-v1-state
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: ignore
+      - name: Run isolated PAPER experiment
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: python brain_clean_v1.py
+      - name: Upload Clean V1 state and audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-clean-v1-state
+          path: |
+            brain_clean_v1_state.json
+            brain_clean_v1_report.json
+          if-no-files-found: warn
+          retention-days: 30
