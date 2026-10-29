@@ -1,311 +1,59 @@
-name: FOMO Brain
+name: FOMO Brain Clean V1 - PAPER
 
 on:
-  # Respaldo manual y punto de entrada para un reloj externo fiable.
   workflow_dispatch:
-
-  # Respaldo nativo de GitHub. Puede sufrir retrasos o saltos bajo carga.
+  # GitHub only schedules workflows from the default branch.
+  # This schedule starts after a reviewed merge, not on the experiment branch.
   schedule:
-    - cron: "7,27,47 * * * *"
+    - cron: "11,31,51 * * * *"
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
-  group: fomo-brain-state-${{ github.ref }}
+  group: brain-clean-v1-${{ github.ref }}
   cancel-in-progress: false
-  # Conservar solo la peticion pendiente mas reciente, sin interrumpir la activa.
-  queue: single
 
 jobs:
-  analyze:
+  clean_paper:
+    name: Clean V1 - ESCALERA PAPER
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 8
     steps:
-      - name: Descargar codigo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configurar Python
+      - name: Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Recuperar memoria anterior
+      - name: Offline regression tests
+        run: python -m unittest -v test_brain_clean_v1.py
+
+      - name: Restore only clean V1 ledger (never legacy M4)
         uses: dawidd6/action-download-artifact@v11
         with:
           workflow: fomo_brain.yml
           branch: ${{ github.ref_name }}
-          name: fomo-memory
+          name: brain-clean-v1-state
           path: .
           search_artifacts: true
           if_no_artifact_found: ignore
 
-      - name: Registrar inicio de auditoria
-        run: echo "BRAIN_AUDIT_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
-
-      - name: Verificar simulacion V10 sin red
-        run: |
-          python test_fomo_v8.py
-          python -m unittest -v test_market_data_coverage.py test_jupiter_exit_diagnostic.py
-          python -m unittest -v test_quote_safety.py
-          python -m unittest -v test_exit_watchdog.py
-          python -m unittest -v test_net_execution_lab.py
-          python -m unittest -v test_paper_observability.py test_v12_lab.py
-          python -m unittest -v test_quote_audit.py
-          python -m unittest -v test_m4_lab.py
-          python -m unittest -v test_m4_isolation.py
-          python -m unittest -v test_m4_fresh_lab.py
-          python -m unittest -v test_opportunity_audit.py
-          python -m unittest -v test_rebound_lab.py
-          python -m unittest -v test_targets_lab.py
-          python -m unittest -v test_social_radar.py
-          python -m unittest -v test_continuation_lab.py
-          python -m unittest -v test_pair_batch.py
-          python -m unittest -v test_discovery_watch.py
-          python -m unittest -v test_source_health.py
-
-      - name: Verificar laboratorio de velas sin red
-        id: candle_tests
-        continue-on-error: true
-        run: python -m unittest -v test_candle_lab.py
-
-      - name: Verificar comparacion de porcentajes sin red
-        id: ratio_tests
-        continue-on-error: true
-        run: python -m unittest -v test_ratio_lab.py
-
-      - name: Verificar proteccion de beneficios sin red
-        id: protect_tests
-        continue-on-error: true
-        run: python -m unittest -v test_protection_lab.py
-
-      - name: Verificar prueba de seguimiento virtual
-        run: python test_whale_paper.py
-
-      - name: Verificar comparacion de volumen sin red
-        id: volume_tests
-        continue-on-error: true
-        run: python -m unittest -v test_volume_lab.py
-
-      - name: Instalar lector publico de alertas
-        run: python -m pip install websocket-client==1.8.0
-
-      - name: Ejecutar FOMO Brain
-        id: brain_engine
+      - name: Scan and update PAPER experiment
         env:
-          BRAIN_CYCLES: "15"
-          BRAIN_CANDLE_LAB: ${{ steps.candle_tests.outcome == 'success' && '1' || '0' }}
-          BRAIN_RATIO_LAB: ${{ steps.ratio_tests.outcome == 'success' && '1' || '0' }}
-          BRAIN_PROTECT_LAB: ${{ steps.protect_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
-          BRAIN_VOLUME_LAB: ${{ steps.volume_tests.outcome == 'success' && steps.ratio_tests.outcome == 'success' && '1' || '0' }}
-          BRAIN_QUOTE_GUARD: "1"
-          BRAIN_M4_LAB: "0"
-          BRAIN_M4_FRESH_LAB: "1"
-          BRAIN_M4_ISOLATION: "1"
-          BRAIN_UNKNOWN_ISOLATION: "1"
-          BRAIN_OPPORTUNITY_AUDIT: "1"
-          BRAIN_REBOUND_LAB: "1"
-          BRAIN_TARGETS_LAB: "1"
-          BRAIN_CONTINUATION_LAB: "1"
-          BRAIN_EXIT_WATCHDOG: "1"
-          BRAIN_V11_NET_LAB: "1"
-          BRAIN_V12_OBSERVABILITY: "1"
           PYTHONUNBUFFERED: "1"
-          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
-        run: |
-          rm -f fomo_quote_audit.json
-          python whale_paper.py &
-          whale_pid=$!
-          WHALE_TRADER=unipcs python whale_paper.py &
-          unipcs_pid=$!
-          trap 'kill -TERM "$whale_pid" "$unipcs_pid" 2>/dev/null || true; wait "$whale_pid" || true; wait "$unipcs_pid" || true' EXIT
-          python fomo_brain.py
+        run: python brain_clean_v1.py
 
-      - name: Descubrir pools Solana para estudio (sin compras)
-        if: always()
-        run: python discovery_watch.py
-
-      - name: Auditar disponibilidad GeckoTerminal sin red ni compras
-        if: always()
-        run: python source_health.py --source geckoterminal --output source_health_gecko.json
-
-      - name: Registrar estado de observabilidad V11 V12
-        if: always()
-        env:
-          BRAIN_ENGINE_OUTCOME: ${{ steps.brain_engine.outcome }}
-        run: |
-          python v12_lab.py
-
-      - name: Guardar memoria FOMO
+      - name: Persist clean V1 ledger and report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fomo-memory
+          name: brain-clean-v1-state
           path: |
-            fomo_lab_targets_control_r1.json
-            fomo_lab_targets_staged_r1.json
-            fomo_lab_targets_start_r1.json
-            fomo_lab_shallow_pullback_r1.json
-            fomo_lab_shallow_start_r1.json
-            fomo_lab_pattern_start_r1.json
-            fomo_lab_pattern_pullback_r1.json
-            fomo_lab_pattern_breakout_r1.json
-            fomo_lab_continuation_start_r1.json
-            fomo_lab_continuation_control_r1.json
-            fomo_lab_continuation_50_r1.json
-            fomo_lab_continuation_60_r1.json
-            fomo_memory.json
-            fomo_event_memory.json
-            fomo_quote_audit.json
-            paper_observability_status.json
-            fomo_v12_observations_r1.json
-            discovery_watch.json
-            source_health_gecko.json
-            fomo_opportunity_audit_r1.json
-            fomo_lab_rebound_control_r1.json
-            fomo_lab_rebound_extended_r1.json
-            fomo_lab_rebound_fork_r1.json
-            fomo_lab_m4_fresh_r1.json
-            fomo_lab_m4_control_r1.json
-            fomo_lab_m4_recovery_r1.json
-            fomo_lab_m4_fork_r1.json
-            fomo_paper.json
-            fomo_shadow_v8.json
-            fomo_shadow_v9.json
-            fomo_paper_v10.json
-            fomo_paper_v10_impulse.json
-            fomo_paper_v10_r3.json
-            fomo_paper_whale.json
-            fomo_paper_whale_unipcs.json
-            fomo_lab_candle_audit_r1.json
-            fomo_lab_liquidity_early_r1.json
-            fomo_lab_v11_control_r1.json
-            fomo_lab_v11_net_r1.json
-            fomo_lab_early_control_r1.json
-            fomo_lab_early_velas_r1.json
-            fomo_lab_impulse_control_r1.json
-            fomo_lab_impulse_velas_r1.json
-            fomo_lab_ratio_early_60_r1.json
-            fomo_lab_ratio_early_52_r1.json
-            fomo_lab_ratio_impulse_60_r1.json
-            fomo_lab_ratio_impulse_52_r1.json
-            fomo_lab_protect_fork_r1.json
-            fomo_lab_protect_early_control_r1.json
-            fomo_lab_protect_early_protect_r1.json
-            fomo_lab_protect_impulse_control_r1.json
-            fomo_lab_protect_impulse_protect_r1.json
-            fomo_lab_protect_velas_fork_r1.json
-            fomo_lab_protect_velas_control_r1.json
-            fomo_lab_protect_velas_protect_r1.json
-            fomo_lab_volume_fork_r1.json
-            fomo_lab_volume_impulse_control_r1.json
-            fomo_lab_volume_impulse_volume_r1.json
-          if-no-files-found: ignore
-          overwrite: true
-
-
-
-
-
-  v13_radar:
-    concurrency:
-      group: v13-paper-state-${{ github.ref_name }}
-      cancel-in-progress: false
-    name: V13 Meme Hunter - PAPER
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: V13 offline tests
-        run: python -m unittest -v test_v13_hunter.py test_v13_paper.py test_v13_microcap.py
-      - name: Restore V13 history
-        uses: actions/cache/restore@v4
-        with:
-          path: v13_history.json
-          key: v13-history-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            v13-history-${{ github.ref_name }}-
-      - name: Restore V13 paper ledger
-        uses: actions/cache/restore@v4
-        with:
-          path: v13_paper_state.json
-          key: v13-ledger-r1-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            v13-ledger-r1-${{ github.ref_name }}-
-      - name: Scan public markets PAPER only
-        run: python v13_runner.py
-      - name: Auditar salud de fuentes V13 sin red
-        if: always()
-        run: python source_health.py --source v13 --output source_health_v13.json
-      - name: Save V13 history
-        if: success()
-        uses: actions/cache/save@v4
-        with:
-          path: v13_history.json
-          key: v13-history-${{ github.ref_name }}-${{ github.run_id }}
-      - name: Save V13 paper ledger
-        uses: actions/cache/save@v4
-        with:
-          path: v13_paper_state.json
-          key: v13-ledger-r1-${{ github.ref_name }}-${{ github.run_id }}
-      - name: Upload V13 report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: v13-paper-${{ github.run_id }}
-          path: |
-            v13_report.json
-            source_health_v13.json
-            v13_history.json
-            v13_paper_state.json
+            brain_clean_v1_state.json
+            brain_clean_v1_report.json
           if-no-files-found: warn
-          retention-days: 7
-
-  gmgn_preflight:
-    name: GMGN Brain - comprobar fuente de solo lectura
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Validar lector GMGN sin red
-        run: python -m unittest -v test_gmgn_readonly.py test_gmgn_paper.py
-      - name: Recuperar cartera virtual GMGN
-        uses: dawidd6/action-download-artifact@v11
-        with:
-          workflow: fomo_brain.yml
-          branch: ${{ github.ref_name }}
-          name: gmgn-paper
-          path: .
-          search_artifacts: true
-          if_no_artifact_found: ignore
-      - name: Comprobar API GMGN sin operar
-        env:
-          GMGN_API_KEY: ${{ secrets.GMGN_API_KEY }}
-        run: python gmgn_readonly.py
-      - name: Auditar disponibilidad GMGN sin red
-        if: always()
-        run: python source_health.py --source gmgn --output source_health_gmgn.json
-      - name: Guardar diagnostico GMGN
-        uses: actions/upload-artifact@v4
-        with:
-          name: gmgn-preflight
-          path: |
-            gmgn_preflight.json
-            source_health_gmgn.json
-          retention-days: 7
-      - name: Registrar cartera virtual GMGN
-        run: python gmgn_paper.py
-      - name: Guardar cartera virtual GMGN
-        uses: actions/upload-artifact@v4
-        with:
-          name: gmgn-paper
-          path: gmgn_paper_r1.json
           retention-days: 30
-
-
-
-
