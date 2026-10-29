@@ -24,6 +24,8 @@ MIN_CAP, MAX_CAP = 30000.0, 2000000.0
 MIN_BUY_RATIO = 0.50
 MAX_SNAPSHOTS = 30
 MAX_AGE_SECONDS = 6 * 3600
+POLL_CYCLES = 5
+POLL_SECONDS = 50
 
 
 def utcnow():
@@ -213,10 +215,16 @@ def step(state, samples, now=None):
 def main():
     state = load_state()
     now = time.time()
-    raw = fetch_pairs()
-    samples = [sample(p, now) for p in raw]
-    # State continuity depends on artifact restore; missing state means fresh experiment.
-    report = step(state, samples, now)
+    report = None
+    for cycle in range(POLL_CYCLES):
+        now = time.time()
+        raw = fetch_pairs()
+        samples = [sample(p, now) for p in raw]
+        report = step(state, samples, now)
+        save_json(STATE_FILE, state)
+        print("CLEAN_POLL", cycle + 1, report["counts"], flush=True)
+        if cycle < POLL_CYCLES - 1:
+            time.sleep(POLL_SECONDS)
     quotes = {s["key"]: s for s in samples}
     if all(k in quotes and quotes[k]["price"] for k in state["positions"]):
         report["equity_eur"] = round(state["cash"] + sum(
