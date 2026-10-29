@@ -19,18 +19,23 @@ class CleanPaperTests(unittest.TestCase):
 
     def test_staircase_requires_independent_recovery(self):
         series = [sample(c, 1000 + i * 60) for i, c in
-                  enumerate([60000, 42000, 45000, 50000, 56000])]
+                  enumerate([60000, 42000, 45000, 50000])]
         self.assertEqual(brain.staircase(series), (True, "staircase_confirmed"))
         self.assertFalse(brain.staircase(series[:3])[0])
 
     def test_entry_only_after_confirmed_pattern(self):
         state = brain.new_state()
         base = 1000
-        for i, cap in enumerate([60000, 42000, 45000, 50000, 56000]):
+        for i, cap in enumerate([60000, 42000, 45000, 50000]):
             report = brain.step(state, [sample(cap, base + i * 60)], base + i * 60)
         self.assertEqual(report["counts"].get("paper_entry"), 1)
         self.assertEqual(state["cash"], 90)
         self.assertEqual(len(state["positions"]), 1)
+
+    def test_old_pattern_cannot_trigger_fast_entry(self):
+        series = [sample(c, t) for c, t in
+                  zip([60000, 42000, 45000, 50000], [1000, 1100, 1200, 2000])]
+        self.assertFalse(brain.staircase(series)[0])
 
     def test_unquoted_position_does_not_disappear(self):
         state = brain.new_state()
@@ -60,7 +65,7 @@ class CleanPaperTests(unittest.TestCase):
         third = sample(90000, 1900)
         brain.step(state, [third], 1900)
         self.assertEqual(state["outcomes"][0]["label"], "rally_25pct")
-        self.assertEqual(state["outcomes"][0]["reason"], "waiting_for_5_observations")
+        self.assertEqual(state["outcomes"][0]["reason"], "waiting_for_4_observations")
 
     def test_no_legacy_portfolio_import(self):
         import tempfile
