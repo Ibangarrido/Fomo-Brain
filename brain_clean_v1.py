@@ -25,7 +25,8 @@ MIN_BUY_RATIO = 0.50
 MAX_SNAPSHOTS = 30
 MAX_AGE_SECONDS = 6 * 3600
 POLL_CYCLES = 5
-POLL_SECONDS = 50
+POLL_SECONDS = 30
+SIGNAL_MAX_WINDOW_SECONDS = 8 * 60
 
 
 def utcnow():
@@ -122,27 +123,33 @@ def gate(s):
 
 
 def staircase(samples):
-    """At least four separate snapshots: peak, trough, two-step recovery."""
-    if len(samples) < 5:
-        return False, "waiting_for_5_observations"
+    """Four independent observations: peak -> trough -> recovery -> breakout.
+
+    No future data, no interpolated candles and no stale multi-hour signals.
+    """
     recent = samples[-MAX_SNAPSHOTS:]
-    # Avoid claiming a trend from four cached observations with same timestamp.
-    if len({int(s["ts"]) for s in recent}) < 4:
+    if len(recent) < 4:
+        return False, "waiting_for_4_observations"
+    # Only consider a recent sequence: fast memecoin patterns become stale.
+    recent = [s for s in recent if recent[-1]["ts"] - s["ts"] <= SIGNAL_MAX_WINDOW_SECONDS]
+    if len(recent) < 4:
+        return False, "waiting_for_recent_observations"
+    if len({int(s["ts"]) for s in recent}) != len(recent):
         return False, "duplicate_observation_times"
     a, b = recent[-2:]
     if not (a["cap"] < b["cap"] and a["price"] < b["price"]):
-        return False, "no_second_recovery_confirmation"
-    for i in range(1, len(recent) - 3):
+        return False, "no_breakout_confirmation"
+    for i in range(1, len(recent) - 2):
         peak = max(s["cap"] for s in recent[:i])
         trough = recent[i]["cap"]
         if not peak or not trough:
             continue
         drop = (peak - trough) / peak
         if (0.15 <= drop <= 0.40 and
-                recent[i + 1]["cap"] > trough and
-                a["cap"] > recent[i + 1]["cap"] and
+                a["cap"] > trough and
                 b["cap"] >= trough * 1.10 and
-                b["cap"] <= peak * 1.20):
+                b["cap"] <= peak * 1.20 and
+                a["price"] > recent[i]["price"]):
             return True, "staircase_confirmed"
     return False, "no_qualified_staircase"
 
