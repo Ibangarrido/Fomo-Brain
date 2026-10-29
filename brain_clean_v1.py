@@ -42,7 +42,8 @@ def number(value):
 
 def new_state():
     return {"version": 1, "cash": START_CASH, "positions": {},
-            "history": {}, "closed": [], "decisions": [], "seen_at": utcnow()}
+            "history": {}, "closed": [], "decisions": [], "watchlist": {},
+            "outcomes": [], "seen_at": utcnow()}
 
 
 def load_state(path=STATE_FILE):
@@ -168,8 +169,18 @@ def step(state, samples, now=None):
                                     "exit_reason": "stop_15pct" if move <= -0.15 else "target_25pct"})
             del state["positions"][key]
             counts["paper_exit"] += 1
+    state.setdefault("watchlist", {})
+    state.setdefault("outcomes", [])
     for s in samples:
         key = s["key"]
+        watch = state["watchlist"].get(key)
+        if watch and s["ts"] - watch["ts"] >= 900 and s["price"]:
+            change = s["price"] / watch["price"] - 1
+            label = "rally_25pct" if change >= .25 else ("drop_30pct" if change <= -.30 else "neutral")
+            state["outcomes"].append({"key": key, "reason": watch["reason"],
+                                      "return_pct": round(change * 100, 2), "label": label})
+            counts["outcome_" + label] += 1
+            del state["watchlist"][key]
         hist = state["history"].setdefault(key, [])
         # Never use stale or duplicate snapshots as independent observations.
         if not hist or s["ts"] > hist[-1]["ts"] + 20:
