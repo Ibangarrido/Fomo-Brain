@@ -120,8 +120,8 @@ def gate(s):
 
 def staircase(samples):
     """At least four separate snapshots: peak, trough, two-step recovery."""
-    if len(samples) < 4:
-        return False, "waiting_for_4_observations"
+    if len(samples) < 5:
+        return False, "waiting_for_5_observations"
     recent = samples[-MAX_SNAPSHOTS:]
     # Avoid claiming a trend from four cached observations with same timestamp.
     if len({int(s["ts"]) for s in recent}) < 4:
@@ -129,7 +129,7 @@ def staircase(samples):
     a, b = recent[-2:]
     if not (a["cap"] < b["cap"] and a["price"] < b["price"]):
         return False, "no_second_recovery_confirmation"
-    for i in range(1, len(recent) - 2):
+    for i in range(1, len(recent) - 3):
         peak = max(s["cap"] for s in recent[:i])
         trough = recent[i]["cap"]
         if not peak or not trough:
