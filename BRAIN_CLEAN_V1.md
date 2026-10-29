@@ -61,3 +61,10 @@ Only a later verified quote at least **15 minutes** afterward can label the
 observed price change as `rally_25pct`, `drop_30pct`, or `neutral`. These
 are retrospective labels, **not proof a trade was executable or profitable**.
 The strategy does not auto-change its risk thresholds based on these labels.
+
+Fast-decision revision: the signal now needs **four** fresh snapshots within
+**eight minutes**, with a 30-second wait between scans (plus network time).
+Known contracts are revisited directly through DexScreener's token-pairs
+endpoint (bounded to eight per scan), because search results alone are
+unstable. No rule assumes a quote is guaranteed fresh or executable. Tests
+must pass before promoting the PR to main.
