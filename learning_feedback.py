@@ -87,6 +87,13 @@ def evaluate(state, now=None):
             if not isinstance(lag, (float, int)) or isinstance(lag, bool) or not 0 <= lag <= 120:
                 excluded["late_" + horizon] += 1
                 continue
+            # The stored lag must agree with the two actual receipt timestamps.
+            # Otherwise a stale 30m observation mislabeled as a 5m checkpoint
+            # would be incorrectly treated as timely learning evidence.
+            actual_lag = (observed_at - first_at).total_seconds() - int(horizon[:-1]) * 60
+            if abs(actual_lag - lag) > 1:
+                excluded["inconsistent_lag_" + horizon] += 1
+                continue
             if checkpoint.get("pair_changed") is not False:
                 excluded["pair_unverified_" + horizon] += 1
                 continue
