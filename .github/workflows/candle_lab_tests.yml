@@ -22,6 +22,8 @@ on:
       - "candle_lab.py"
       - "test_candle_lab.py"
       - "fomo_brain.py"
+      - "confirmation_coach.py"
+      - "test_confirmation_coach.py"
       - "test_fomo_v8.py"
       - "test_unknown_isolation_continuation.py"
       - "brain_paper_entry.py"
@@ -54,6 +56,9 @@ jobs:
           python -m unittest -v test_exit_watchdog.py
           python -m unittest -v test_social_radar.py
           python test_whale_paper.py
+      - name: Verificar diagnostico de confirmaciones sin red
+        run: python -m unittest -v test_confirmation_coach.py
+
       - name: Verificar aislamiento CONTINUATION con contrato exacto
         run: python -m unittest -v test_unknown_isolation_continuation.py test_brain_paper_entry.py
 
