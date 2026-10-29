@@ -52,6 +52,7 @@ jobs:
           python -m unittest -v test_quote_audit.py
           python -m unittest -v test_m4_lab.py
           python -m unittest -v test_m4_isolation.py
+          python -m unittest -v test_unknown_isolation_continuation.py test_brain_paper_entry.py
           python -m unittest -v test_m4_fresh_lab.py
           python -m unittest -v test_opportunity_audit.py
           python -m unittest -v test_rebound_lab.py
@@ -101,6 +102,10 @@ jobs:
           BRAIN_M4_FRESH_LAB: "1"
           BRAIN_M4_ISOLATION: "1"
           BRAIN_UNKNOWN_ISOLATION: "1"
+          # Only these exact inherited PAPER contracts may be isolated.
+          BRAIN_M4_FRESH_LEGACY_ADDRESS: "61uUYv7jRhZkpNuG6DCFppsSaFBea5TP7fLuRzQ4pump"
+          BRAIN_CONTROL_LEGACY_ADDRESS: "CJYxdC79qMe94db5cS6wMh7oi5Fsy3BJQMH2KxVB3my3"
+          BRAIN_PATTERN_LEGACY_ADDRESS: "9DGb9TWswLUqu85reo2kNoZkKkME9nB9YVfjYkqopump"
           BRAIN_OPPORTUNITY_AUDIT: "1"
           BRAIN_REBOUND_LAB: "1"
           BRAIN_TARGETS_LAB: "1"
@@ -117,7 +122,7 @@ jobs:
           WHALE_TRADER=unipcs python whale_paper.py &
           unipcs_pid=$!
           trap 'kill -TERM "$whale_pid" "$unipcs_pid" 2>/dev/null || true; wait "$whale_pid" || true; wait "$unipcs_pid" || true' EXIT
-          python fomo_brain.py
+          python brain_paper_entry.py
 
       - name: Descubrir pools Solana para estudio (sin compras)
         if: always()
