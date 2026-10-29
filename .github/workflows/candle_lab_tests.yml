@@ -27,6 +27,8 @@ on:
       - "brain_paper_entry.py"
       - "test_brain_paper_entry.py"
       - "opportunity_audit.py"
+      - "learning_feedback.py"
+      - "test_learning_feedback.py"
       - "test_opportunity_audit.py"
       - "whale_paper.py"
       - "test_whale_paper.py"
@@ -61,7 +63,7 @@ jobs:
         run: python -m unittest -v test_candle_lab.py
 
       - name: Verificar seguimiento de descartes sin red
-        run: python -m unittest -v test_opportunity_audit.py
+        run: python -m unittest -v test_opportunity_audit.py test_learning_feedback.py
 
       - name: Verificar comparacion de umbrales sin red
         run: python -m unittest -v test_ratio_lab.py
