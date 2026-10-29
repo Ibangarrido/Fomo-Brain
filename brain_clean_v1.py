@@ -202,6 +202,8 @@ def step(state, samples, now=None):
         if reason:
             counts[reason] += 1
             decisions.append({"key": key, "symbol": s["symbol"], "decision": "REJECT", "reason": reason})
+            if s["price"] and key not in state["watchlist"] and reason not in ("already_open", "already_traded"):
+                state["watchlist"][key] = {"price": s["price"], "ts": s["ts"], "reason": reason}
             continue
         cost = MAX_ENTRY
         units = cost * 0.99 / s["price"]
@@ -216,10 +218,16 @@ def step(state, samples, now=None):
     state["history"] = {k: v for k, v in state["history"].items()
                         if v and now - v[-1]["ts"] <= MAX_AGE_SECONDS}
     state["decisions"] = (state["decisions"] + [{"at": utcnow(), **d} for d in decisions])[-1000:]
+    state["outcomes"] = state["outcomes"][-1000:]
+    state["watchlist"] = dict(sorted(((k, v) for k, v in state["watchlist"].items()
+                                      if now - v["ts"] <= 86400),
+                                     key=lambda item: item[1]["ts"], reverse=True)[:500])
     return {"at": utcnow(), "candidates": len(samples), "counts": dict(counts),
             "entries": [d for d in decisions if d["decision"] == "PAPER_ENTRY"],
             "cash_eur": round(state["cash"], 4), "open_positions": len(state["positions"]),
             "closed_trades": len(state["closed"]),
+            "outcomes_total": len(state["outcomes"]),
+            "outcomes_by_label": dict(Counter(x["label"] for x in state["outcomes"])),
             "equity_eur": None, "equity_note": "Unknown until all open positions have current quotes"}
 
 
