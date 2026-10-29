@@ -1075,6 +1075,7 @@ UNKNOWN_ISOLATION_FILES = {
     "fomo_paper_v10.json", "fomo_paper_v10_impulse.json",
     "fomo_lab_v11_control_r1.json", "fomo_lab_v11_net_r1.json",
     "fomo_lab_continuation_control_r1.json", "fomo_lab_pattern_pullback_r1.json",
+    "fomo_lab_m4_fresh_r1.json",
 }
 
 
@@ -1100,6 +1101,7 @@ def isolate_existing_unknowns(state, path, now):
     pinned_env = {
         "fomo_lab_continuation_control_r1.json": "BRAIN_CONTROL_LEGACY_ADDRESS",
         "fomo_lab_pattern_pullback_r1.json": "BRAIN_PATTERN_LEGACY_ADDRESS",
+        "fomo_lab_m4_fresh_r1.json": "BRAIN_M4_FRESH_LEGACY_ADDRESS",
     }.get(basename)
     epoch = state.get("unknown_isolation_epoch")
     if pinned_env:
@@ -1117,6 +1119,15 @@ def isolate_existing_unknowns(state, path, now):
                     or not isinstance(keys[0], (list, tuple)) or len(keys[0]) != 3
                     or keys[0][0] != "solana" or keys[0][1] != pinned):
                 return set()
+    if basename == "fomo_lab_m4_fresh_r1.json":
+        # Pin this reviewed position, never auto-isolate future M4 losses.
+        expected = ["solana", "61uUYv7jRhZkpNuG6DCFppsSaFBea5TP7fLuRzQ4pump",
+                    "2026-10-27T15:45:34.315088+00:00"]
+        keys = (epoch["positions"] if epoch is not None else
+                [[p.get("chain"), p.get("address"), p.get("opened_at")]
+                 for p in state["positions"] if p.get("quote_status") != "OK"])
+        if keys != [expected]:
+            return set()
     if epoch is None:
         keys = [[p.get("chain"), p.get("address"), p.get("opened_at")]
                 for p in state["positions"] if p.get("quote_status") != "OK"]
@@ -1573,6 +1584,13 @@ def simular_cartera(ranking, paper_file=V10_FILE, label="V10 EARLY", confirm=Tru
         "accounting_equity": equity, "valuation_version": "valuation-r2",
         "open": len(state["positions"]), "closed": len(state["closed"]),
         "unverified_quotes": stale, "valuation_complete": stale == 0,
+        "active_entry_slots": active_position_slots(state["positions"], isolated_unknowns, isolated_m4, is_quarantined),
+        "free_entry_slots": max(0, 3 - active_position_slots(state["positions"], isolated_unknowns, isolated_m4, is_quarantined)),
+        "unknown_valuation_blocks_entries": quotes_blocked,
+        "isolated_unknown_positions": sum(
+            p.get("quote_status") != "OK" and
+            (p.get("chain"), p.get("address"), p.get("opened_at")) in isolated_unknowns
+            for p in state["positions"]),
         "verified_component": known_value, "realized_pnl": realized,
         "indicative_only_equity": indicative_only_equity})
     from m4_lab import refresh_reference
