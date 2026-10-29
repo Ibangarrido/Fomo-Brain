@@ -27,6 +27,8 @@ MAX_AGE_SECONDS = 6 * 3600
 POLL_CYCLES = 5
 POLL_SECONDS = 30
 SIGNAL_MAX_WINDOW_SECONDS = 8 * 60
+# Explicit user-provided case studies: track by contract, never infer from ticker.
+CASE_STUDY_ADDRESSES = ("4SiuAiB3xbE1Se9qxPfmGDZY812SxaeLRg4gwgNLpump",)
 
 
 def utcnow():
@@ -270,10 +272,17 @@ def main():
         recent = sorted(state["history"].items(),
                         key=lambda item: item[1][-1]["ts"] if item[1] else 0,
                         reverse=True)
-        priority = [key.split(":", 1)[0] for key in state["positions"]]
+        priority = list(CASE_STUDY_ADDRESSES)
+        priority += [key.split(":", 1)[0] for key in state["positions"]]
         priority += [key.split(":", 1)[0] for key, _ in recent[:8]]
         raw = fetch_pairs(tracked_addresses=priority)
         samples = [sample(p, now) for p in raw]
+        observed_contracts = {s["address"] for s in samples}
+        for contract in CASE_STUDY_ADDRESSES:
+            if contract not in observed_contracts:
+                print("CASE_STUDY_NOT_QUOTED", contract, flush=True)
+            else:
+                print("CASE_STUDY_OBSERVED", contract, flush=True)
         report = step(state, samples, now)
         aggregate.update(report["counts"])
         save_json(STATE_FILE, state)
