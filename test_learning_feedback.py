@@ -50,6 +50,13 @@ class LearningFeedbackTests(unittest.TestCase):
         self.assertEqual(report["excluded"]["pair_unverified_5m"], 1)
         self.assertEqual(report["excluded"]["late_5m"], 1)
 
+    def test_stale_checkpoint_cannot_masquerade_as_timely_receipt(self):
+        # A forged lag of 15 seconds cannot make a 30-minute-old quote a 5m sample.
+        row = case("stale", at="2026-10-29T12:30:15+00:00", lag=15)
+        report = evaluate({"tokens": {"stale": row}}, self.NOW)
+        self.assertEqual(report["cohorts"], [])
+        self.assertEqual(report["excluded"]["inconsistent_lag_5m"], 1)
+
     def test_multiple_strategy_reasons_do_not_duplicate_token_in_group(self):
         row = case("same")
         row["first_rejection"]["entry_rejections"]["V13"] = "ratio compras < 75%"
