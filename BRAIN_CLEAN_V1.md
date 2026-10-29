@@ -7,8 +7,8 @@ CONTINUATION, PATTERN PULLBACK, historical JSON files and PRs remain intact on
 ## One strategy
 
 ESCALERA: independent market snapshots must show a peak, a 15–40% pullback,
-a rebound, and two further higher observations. The engine needs at least
-**five observations of the same Solana pool**, separated by more than 20
+a rebound, and a further higher breakout observation. The engine needs at least
+**four observations of the same Solana pool**, separated by more than 20
 seconds, and uses only observations already recorded at decision time.
 
 The experiment uses public DexScreener search results, which are **not an
@@ -52,7 +52,7 @@ No real trading, exchange credentials, broker orders or wallet signing.
 ## Faster decision loop and measurable learning
 
 Each manual/PAPER workflow run now samples public market data **five times,
-50 seconds apart**. This is a bounded observation window, not a guarantee
+30 seconds apart** (plus source request time). The entry signal requires four observations within eight minutes. This is a bounded observation window, not a guarantee
 of finding every fast-moving token. The run retains the full risk gate and
 saves state after each poll. The run report aggregates all rejection reasons.
 
