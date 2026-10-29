@@ -11,8 +11,9 @@ on:
 concurrency:
   group: fomo-brain-state-${{ github.ref }}
   cancel-in-progress: false
-  # Conservar solo la peticion pendiente mas reciente, sin interrumpir la activa.
-  queue: single
+  # Encolar las solicitudes manuales y schedule sin cancelar las pendientes.
+  # Mantener una sola ejecucion activa para proteger la memoria PAPER.
+  queue: max
 
 jobs:
   analyze:
