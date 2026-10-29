@@ -48,3 +48,16 @@ GitHub Actions event types: `schedule` versus `workflow_dispatch`.
 
 **Do not merge until offline tests and an initial PAPER run are checked.**
 No real trading, exchange credentials, broker orders or wallet signing.
+
+## Faster decision loop and measurable learning
+
+Each manual/PAPER workflow run now samples public market data **five times,
+50 seconds apart**. This is a bounded observation window, not a guarantee
+of finding every fast-moving token. The run retains the full risk gate and
+saves state after each poll. The run report aggregates all rejection reasons.
+
+A rejected token with a verified price is tracked in a bounded watchlist.
+Only a later verified quote at least **15 minutes** afterward can label the
+observed price change as `rally_25pct`, `drop_30pct`, or `neutral`. These
+are retrospective labels, **not proof a trade was executable or profitable**.
+The strategy does not auto-change its risk thresholds based on these labels.
