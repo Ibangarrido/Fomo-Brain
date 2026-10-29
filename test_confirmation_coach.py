@@ -1,7 +1,10 @@
 import copy
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from datetime import datetime, timezone
-from confirmation_coach import diagnose
+from confirmation_coach import diagnose, report_paper_files
 
 NOW = datetime(2026, 10, 29, 18, 0, tzinfo=timezone.utc)
 
@@ -48,6 +51,20 @@ class ConfirmationCoachTests(unittest.TestCase):
         self.assertEqual(report["pending_recheck_candidates"], 0)
         self.assertEqual(report["blockers"]["invalid_event_time"], 1)
         self.assertEqual(report["blockers"]["reference_available_not_entry"], 1)
+
+    def test_file_report_preserves_original_wallet_and_marks_missing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            filename = Path(folder) / "paper.json"
+            state = {"cash": 89.83, "reserve": 0.55,
+                     "positions": [{"address": "MACCA", "price": None}],
+                     "confirmation_audit": [event()]}
+            filename.write_text(json.dumps(state))
+            original = filename.read_bytes()
+            report = report_paper_files([str(filename), str(Path(folder) / "missing.json")], NOW)
+            self.assertEqual(filename.read_bytes(), original)
+            self.assertEqual(report["reports"]["paper.json"]["pending_recheck_candidates"], 1)
+            self.assertEqual(report["reports"]["missing.json"]["status"], "missing_file")
+            self.assertFalse(report["wallet_state_modified"])
 
     def test_150_event_cap_and_invalid_timestamps(self):
         rows = [event(str(i)) for i in range(160)]
