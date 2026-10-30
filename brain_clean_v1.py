@@ -218,6 +218,11 @@ def staircase(samples):
         if any(s["cap"] < trough or s["price"] < recent[i]["price"]
                for s in recent[i + 1:]):
             continue
+        # A new higher peak before the final confirmation pair starts a new
+        # swing. Never reuse an earlier shallow dip after that new peak falls.
+        if any(s["cap"] > peak or s["price"] > peak_sample["price"]
+               for s in recent[i + 1:-2]):
+            continue
         drop = (peak - trough) / peak
         price_drop = 1 - recent[i]["price"] / peak_sample["price"]
         if (0.15 <= drop <= 0.40 and 0.15 <= price_drop <= 0.40 and
