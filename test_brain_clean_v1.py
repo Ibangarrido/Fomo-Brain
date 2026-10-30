@@ -173,6 +173,34 @@ class CleanPaperTests(unittest.TestCase):
         self.assertIn("mint:pool", state["positions"])
         self.assertEqual(state["closed"], [])
 
+    def test_pillsey_illiquid_stop_does_not_invent_paper_sale(self):
+        # Clean #10 recorded a stop at $2,235.84 liquidity, below MIN_LIQ.
+        # Preserve the position and cash rather than crediting an unfillable sale.
+        key = ("J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump:"
+               "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz")
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "units": 212264.15094339623,
+                                    "entry_price": 4.664e-05, "cost": 10.0}
+        state["history"][key] = [sample(46339, 1000, key=key, price=4.664e-05)]
+        illiquid = sample(2039, 1600, key=key, price=2.052e-06)
+        illiquid["liquidity"] = 2235.84
+        report = brain.step(state, [illiquid], 1600)
+        self.assertEqual(report["counts"].get("position_low_liquidity_hold"), 1)
+        self.assertNotIn("paper_exit", report["counts"])
+        self.assertEqual(state["cash"], 90.0)
+        self.assertIn(key, state["positions"])
+        self.assertEqual(state["closed"], [])
+
+        # A later, independently observed liquid quote can still trigger a stop.
+        liquid = sample(2039, 1700, key=key, price=2.052e-06)
+        liquid["liquidity"] = brain.MIN_LIQ
+        report = brain.step(state, [liquid], 1700)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        self.assertNotIn(key, state["positions"])
+        self.assertEqual(len(state["closed"]), 1)
+        self.assertAlmostEqual(state["cash"], 90.4312103773585)
+
     def test_low_liquidity_is_not_traded(self):
         state = brain.new_state()
         for i, cap in enumerate([60000, 42000, 45000, 50000, 56000]):
