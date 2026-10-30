@@ -172,6 +172,28 @@ class CleanPaperTests(unittest.TestCase):
                                              "GITHUB_RUN_ATTEMPT": "1"}):
                     self.assertEqual(brain.load_state(missing)["cash"], 100)
 
+    def test_one_token_cannot_be_traded_twice_via_different_pools(self):
+        for previously_closed in (False, True):
+            with self.subTest(previously_closed=previously_closed):
+                state = brain.new_state()
+                prior = {"key": "mint:pool1", "units": 10,
+                         "entry_price": 1, "cost": 10}
+                if previously_closed:
+                    state["closed"].append(prior)
+                else:
+                    state["positions"]["mint:pool1"] = prior
+                    state["cash"] = 90
+                for i, cap in enumerate([60000, 42000, 45000, 50000]):
+                    now = 1000 + i * 60
+                    report = brain.step(state, [
+                        sample(cap, now, key="mint:pool2")], now)
+                expected = ("already_traded_token" if previously_closed
+                            else "already_open_token_other_pool")
+                self.assertEqual(report["counts"].get(expected), 1)
+                self.assertNotIn("paper_entry", report["counts"])
+                self.assertNotIn("mint:pool2", state["positions"])
+                self.assertEqual(state["cash"], 100 if previously_closed else 90)
+
     def test_no_legacy_portfolio_import(self):
         import tempfile
         import json
