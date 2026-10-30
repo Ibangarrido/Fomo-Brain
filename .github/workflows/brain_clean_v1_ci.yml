@@ -1,0 +1,27 @@
+name: Clean V1 runtime regression tests
+on:
+  pull_request:
+    paths:
+      - 'brain_clean_v1.py'
+      - 'test_brain_clean_v1.py'
+      - '.github/workflows/brain_clean_v1*.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'brain_clean_v1.py'
+      - 'test_brain_clean_v1.py'
+      - '.github/workflows/brain_clean_v1*.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest -v test_brain_clean_v1.py
