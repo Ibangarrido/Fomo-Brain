@@ -123,6 +123,26 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(report["counts"].get("non_independent_observation"), 1)
         self.assertEqual(state["positions"], {})
 
+    def test_stale_or_unliquid_quote_cannot_value_paper_equity(self):
+        import tempfile
+        import os
+        import json
+        state = brain.new_state()
+        state["cash"] = 90
+        state["positions"]["mint:pool"] = {"key": "mint:pool", "units": 10,
+                                            "entry_price": 1, "cost": 10}
+        state["history"]["mint:pool"] = [sample(60000, 2000, price=1)]
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(brain, "STATE_FILE", os.path.join(tmp, "state.json")), \
+                 patch.object(brain, "REPORT_FILE", os.path.join(tmp, "report.json")), \
+                 patch.object(brain, "POLL_CYCLES", 1), \
+                 patch.object(brain, "fetch_pairs", return_value=[]), \
+                 patch.object(brain, "load_state", return_value=state):
+                brain.main()
+            with open(os.path.join(tmp, "report.json")) as f:
+                report = json.load(f)
+        self.assertIsNone(report["equity_eur"])
+
     def test_no_legacy_portfolio_import(self):
         import tempfile
         import json
