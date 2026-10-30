@@ -22,6 +22,8 @@ on:
       - "candle_lab.py"
       - "test_candle_lab.py"
       - "fomo_brain.py"
+      - "confirmation_coach.py"
+      - "test_confirmation_coach.py"
       - "test_fomo_v8.py"
       - "test_unknown_isolation_continuation.py"
       - "brain_paper_entry.py"
@@ -54,6 +56,38 @@ jobs:
           python -m unittest -v test_exit_watchdog.py
           python -m unittest -v test_social_radar.py
           python test_whale_paper.py
+      - name: Verificar diagnostico de confirmaciones sin red
+        run: python -m unittest -v test_confirmation_coach.py
+
+      - name: Simulacion PAPER diagnostica reproducible sin red
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, sys, tempfile
+          from test_confirmation_coach import event, NOW
+          script = str(pathlib.Path("confirmation_coach.py").resolve())
+          with tempfile.TemporaryDirectory() as folder:
+              source = pathlib.Path(folder) / "paper_fixture.json"
+              source.write_text(json.dumps({"cash": 100, "reserve": 0, "positions": {},
+                  "confirmation_audit": [event(), event("drift", reasons=["PRICE_DRIFT_GT_5PCT"]),
+                  event("pair", current_pair="pair2"), event("invalid", status="INVALID_FRESH_RECEIPT")]}))
+              before = hashlib.sha256(source.read_bytes()).hexdigest()
+              output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "confirmation_coach_report.json"
+              subprocess.run([sys.executable, script, str(source), "--now", NOW.isoformat(),
+                              "--output", str(output)], check=True)
+              assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+              report = json.loads(output.read_text())
+              diagnostics = report["reports"][source.name]
+              assert diagnostics["input_sha256"] == before
+              for blocker in ("reference_expired", "quote_drift", "pair_changed", "invalid_receipt"):
+                  assert diagnostics["blockers"][blocker] > 0
+              assert report["entry_authorized"] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: confirmation-coach-paper-diagnostic
+          path: ${{ runner.temp }}/confirmation_coach_report.json
+          if-no-files-found: error
+
       - name: Verificar aislamiento CONTINUATION con contrato exacto
         run: python -m unittest -v test_unknown_isolation_continuation.py test_brain_paper_entry.py
 
