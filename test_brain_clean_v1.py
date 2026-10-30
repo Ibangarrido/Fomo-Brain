@@ -210,6 +210,34 @@ class CleanPaperTests(unittest.TestCase):
                   enumerate([60000, 42000, 10000, 45000, 50000])]
         self.assertFalse(brain.staircase(series)[0])
 
+    def test_pillsey_new_peak_collapse_cannot_reuse_older_staircase(self):
+        # Exact Solana mint/pool observed in Clean V1 schedule run 41137991511.
+        # The old 27% dip was followed by a higher peak and a 61% collapse.
+        mint = "J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump"
+        pool = "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz"
+        observed = [
+            (0, 56425, 0.00005679),
+            (36, 41071, 0.00004134),
+            (72, 60555, 0.00006095),
+            (108, 76991, 0.00007749),
+            (144, 114196, 0.00011490),
+            (305, 44804, 0.00004509),
+            (341, 46339, 0.00004664),
+        ]
+        series = [sample(cap, 1000 + offset, key=mint + ":" + pool, price=price)
+                  for offset, cap, price in observed]
+        for observation in series:
+            observation["address"] = mint
+            observation["pool"] = pool
+            observation["symbol"] = "PILLSEY"
+        self.assertEqual(brain.staircase(series), (False, "no_qualified_staircase"))
+        state = brain.new_state()
+        state["history"][series[0]["key"]] = series[:-1]
+        report = brain.step(state, [series[-1]], series[-1]["ts"])
+        self.assertNotIn("paper_entry", report["counts"])
+        self.assertEqual(state["cash"], 100.0)
+        self.assertEqual(state["positions"], {})
+
     def test_cap_recovery_without_price_pattern_is_rejected(self):
         series = [sample(c, 1000 + i * 30, price=p) for i, (c, p) in
                   enumerate(zip([60000, 42000, 45000, 50000], [1, .2, .3, .4]))]
