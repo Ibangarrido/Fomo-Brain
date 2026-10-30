@@ -91,10 +91,20 @@ class CleanPaperTests(unittest.TestCase):
         second = sample(90000, 1899)
         brain.step(state, [second], 1899)
         self.assertEqual(len(state["outcomes"]), 0)
-        third = sample(90000, 1900)
-        brain.step(state, [third], 1900)
+        third = sample(90000, 1920)
+        brain.step(state, [third], 1920)
         self.assertEqual(state["outcomes"][0]["label"], "rally_25pct")
         self.assertEqual(state["outcomes"][0]["reason"], "waiting_for_4_observations")
+
+    def test_stale_quote_cannot_label_rejection_outcome(self):
+        state = brain.new_state()
+        state["watchlist"]["mint:pool"] = {
+            "price": 1, "ts": 1000, "reason": "waiting_for_4_observations"}
+        state["history"]["mint:pool"] = [sample(60000, 2000, price=1)]
+        report = brain.step(state, [sample(90000, 1900, price=1.5)], 2000)
+        self.assertEqual(state["outcomes"], [])
+        self.assertIn("mint:pool", state["watchlist"])
+        self.assertNotIn("outcome_rally_25pct", report["counts"])
 
     def test_shallow_dip_cannot_hide_later_collapse(self):
         series = [sample(c, 1000 + i * 30) for i, c in
