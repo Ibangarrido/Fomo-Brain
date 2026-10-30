@@ -11,6 +11,22 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_recent_profile_source_is_attributed_without_changing_trade_gates(self):
+        import io
+        import json
+        payload = [{"chainId": "solana", "pairAddress": "pool",
+                    "baseToken": {"address": "newmint", "symbol": "TEST"},
+                    "priceUsd": "1", "liquidity": {"usd": 100},
+                    "pairCreatedAt": 1000000}]
+        with patch("brain_clean_v1.discover_recent_addresses", return_value=["newmint"]):
+            with patch("brain_clean_v1.urllib.request.urlopen",
+                       side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(payload).encode())):
+                with patch("brain_clean_v1.time.sleep"):
+                    pairs = brain.fetch_pairs(queries=(), tracked_addresses=())
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["_clean_source"], "recent_profile")
+        self.assertEqual(brain.gate(brain.sample(pairs[0], 4000)), "low_liquidity")
+
     def test_recent_discovery_keeps_only_bounded_solana_addresses(self):
         import io
         import json
