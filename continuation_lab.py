@@ -11,7 +11,8 @@ ARMS = {
     '50': ('fomo_lab_continuation_50_r1.json', 'continuation', .50),
     '60': ('fomo_lab_continuation_60_r1.json', 'continuation', .60),
 }
-LEGACY_FRESH_V2_FILE = 'fomo_lab_continuation_fresh_v2.json'
+LEGACY_FILES = {item[0] for item in ARMS.values()}
+FRESH_V2_FILE = 'fomo_lab_continuation_fresh_v2.json'
 FRESH_V2_MARKER = 'fomo_lab_continuation_fresh_v2_start.json'
 ARMS['fresh_v2'] = (FRESH_V2_FILE, 'continuation', .50)
 FILES = {item[0] for item in ARMS.values()}
@@ -39,7 +40,7 @@ def bootstrap():
                 'scope': 'independent paper portfolios; never add balances',
                 'flow_by_amount': 'UNKNOWN; count proxy only', 'execution_verified': False}
     for arm, (path, mode, ratio) in ARMS.items():
-        if arm in PATTERN_ARMS or arm == 'shallow_pullback':
+        if arm in PATTERN_ARMS or arm in ('shallow_pullback', 'fresh_v2'):
             continue
         write(path, {'version': 1, 'started_at': at, 'cash': 100., 'reserve': 0.,
                      'positions': [], 'closed': [], 'seen': [], 'observations': [],
