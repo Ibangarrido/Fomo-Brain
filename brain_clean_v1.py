@@ -223,17 +223,18 @@ def step(state, samples, now=None):
     state.setdefault("outcomes", [])
     for s in samples:
         key = s["key"]
+        hist = state["history"].setdefault(key, [])
+        # Outcomes must use independently admitted, chronological observations.
+        admitted = not hist or s["ts"] > hist[-1]["ts"] + 20
         watch = state["watchlist"].get(key)
-        if watch and s["ts"] - watch["ts"] >= 900 and s["price"]:
+        if admitted and watch and s["ts"] - watch["ts"] >= 900 and s["price"]:
             change = s["price"] / watch["price"] - 1
             label = "rally_25pct" if change >= .25 else ("drop_30pct" if change <= -.30 else "neutral")
             state["outcomes"].append({"key": key, "reason": watch["reason"],
                                       "return_pct": round(change * 100, 2), "label": label})
             counts["outcome_" + label] += 1
             del state["watchlist"][key]
-        hist = state["history"].setdefault(key, [])
         # Never use stale or duplicate snapshots as independent observations.
-        admitted = not hist or s["ts"] > hist[-1]["ts"] + 20
         if admitted:
             hist.append(s)
             hist[:] = [x for x in hist[-MAX_SNAPSHOTS:] if now - x["ts"] <= MAX_AGE_SECONDS]
