@@ -51,6 +51,13 @@ def new_state():
 
 def load_state(path=STATE_FILE):
     if not os.path.exists(path):
+        # The first isolated workflow run may bootstrap 100 EUR. Later runs
+        # must never silently reset the ledger if artifact restore fails.
+        if (os.environ.get("GITHUB_ACTIONS") == "true" and
+                os.environ.get("GITHUB_WORKFLOW") == "Brain Clean V1 - isolated PAPER launch" and
+                (int(os.environ.get("GITHUB_RUN_NUMBER", "1")) > 1 or
+                 int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")) > 1)):
+            raise RuntimeError("Clean V1 state missing on repeat PAPER run: refusing ledger reset")
         return new_state()
     with open(path, encoding="utf-8") as handle:
         state = json.load(handle)
