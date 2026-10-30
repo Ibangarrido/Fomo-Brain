@@ -57,12 +57,26 @@ class CleanPaperTests(unittest.TestCase):
         import json
         payload = [{"chainId": "solana", "pairAddress": "pool",
                     "baseToken": {"address": "mint", "symbol": "TEST"}}]
+        def fresh_response(request, timeout=8):
+            # Each HTTP request gets its own stream; discovery must not
+            # consume the mocked response intended for the tracked pool.
+            url = request.full_url
+            if "/solana/mint" in url:
+                return io.BytesIO(json.dumps(payload).encode())
+            if "/solana/newmint" in url:
+                return io.BytesIO(b"[]")
+            raise AssertionError("Unexpected endpoint: " + url)
+
         with patch("brain_clean_v1.urllib.request.urlopen",
-                   return_value=io.BytesIO(json.dumps(payload).encode())) as mocked:
-            with patch("brain_clean_v1.time.sleep"):
-                pairs = brain.fetch_pairs(queries=(), tracked_addresses=("mint",))
+                   side_effect=fresh_response) as mocked:
+            with patch("brain_clean_v1.discover_recent_addresses",
+                       return_value=["newmint"]):
+                with patch("brain_clean_v1.time.sleep"):
+                    pairs = brain.fetch_pairs(queries=(), tracked_addresses=("mint",))
         self.assertEqual(len(pairs), 1)
         self.assertTrue(any("/solana/mint" in call.args[0].full_url
+                            for call in mocked.call_args_list))
+        self.assertTrue(any("/solana/newmint" in call.args[0].full_url
                             for call in mocked.call_args_list))
 
     def test_unquoted_position_does_not_disappear(self):
