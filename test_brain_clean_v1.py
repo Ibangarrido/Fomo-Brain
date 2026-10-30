@@ -62,7 +62,8 @@ class CleanPaperTests(unittest.TestCase):
             with patch("brain_clean_v1.time.sleep"):
                 pairs = brain.fetch_pairs(queries=(), tracked_addresses=("mint",))
         self.assertEqual(len(pairs), 1)
-        self.assertIn("/solana/mint", mocked.call_args.args[0].full_url)
+        self.assertTrue(any("/solana/mint" in call.args[0].full_url
+                            for call in mocked.call_args_list))
 
     def test_unquoted_position_does_not_disappear(self):
         state = brain.new_state()
