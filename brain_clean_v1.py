@@ -245,6 +245,11 @@ def step(state, samples, now=None):
         if s is None or not s["price"] or not s["liquidity"]:
             counts["position_unpriced_hold"] += 1
             continue
+        # A thin pool is not an executable exit quote. Keep the PAPER position,
+        # cash and sale history unchanged until liquidity meets the entry guard.
+        if s["liquidity"] < MIN_LIQ:
+            counts["position_low_liquidity_hold"] += 1
+            continue
         # Never simulate an exit from a quote older than the last admitted
         # observation. Out-of-order provider data must not change PAPER cash.
         prior = state["history"].get(key) or []
@@ -372,7 +377,8 @@ def main():
         if cycle < POLL_CYCLES - 1:
             time.sleep(POLL_SECONDS)
     quotes = {s["key"]: s for s in samples}
-    if all(k in quotes and quotes[k]["price"] and quotes[k]["liquidity"] and
+    if all(k in quotes and quotes[k]["price"] and
+           quotes[k]["liquidity"] >= MIN_LIQ and
            (not state["history"].get(k) or
             quotes[k]["ts"] >= state["history"][k][-1]["ts"])
            for k in state["positions"]):
