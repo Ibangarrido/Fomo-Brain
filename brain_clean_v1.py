@@ -73,6 +73,26 @@ def save_json(path, obj):
     os.replace(temp, path)
 
 
+def discover_recent_addresses(limit=8):
+    """Bounded public token-profile discovery; never bypasses trade gates."""
+    url = "https://api.dexscreener.com/token-profiles/latest/v1"
+    req = urllib.request.Request(url, headers={"User-Agent": "BrainCleanV1/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            profiles = json.load(response)
+        if not isinstance(profiles, list):
+            return []
+        return list(dict.fromkeys(
+            p["tokenAddress"] for p in profiles
+            if isinstance(p, dict) and p.get("chainId") == "solana"
+            and isinstance(p.get("tokenAddress"), str)
+            and p["tokenAddress"].isalnum()
+        ))[:limit]
+    except (OSError, ValueError, KeyError) as exc:
+        print("DISCOVERY_SOURCE_ERROR", str(exc)[:160], flush=True)
+        return []
+
+
 def fetch_pairs(queries=SEARCHES, tracked_addresses=()):
     pairs = {}
     for query in queries:
@@ -93,7 +113,7 @@ def fetch_pairs(queries=SEARCHES, tracked_addresses=()):
         time.sleep(0.35)
     # Follow known pools directly: a broad search may stop returning a token
     # before the next confirmation or PAPER exit observation.
-    for address in list(dict.fromkeys(tracked_addresses))[:8]:
+    for address in list(dict.fromkeys(list(tracked_addresses)[:8] + discover_recent_addresses()))[:16]:
         if not address or not address.isalnum():
             continue
         url = "https://api.dexscreener.com/token-pairs/v1/solana/" + address
