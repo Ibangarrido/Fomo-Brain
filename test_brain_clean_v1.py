@@ -11,6 +11,17 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_recent_discovery_keeps_only_bounded_solana_addresses(self):
+        import io
+        import json
+        payload = [{"chainId": "ethereum", "tokenAddress": "wrong"},
+                   {"chainId": "solana", "tokenAddress": "mintA"},
+                   {"chainId": "solana", "tokenAddress": "mintA"},
+                   {"chainId": "solana", "tokenAddress": "mintB"}]
+        with patch("brain_clean_v1.urllib.request.urlopen",
+                   return_value=io.BytesIO(json.dumps(payload).encode())):
+            self.assertEqual(brain.discover_recent_addresses(limit=1), ["mintA"])
+
     def test_new_ledger_has_100_eur_and_no_legacy(self):
         state = brain.new_state()
         self.assertEqual(state["cash"], 100)
