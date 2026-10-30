@@ -218,6 +218,11 @@ def staircase(samples):
         if any(s["cap"] < trough or s["price"] < recent[i]["price"]
                for s in recent[i + 1:]):
             continue
+        # A new higher peak before the final confirmation pair starts a new
+        # swing. Never reuse an earlier shallow dip after that new peak falls.
+        if any(s["cap"] > peak or s["price"] > peak_sample["price"]
+               for s in recent[i + 1:-2]):
+            continue
         drop = (peak - trough) / peak
         price_drop = 1 - recent[i]["price"] / peak_sample["price"]
         if (0.15 <= drop <= 0.40 and 0.15 <= price_drop <= 0.40 and
@@ -255,6 +260,11 @@ def step(state, samples, now=None):
         s = quotes.get(key)
         if s is None or not s["price"] or not s["liquidity"]:
             counts["position_unpriced_hold"] += 1
+            continue
+        # A thin pool is not an executable exit quote. Keep the PAPER position,
+        # cash and sale history unchanged until liquidity meets the entry guard.
+        if s["liquidity"] < MIN_LIQ:
+            counts["position_low_liquidity_hold"] += 1
             continue
         # Never simulate an exit from a quote older than the last admitted
         # observation. Out-of-order provider data must not change PAPER cash.
@@ -383,7 +393,8 @@ def main():
         if cycle < POLL_CYCLES - 1:
             time.sleep(POLL_SECONDS)
     quotes = {s["key"]: s for s in samples}
-    if all(k in quotes and quotes[k]["price"] and quotes[k]["liquidity"] and
+    if all(k in quotes and quotes[k]["price"] and
+           quotes[k]["liquidity"] >= MIN_LIQ and
            (not state["history"].get(k) or
             quotes[k]["ts"] >= state["history"][k][-1]["ts"])
            for k in state["positions"]):
