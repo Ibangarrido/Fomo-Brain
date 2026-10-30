@@ -107,6 +107,26 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(brain.staircase(series), (True, "staircase_confirmed"))
         self.assertFalse(brain.staircase(series[:3])[0])
 
+    def test_recent_major_collapse_blocks_dead_cat_staircase(self):
+        state = brain.new_state()
+        # Real failure shape: an earlier ~400k peak preceded a 40-60k
+        # local staircase, then a >95% simulated loss on PILLSEY.
+        for cap, ts in [(397721, 500), (60000, 1000), (42000, 1060),
+                        (45000, 1120), (50000, 1180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("recent_crash_risk"), 1)
+        self.assertEqual(state["cash"], 100)
+        self.assertEqual(state["positions"], {})
+        self.assertEqual(brain.staircase(state["history"]["mint:pool"][-4:])[0], True)
+
+    def test_old_peak_outside_crash_window_does_not_block_staircase(self):
+        state = brain.new_state()
+        for cap, ts in [(397721, 100), (60000, 3000), (42000, 3060),
+                        (45000, 3120), (50000, 3180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(state["cash"], 90)
+
     def test_entry_only_after_confirmed_pattern(self):
         state = brain.new_state()
         base = 1000
