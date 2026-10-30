@@ -30,6 +30,8 @@ on:
       - "test_opportunity_audit.py"
       - "whale_paper.py"
       - "test_whale_paper.py"
+      - ".github/workflows/fomo_brain.yml"
+      - "test_workflow_queue.py"
       - ".github/workflows/candle_lab_tests.yml"
   workflow_dispatch:
 
@@ -54,6 +56,9 @@ jobs:
           python -m unittest -v test_exit_watchdog.py
           python -m unittest -v test_social_radar.py
           python test_whale_paper.py
+      - name: Verificar cola de Actions y proteccion PAPER sin red
+        run: python -m unittest -v test_workflow_queue.py
+
       - name: Verificar aislamiento CONTINUATION con contrato exacto
         run: python -m unittest -v test_unknown_isolation_continuation.py test_brain_paper_entry.py
 

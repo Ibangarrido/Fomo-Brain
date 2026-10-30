@@ -4,6 +4,11 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '3,13,23,33,43,53 * * * *'
+  # Supplemental trigger when GitHub delays cron; never presented as schedule.
+  workflow_run:
+    workflows: ['FOMO Brain']
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -15,21 +20,29 @@ concurrency:
 
 jobs:
   clean_paper:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 8
     steps:
-      - name: Checkout experimental branch
+      - name: Checkout exact triggering commit
         uses: actions/checkout@v4
         with:
-          ref: brain-clean-v1
+          ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Record execution provenance
+        env:
+          RUN_EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RUN_SHA"
+          echo "Event=$RUN_EVENT Commit=$RUN_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
       - name: Offline regression tests
         run: python -m unittest -v test_brain_clean_v1.py
-      - name: Restore Clean V1 ledger only
+      - name: Restore latest saved Clean V1 ledger
         uses: dawidd6/action-download-artifact@v11
         with:
           workflow: brain_clean_v1.yml
@@ -37,10 +50,13 @@ jobs:
           name: brain-clean-v1-state
           path: .
           search_artifacts: true
-          if_no_artifact_found: ignore
+          # A failed run may have saved newer cash/positions. Never roll back
+          # to the last successful ledger after a partial PAPER execution.
+          workflow_conclusion: ''
+          if_no_artifact_found: fail
       - name: Run isolated PAPER experiment
         env:
-          PYTHONUNBUFFERED: "1"
+          PYTHONUNBUFFERED: '1'
         run: python brain_clean_v1.py
       - name: Upload Clean V1 state and audit
         if: always()

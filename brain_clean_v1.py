@@ -26,6 +26,7 @@ MAX_SNAPSHOTS = 30
 MAX_AGE_SECONDS = 6 * 3600
 POLL_CYCLES = 5
 POLL_SECONDS = 30
+FETCH_BUDGET_SECONDS = 45
 SIGNAL_MAX_WINDOW_SECONDS = 8 * 60
 # Explicit user-provided case studies: track by contract, never infer from ticker.
 CASE_STUDY_ADDRESSES = ("4SiuAiB3xbE1Se9qxPfmGDZY812SxaeLRg4gwgNLpump",)
@@ -95,37 +96,29 @@ def discover_recent_addresses(limit=8):
 
 def fetch_pairs(queries=SEARCHES, tracked_addresses=()):
     pairs = {}
-    for query in queries:
-        url = "https://api.dexscreener.com/latest/dex/search?q=" + urllib.parse.quote(query)
+    deadline = time.monotonic() + FETCH_BUDGET_SECONDS
+    def request_json(url, timeout):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Clean V1 per-poll data budget exhausted")
         req = urllib.request.Request(url, headers={"User-Agent": "BrainCleanV1/1.0"})
-        try:
-            with urllib.request.urlopen(req, timeout=12) as response:
-                payload = json.load(response)
-            for pair in payload.get("pairs") or []:
-                if pair.get("chainId") != "solana":
-                    continue
-                addr = (pair.get("baseToken") or {}).get("address")
-                if addr and pair.get("pairAddress"):
-                    key = addr + ":" + pair["pairAddress"]
-                    pairs[key] = {**pair, "_clean_source": "search"}
-        except (OSError, ValueError, KeyError) as exc:
-            print("SOURCE_ERROR", query, str(exc)[:160], flush=True)
-        time.sleep(0.35)
-    # Follow known pools directly: a broad search may stop returning a token
-    # before the next confirmation or PAPER exit observation.
-    tracked_set = set(list(tracked_addresses)[:8])
-    for address in list(dict.fromkeys(list(tracked_addresses)[:8] + discover_recent_addresses()))[:16]:
+        with urllib.request.urlopen(req, timeout=min(timeout, remaining)) as response:
+            return json.load(response)
+    # New discovery and open holdings receive the budget before broad searches.
+    tracked_set = set(list(dict.fromkeys(tracked_addresses))[:8])
+    recent_addresses = discover_recent_addresses()
+    for address in list(dict.fromkeys(list(dict.fromkeys(tracked_addresses))[:8] + recent_addresses))[:16]:
+        if time.monotonic() >= deadline:
+            break
         if not address or not address.isalnum():
             continue
         url = "https://api.dexscreener.com/token-pairs/v1/solana/" + address
-        req = urllib.request.Request(url, headers={"User-Agent": "BrainCleanV1/1.0"})
         try:
-            with urllib.request.urlopen(req, timeout=8) as response:
-                tracked = json.load(response)
+            tracked = request_json(url, 8)
             if not isinstance(tracked, list):
                 continue
             for pair in tracked:
-                if pair.get("chainId") != "solana":
+                if not isinstance(pair, dict) or pair.get("chainId") != "solana":
                     continue
                 token = (pair.get("baseToken") or {}).get("address")
                 pool = pair.get("pairAddress")
@@ -133,6 +126,23 @@ def fetch_pairs(queries=SEARCHES, tracked_addresses=()):
                     pairs[token + ":" + pool] = {**pair, "_clean_source": "tracked" if address in tracked_set else "recent_profile"}
         except (OSError, ValueError, KeyError) as exc:
             print("TRACKED_SOURCE_ERROR", address[:12], str(exc)[:100], flush=True)
+        time.sleep(0.35)
+    for query in queries:
+        if time.monotonic() >= deadline:
+            print("FETCH_BUDGET_EXHAUSTED", flush=True)
+            break
+        url = "https://api.dexscreener.com/latest/dex/search?q=" + urllib.parse.quote(query)
+        try:
+            payload = request_json(url, 12)
+            for pair in payload.get("pairs") or []:
+                if pair.get("chainId") != "solana":
+                    continue
+                addr = (pair.get("baseToken") or {}).get("address")
+                if addr and pair.get("pairAddress"):
+                    key = addr + ":" + pair["pairAddress"]
+                    pairs.setdefault(key, {**pair, "_clean_source": "search"})
+        except (OSError, ValueError, KeyError) as exc:
+            print("SOURCE_ERROR", query, str(exc)[:160], flush=True)
         time.sleep(0.35)
     return list(pairs.values())
 
@@ -321,21 +331,27 @@ def step(state, samples, now=None):
             "equity_eur": None, "equity_note": "Unknown until all open positions have current quotes"}
 
 
+def tracking_priority(state):
+    """Holdings first; eligible recent signals before rejected historical pools."""
+    recent = sorted((v[-1] for v in state["history"].values() if v and gate(v[-1]) is None),
+                    key=lambda s: s["ts"], reverse=True)
+    return list(dict.fromkeys(
+        [k.split(":", 1)[0] for k in state["positions"]] +
+        [s["address"] for s in recent] + list(CASE_STUDY_ADDRESSES)))[:8]
+
+
 def main():
     state = load_state()
+    started = time.monotonic()
+    previous_run = state.get("last_run", {})
     now = time.time()
     report = None
     aggregate = Counter()
     discovery_sources = Counter()
     for cycle in range(POLL_CYCLES):
         now = time.time()
-        recent = sorted(state["history"].items(),
-                        key=lambda item: item[1][-1]["ts"] if item[1] else 0,
-                        reverse=True)
-        priority = list(CASE_STUDY_ADDRESSES)
-        priority += [key.split(":", 1)[0] for key in state["positions"]]
-        priority += [key.split(":", 1)[0] for key, _ in recent[:8]]
-        raw = fetch_pairs(tracked_addresses=priority)
+        raw = fetch_pairs(tracked_addresses=tracking_priority(state))
+        now = time.time()
         samples = [sample(p, now) for p in raw]
         discovery_sources.update(p.get("_clean_source", "unknown") for p in raw)
         observed_contracts = {s["address"] for s in samples}
@@ -363,9 +379,20 @@ def main():
     report["aggregate_counts"] = dict(aggregate)
     report["discovery_sources_all_polls"] = dict(discovery_sources)
     report["discovery_sources_last_poll"] = dict(Counter(p.get("_clean_source", "unknown") for p in raw))
+    report["runtime_seconds"] = round(time.monotonic() - started, 3)
+    report["run"] = {"id": os.environ.get("GITHUB_RUN_ID"),
+                     "event": os.environ.get("GITHUB_EVENT_NAME"),
+                     "sha": os.environ.get("GITHUB_SHA"), "completed_at": utcnow()}
+    report["previous_run"] = previous_run
+    report["gap_since_previous_run_seconds"] = (
+        round(time.time() - datetime.fromisoformat(previous_run["completed_at"]).timestamp(), 1)
+        if previous_run.get("completed_at") else None)
+    state["last_run"] = report["run"]
+    save_json(STATE_FILE, state)
     save_json(REPORT_FILE, report)
     print("BRAIN_CLEAN_V1 " + json.dumps(report, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":
     main()
+

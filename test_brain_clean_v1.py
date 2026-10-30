@@ -11,6 +11,63 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_tracking_preserves_positions_and_deduplicates_before_limit(self):
+        state = brain.new_state()
+        state["positions"] = {"held:pool": {}}
+        for i in range(12):
+            s = sample(60000, 1000 + i, key="old:pool" + str(i))
+            s["address"] = "old"
+            s["age_seconds"] = 10 * 86400
+            state["history"][s["key"]] = [s]
+        fresh = sample(60000, 2000, key="fresh:pool")
+        fresh["address"] = "fresh"
+        state["history"][fresh["key"]] = [fresh]
+        priority = brain.tracking_priority(state)
+        self.assertEqual(priority[:2], ["held", "fresh"])
+        self.assertNotIn("old", priority)
+        self.assertEqual(len(priority), len(set(priority)))
+
+    def test_restored_open_position_survives_main_and_records_provenance(self):
+        import tempfile, os, json
+        state = brain.new_state()
+        state["cash"] = 90
+        state["positions"]["held:pool"] = {"key": "held:pool", "units": 9.9,
+                                                "entry_price": 1, "cost": 10}
+        state["last_run"] = {"id": "prior", "completed_at": brain.utcnow()}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "state.json")
+            brain.save_json(path, state)
+            restored = brain.load_state(path)
+            with patch.object(brain, "STATE_FILE", path), \
+                 patch.object(brain, "REPORT_FILE", os.path.join(tmp, "report.json")), \
+                 patch.object(brain, "POLL_CYCLES", 1), \
+                 patch.object(brain, "fetch_pairs", return_value=[]), \
+                 patch.object(brain, "load_state", return_value=restored), \
+                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run", "GITHUB_SHA": "exact"}):
+                brain.main()
+            with open(path) as handle:
+                saved = json.load(handle)
+            with open(os.path.join(tmp, "report.json")) as handle:
+                report = json.load(handle)
+        self.assertEqual(saved["cash"], 90)
+        self.assertIn("held:pool", saved["positions"])
+        self.assertEqual(report["previous_run"]["id"], "prior")
+        self.assertEqual(saved["last_run"]["event"], "workflow_run")
+        self.assertIsNone(report["equity_eur"])
+
+    def test_fetch_budget_stops_search_without_losing_held_quote(self):
+        import io, json
+        payload = [{"chainId": "solana", "pairAddress": "pool",
+                    "baseToken": {"address": "held", "symbol": "HELD"}}]
+        clock = iter([0, 0, 1, 46])
+        with patch("brain_clean_v1.time.monotonic", side_effect=lambda: next(clock)), \
+             patch("brain_clean_v1.discover_recent_addresses", return_value=[]), \
+             patch("brain_clean_v1.time.sleep"), \
+             patch("brain_clean_v1.urllib.request.urlopen", return_value=io.BytesIO(json.dumps(payload).encode())) as http:
+            pairs = brain.fetch_pairs(queries=("meme",), tracked_addresses=("held",))
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(http.call_count, 1)
+
     def test_recent_profile_source_is_attributed_without_changing_trade_gates(self):
         import io
         import json
@@ -250,3 +307,4 @@ class CleanPaperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
