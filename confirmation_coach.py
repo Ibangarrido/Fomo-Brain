@@ -6,6 +6,8 @@ order execution or scheduling is inferred.
 from collections import Counter
 from datetime import datetime, timezone
 import math
+import json
+import hashlib
 
 MAX_EVENTS = 150
 MAX_EXAMPLES = 8
@@ -27,7 +29,10 @@ def _number(value):
 def diagnose(rows, now=None):
     """Summarize blockers and pending follow-ups without authorizing a trade."""
     now = now or datetime.now(timezone.utc)
+    if not isinstance(rows, list):
+        raise ValueError("confirmation_audit must be a list")
     counts = Counter()
+    details = []
     latest = {}
     for event in rows[-MAX_EVENTS:]:
         if not isinstance(event, dict):
@@ -59,13 +64,38 @@ def diagnose(rows, now=None):
             category = "reference_available_not_entry"
         else:
             category = "other"
-        counts[category] += 1
+        categories = [category]
+        for label, active in (
+            ("invalid_receipt", status == "INVALID_FRESH_RECEIPT" or "FRESH_RECEIPT_INVALID" in reasons),
+            ("pair_changed", "IDENTITY_CHANGED" in reasons or event.get("reference_pair") != event.get("current_pair")),
+            ("quote_drift", any(r in reasons for r in ("PRICE_DRIFT_GT_5PCT", "PRICE_DRIFT_UNKNOWN")) or
+             (_number(event.get("price_drift_pct")) and abs(event["price_drift_pct"]) > 5)),
+            ("reference_expired", "REFERENCE_EXPIRED_OR_INVALID" in reasons or
+             (_number(event.get("reference_receipt_age_seconds")) and
+              _number(event.get("confirmation_window_seconds")) and
+              event["confirmation_window_seconds"] in (90, 120) and
+              event["reference_receipt_age_seconds"] > event["confirmation_window_seconds"])),
+        ):
+            if active and label not in categories:
+                categories.append(label)
+        category = next((c for c in ("invalid_receipt", "pair_changed", "quote_drift", "reference_expired") if c in categories), category)
+        counts.update(categories)
+        details.append({"chain": chain, "address": address, "at": stamp.isoformat(),
+                        "reference_pair": event.get("reference_pair"),
+                        "current_pair": event.get("current_pair"), "status": status,
+                        "reasons": reasons, "categories": categories,
+                        "strategy_eligibility": "unknown", "entry_authorized": False})
         key = (chain, address)
         # Ignore out-of-order historical events when choosing the latest status.
         if key not in latest or stamp >= latest[key][0]:
             latest[key] = (stamp, event, category)
     pending = []
     for (chain, address), (stamp, event, category) in latest.items():
+        if (not isinstance(event.get("reference_pair"), str) or not event["reference_pair"]
+                or event.get("reference_pair") != event.get("current_pair")
+                or event.get("status") == "INVALID_FRESH_RECEIPT"
+                or (isinstance(event.get("reasons"), list) and "FRESH_RECEIPT_INVALID" in event["reasons"])):
+            continue
         if category not in ("reference_expired", "new_confirmation_needed", "quote_drift"):
             continue
         age = (now - stamp).total_seconds()
@@ -89,7 +119,9 @@ def diagnose(rows, now=None):
                                 x["chain"], x["address"]))
     return {
         "version": "confirmation-coach-r1",
-        "at": now.isoformat(), "events_considered": sum(counts.values()),
+        "at": now.isoformat(), "events_considered": len(rows[-MAX_EVENTS:]),
+        "event_diagnostics": details, "counts_scope": "events, multiple categories possible",
+        "latest_policy": "latest dated event; equal timestamps use last input; invalid receipt blocks recheck",
         "blockers": dict(sorted(counts.items())),
         "pending_recheck_candidates": len(pending),
         "pending_examples": pending[:MAX_EXAMPLES],
@@ -111,9 +143,17 @@ def report_paper_files(paths, now=None):
             continue
         try:
             state = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(state, dict) or not isinstance(state.get("confirmation_audit", []), list):
+            if not isinstance(state, dict) or ("confirmation_audit" in state and not isinstance(state["confirmation_audit"], list)):
                 raise ValueError("invalid confirmation memory")
-            reports[path.name] = {"status": "analyzed", **diagnose(state.get("confirmation_audit", []), now)}
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if "confirmation_audit" not in state:
+                reports[path.name] = {"status": "unsupported_schema", "input_sha256": digest,
+                                      "reason": "confirmation_audit missing; not evidence of zero blockers",
+                                      "strategic_decisions": state.get("decisions", [])[-150:] if isinstance(state.get("decisions"), list) else []}
+                continue
+            reports[path.name] = {"status": "analyzed" if state["confirmation_audit"] else "no_events",
+                                  "input_sha256": digest,
+                                  **diagnose(state["confirmation_audit"], now)}
         except (OSError, ValueError, TypeError) as exc:
             reports[path.name] = {"status": "unreadable", "error_type": type(exc).__name__}
     return {"version": "confirmation-coach-files-r1", "at": now.isoformat(),
@@ -125,13 +165,26 @@ if __name__ == "__main__":
     import json
     import sys
     from pathlib import Path
-    filenames = sys.argv[1:] or [
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("paths", nargs="*")
+    parser.add_argument("--now", help="ISO timestamp with timezone for reproducible replay")
+    parser.add_argument("--output", default="confirmation_coach_report.json")
+    args = parser.parse_args()
+    fixed_now = _timestamp(args.now) if args.now else None
+    if args.now and fixed_now is None:
+        parser.error("--now requires a timezone-aware ISO timestamp")
+    filenames = args.paths or [
         "fomo_lab_m4_fresh_r1.json",
         "fomo_lab_continuation_control_r1.json",
         "fomo_lab_pattern_pullback_r1.json",
         "fomo_lab_shallow_pullback_r1.json",
     ]
-    report = report_paper_files(filenames)
-    Path("confirmation_coach_report.json").write_text(
+    output = Path(args.output)
+    if any(output.resolve() == Path(f).resolve() or
+           (output.exists() and Path(f).exists() and output.samefile(f)) for f in filenames):
+        parser.error("output must not overwrite any input")
+    report = report_paper_files(filenames, fixed_now)
+    output.write_text(
         json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     print("CONFIRMATION COACH REPORT " + json.dumps(report, allow_nan=False))
