@@ -61,6 +61,19 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(report["counts"]["position_unpriced_hold"], 1)
         self.assertIn("lost:pool", state["positions"])
 
+    def test_stale_quote_cannot_exit_existing_paper_position(self):
+        state = brain.new_state()
+        state["positions"]["mint:pool"] = {"key": "mint:pool", "units": 10,
+                                           "entry_price": 1, "cost": 10}
+        state["history"]["mint:pool"] = [sample(60000, 2000, price=1)]
+        stale = sample(45000, 1900, price=.7)
+        report = brain.step(state, [stale], 2000)
+        self.assertEqual(report["counts"].get("position_stale_quote_hold"), 1)
+        self.assertNotIn("paper_exit", report["counts"])
+        self.assertEqual(state["cash"], 100)
+        self.assertIn("mint:pool", state["positions"])
+        self.assertEqual(state["closed"], [])
+
     def test_low_liquidity_is_not_traded(self):
         state = brain.new_state()
         for i, cap in enumerate([60000, 42000, 45000, 50000, 56000]):
