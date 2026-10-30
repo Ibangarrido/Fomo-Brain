@@ -33,6 +33,8 @@ class ContinuationTests(unittest.TestCase):
     def test_fresh_v2_bootstraps_once_without_touching_legacy_wallets(self):
         lab.bootstrap()
         legacy = self.read(lab.ARMS['control'][0])
+        self.assertFalse(os.path.exists(lab.FRESH_V2_FILE))
+        self.assertFalse(os.path.exists(lab.FRESH_V2_MARKER))
         self.assertTrue(lab.bootstrap_fresh_v2())
         self.assertFalse(lab.bootstrap_fresh_v2())
         fresh = self.read(lab.FRESH_V2_FILE)
