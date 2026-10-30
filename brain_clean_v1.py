@@ -312,7 +312,10 @@ def main():
         if cycle < POLL_CYCLES - 1:
             time.sleep(POLL_SECONDS)
     quotes = {s["key"]: s for s in samples}
-    if all(k in quotes and quotes[k]["price"] for k in state["positions"]):
+    if all(k in quotes and quotes[k]["price"] and quotes[k]["liquidity"] and
+           (not state["history"].get(k) or
+            quotes[k]["ts"] >= state["history"][k][-1]["ts"])
+           for k in state["positions"]):
         report["equity_eur"] = round(state["cash"] + sum(
             p["units"] * quotes[k]["price"] * 0.99 for k, p in state["positions"].items()), 4)
         report["equity_note"] = "Mark-to-market estimate with 1% exit cost; no guaranteed fills"
