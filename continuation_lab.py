@@ -11,7 +11,10 @@ ARMS = {
     '50': ('fomo_lab_continuation_50_r1.json', 'continuation', .50),
     '60': ('fomo_lab_continuation_60_r1.json', 'continuation', .60),
 }
-LEGACY_FILES = {item[0] for item in ARMS.values()}
+LEGACY_FRESH_V2_FILE = 'fomo_lab_continuation_fresh_v2.json'
+FRESH_V2_MARKER = 'fomo_lab_continuation_fresh_v2_start.json'
+ARMS['fresh_v2'] = (FRESH_V2_FILE, 'continuation', .50)
+FILES = {item[0] for item in ARMS.values()}
 PATTERN_MARKER = 'fomo_lab_pattern_start_r1.json'
 PATTERN_ARMS = {
     'pattern_pullback': ('fomo_lab_pattern_pullback_r1.json', 'continuation', .50),
@@ -85,6 +88,29 @@ def bootstrap_shallow():
     write(SHALLOW_MARKER, baseline)
     return True
 
+
+
+@wallet_fork([FRESH_V2_FILE, FRESH_V2_MARKER])
+def bootstrap_fresh_v2():
+    """Start an independent 100 EUR PAPER epoch; never overwrite an existing wallet."""
+    present = [os.path.exists(p) for p in (FRESH_V2_FILE, FRESH_V2_MARKER)]
+    if all(present):
+        return False
+    if any(present):
+        raise ValueError('Fresh V2 partial restore: refusing to reset or fabricate cash')
+    at = datetime.now(timezone.utc).isoformat()
+    baseline = {'version': 'continuation-fresh-v2', 'at': at,
+                'initial_eur': 100.0, 'paper_only': True,
+                'scope': 'independent wallet; historical CONTROL/Coin/GTA untouched'}
+    write(FRESH_V2_FILE, {'version': 1, 'started_at': at,
+                          'cash': 100.0, 'reserve': 0.0,
+                          'positions': [], 'closed': [], 'seen': [],
+                          'observations': [],
+                          'continuation_experiment': {'version': 'continuation-r1',
+                                                      'arm': 'fresh_v2'},
+                          'fresh_v2_baseline': baseline})
+    write(FRESH_V2_MARKER, baseline)
+    return True
 
 def guard(token, allow_breakout=False):
     from candle_lab import context, evaluate_rows
