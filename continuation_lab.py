@@ -256,6 +256,9 @@ def run(ranking, simulator, prefetch=None):
         return
     pattern_started = bootstrap_pattern()
     shallow_started = bootstrap_shallow()
+    fresh_started = bootstrap_fresh_v2()
+    if fresh_started:
+        print('LAB CONTINUATION FRESH V2: isolated PAPER 100 EUR bootstrapped; entries next cycle')
     if prefetch is not None:
         prefetch(ranking)  # Use the running engine's thread-local caches, including __main__.
     rows = {}
@@ -264,6 +267,8 @@ def run(ranking, simulator, prefetch=None):
             continue  # Both pattern arms begin decisions together next cycle.
         if shallow_started and arm == 'shallow_pullback':
             continue  # New isolated wallet starts decisions next cycle.
+        if fresh_started and arm == 'fresh_v2':
+            continue  # Do not trade on the wallet creation cycle.
         simulator(ranking, path, 'LAB CONTINUATION ' + arm, confirm=True,
                   entry_mode=mode, min_buy_ratio=ratio,
                   entry_guard=(breakout_guard if arm == 'pattern_breakout' else
