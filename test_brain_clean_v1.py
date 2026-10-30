@@ -153,6 +153,25 @@ class CleanPaperTests(unittest.TestCase):
                 report = json.load(f)
         self.assertIsNone(report["equity_eur"])
 
+    def test_missing_restored_ledger_fails_closed_on_repeat_paper_run(self):
+        import os
+        import tempfile
+        env = {"GITHUB_ACTIONS": "true",
+               "GITHUB_WORKFLOW": "Brain Clean V1 - isolated PAPER launch",
+               "GITHUB_RUN_NUMBER": "2", "GITHUB_RUN_ATTEMPT": "1"}
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, "missing-state.json")
+            with patch.dict(os.environ, env):
+                with self.assertRaisesRegex(RuntimeError, "refusing ledger reset"):
+                    brain.load_state(missing)
+                with patch.dict(os.environ, {"GITHUB_RUN_NUMBER": "1",
+                                             "GITHUB_RUN_ATTEMPT": "2"}):
+                    with self.assertRaisesRegex(RuntimeError, "refusing ledger reset"):
+                        brain.load_state(missing)
+                with patch.dict(os.environ, {"GITHUB_RUN_NUMBER": "1",
+                                             "GITHUB_RUN_ATTEMPT": "1"}):
+                    self.assertEqual(brain.load_state(missing)["cash"], 100)
+
     def test_no_legacy_portfolio_import(self):
         import tempfile
         import json
