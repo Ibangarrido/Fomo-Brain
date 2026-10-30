@@ -12,6 +12,10 @@ ARMS = {
     '60': ('fomo_lab_continuation_60_r1.json', 'continuation', .60),
 }
 LEGACY_FILES = {item[0] for item in ARMS.values()}
+FRESH_V2_FILE = 'fomo_lab_continuation_fresh_v2.json'
+FRESH_V2_MARKER = 'fomo_lab_continuation_fresh_v2_start.json'
+ARMS['fresh_v2'] = (FRESH_V2_FILE, 'continuation', .50)
+FILES = {item[0] for item in ARMS.values()}
 PATTERN_MARKER = 'fomo_lab_pattern_start_r1.json'
 PATTERN_ARMS = {
     'pattern_pullback': ('fomo_lab_pattern_pullback_r1.json', 'continuation', .50),
@@ -36,7 +40,7 @@ def bootstrap():
                 'scope': 'independent paper portfolios; never add balances',
                 'flow_by_amount': 'UNKNOWN; count proxy only', 'execution_verified': False}
     for arm, (path, mode, ratio) in ARMS.items():
-        if arm in PATTERN_ARMS or arm == 'shallow_pullback':
+        if arm in PATTERN_ARMS or arm in ('shallow_pullback', 'fresh_v2'):
             continue
         write(path, {'version': 1, 'started_at': at, 'cash': 100., 'reserve': 0.,
                      'positions': [], 'closed': [], 'seen': [], 'observations': [],
@@ -85,6 +89,29 @@ def bootstrap_shallow():
     write(SHALLOW_MARKER, baseline)
     return True
 
+
+
+@wallet_fork([FRESH_V2_FILE, FRESH_V2_MARKER])
+def bootstrap_fresh_v2():
+    """Start an independent 100 EUR PAPER epoch; never overwrite an existing wallet."""
+    present = [os.path.exists(p) for p in (FRESH_V2_FILE, FRESH_V2_MARKER)]
+    if all(present):
+        return False
+    if any(present):
+        raise ValueError('Fresh V2 partial restore: refusing to reset or fabricate cash')
+    at = datetime.now(timezone.utc).isoformat()
+    baseline = {'version': 'continuation-fresh-v2', 'at': at,
+                'initial_eur': 100.0, 'paper_only': True,
+                'scope': 'independent wallet; historical CONTROL/Coin/GTA untouched'}
+    write(FRESH_V2_FILE, {'version': 1, 'started_at': at,
+                          'cash': 100.0, 'reserve': 0.0,
+                          'positions': [], 'closed': [], 'seen': [],
+                          'observations': [],
+                          'continuation_experiment': {'version': 'continuation-r1',
+                                                      'arm': 'fresh_v2'},
+                          'fresh_v2_baseline': baseline})
+    write(FRESH_V2_MARKER, baseline)
+    return True
 
 def guard(token, allow_breakout=False):
     from candle_lab import context, evaluate_rows
@@ -230,6 +257,9 @@ def run(ranking, simulator, prefetch=None):
         return
     pattern_started = bootstrap_pattern()
     shallow_started = bootstrap_shallow()
+    fresh_started = bootstrap_fresh_v2()
+    if fresh_started:
+        print('LAB CONTINUATION FRESH V2: isolated PAPER 100 EUR bootstrapped; entries next cycle')
     if prefetch is not None:
         prefetch(ranking)  # Use the running engine's thread-local caches, including __main__.
     rows = {}
@@ -238,6 +268,8 @@ def run(ranking, simulator, prefetch=None):
             continue  # Both pattern arms begin decisions together next cycle.
         if shallow_started and arm == 'shallow_pullback':
             continue  # New isolated wallet starts decisions next cycle.
+        if fresh_started and arm == 'fresh_v2':
+            continue  # Do not trade on the wallet creation cycle.
         simulator(ranking, path, 'LAB CONTINUATION ' + arm, confirm=True,
                   entry_mode=mode, min_buy_ratio=ratio,
                   entry_guard=(breakout_guard if arm == 'pattern_breakout' else
