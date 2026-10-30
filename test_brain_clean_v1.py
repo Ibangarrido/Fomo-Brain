@@ -16,7 +16,7 @@ class CleanPaperTests(unittest.TestCase):
         import json
         payload = [{"chainId": "solana", "pairAddress": "pool",
                     "baseToken": {"address": "newmint", "symbol": "TEST"},
-                    "priceUsd": "1", "liquidity": {"usd": 100},
+                    "priceUsd": "1", "marketCap": 60000, "liquidity": {"usd": 100},
                     "pairCreatedAt": 1000000}]
         with patch("brain_clean_v1.discover_recent_addresses", return_value=["newmint"]):
             with patch("brain_clean_v1.urllib.request.urlopen",
