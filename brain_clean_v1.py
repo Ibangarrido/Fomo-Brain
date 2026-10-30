@@ -107,12 +107,13 @@ def fetch_pairs(queries=SEARCHES, tracked_addresses=()):
                 addr = (pair.get("baseToken") or {}).get("address")
                 if addr and pair.get("pairAddress"):
                     key = addr + ":" + pair["pairAddress"]
-                    pairs[key] = pair
+                    pairs[key] = {**pair, "_clean_source": "search"}
         except (OSError, ValueError, KeyError) as exc:
             print("SOURCE_ERROR", query, str(exc)[:160], flush=True)
         time.sleep(0.35)
     # Follow known pools directly: a broad search may stop returning a token
     # before the next confirmation or PAPER exit observation.
+    tracked_set = set(list(tracked_addresses)[:8])
     for address in list(dict.fromkeys(list(tracked_addresses)[:8] + discover_recent_addresses()))[:16]:
         if not address or not address.isalnum():
             continue
@@ -129,7 +130,7 @@ def fetch_pairs(queries=SEARCHES, tracked_addresses=()):
                 token = (pair.get("baseToken") or {}).get("address")
                 pool = pair.get("pairAddress")
                 if token == address and pool:
-                    pairs[token + ":" + pool] = pair
+                    pairs[token + ":" + pool] = {**pair, "_clean_source": "tracked" if address in tracked_set else "recent_profile"}
         except (OSError, ValueError, KeyError) as exc:
             print("TRACKED_SOURCE_ERROR", address[:12], str(exc)[:100], flush=True)
         time.sleep(0.35)
@@ -325,6 +326,7 @@ def main():
     now = time.time()
     report = None
     aggregate = Counter()
+    discovery_sources = Counter()
     for cycle in range(POLL_CYCLES):
         now = time.time()
         recent = sorted(state["history"].items(),
@@ -335,6 +337,7 @@ def main():
         priority += [key.split(":", 1)[0] for key, _ in recent[:8]]
         raw = fetch_pairs(tracked_addresses=priority)
         samples = [sample(p, now) for p in raw]
+        discovery_sources.update(p.get("_clean_source", "unknown") for p in raw)
         observed_contracts = {s["address"] for s in samples}
         for contract in CASE_STUDY_ADDRESSES:
             if contract not in observed_contracts:
@@ -358,6 +361,8 @@ def main():
     save_json(STATE_FILE, state)
     report["polls_completed"] = POLL_CYCLES
     report["aggregate_counts"] = dict(aggregate)
+    report["discovery_sources_all_polls"] = dict(discovery_sources)
+    report["discovery_sources_last_poll"] = dict(Counter(p.get("_clean_source", "unknown") for p in raw))
     save_json(REPORT_FILE, report)
     print("BRAIN_CLEAN_V1 " + json.dumps(report, ensure_ascii=False), flush=True)
 
