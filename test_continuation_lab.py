@@ -198,7 +198,8 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(len(calls),3)
         calls.clear()
         with contextlib.redirect_stdout(io.StringIO()):lab.run([],simulator)
-        self.assertEqual(len(calls),6)
+        self.assertEqual(len(calls),7)  # Three legacy, two pattern, shallow and isolated Fresh V2.
+        self.assertIn((lab.FRESH_V2_FILE, lab.guard), calls)
         self.assertIn((lab.PATTERN_ARMS['pattern_breakout'][0],lab.breakout_guard),calls)
         self.assertIn((lab.PATTERN_ARMS['pattern_pullback'][0],lab.gradual_guard),calls)
     def test_prefetch_uses_injected_running_engine_before_wallet_decisions(self):
