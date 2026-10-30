@@ -83,6 +83,33 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(state["outcomes"][0]["label"], "rally_25pct")
         self.assertEqual(state["outcomes"][0]["reason"], "waiting_for_4_observations")
 
+    def test_shallow_dip_cannot_hide_later_collapse(self):
+        series = [sample(c, 1000 + i * 30) for i, c in
+                  enumerate([60000, 42000, 10000, 45000, 50000])]
+        self.assertFalse(brain.staircase(series)[0])
+
+    def test_cap_recovery_without_price_pattern_is_rejected(self):
+        series = [sample(c, 1000 + i * 30, price=p) for i, (c, p) in
+                  enumerate(zip([60000, 42000, 45000, 50000], [1, .2, .3, .4]))]
+        self.assertFalse(brain.staircase(series)[0])
+
+    def test_mixed_pools_and_close_timestamps_are_rejected(self):
+        series = [sample(c, 1000 + i * 30) for i, c in
+                  enumerate([60000, 42000, 45000, 50000])]
+        series[0]["key"] = "other:pool"
+        self.assertFalse(brain.staircase(series)[0])
+        series[0]["key"] = "mint:pool"
+        series[-1]["ts"] = series[-2]["ts"] + 10
+        self.assertFalse(brain.staircase(series)[0])
+
+    def test_unadmitted_quote_cannot_reuse_previous_signal(self):
+        state = brain.new_state()
+        state["history"]["mint:pool"] = [sample(c, 1000 + i * 30)
+            for i, c in enumerate([60000, 42000, 45000, 50000])]
+        report = brain.step(state, [sample(51000, 1100)], 1100)
+        self.assertEqual(report["counts"].get("non_independent_observation"), 1)
+        self.assertEqual(state["positions"], {})
+
     def test_no_legacy_portfolio_import(self):
         import tempfile
         import json

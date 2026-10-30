@@ -160,16 +160,29 @@ def staircase(samples):
         return False, "waiting_for_recent_observations"
     if len({int(s["ts"]) for s in recent}) != len(recent):
         return False, "duplicate_observation_times"
+    if len({s["key"] for s in recent}) != 1:
+        return False, "mixed_pool_observations"
+    if any(b["ts"] <= a["ts"] + 20 for a, b in zip(recent, recent[1:])):
+        return False, "non_independent_observations"
+    if any(not s["price"] or not s["cap"] for s in recent):
+        return False, "invalid_pattern_quote"
     a, b = recent[-2:]
     if not (a["cap"] < b["cap"] and a["price"] < b["price"]):
         return False, "no_breakout_confirmation"
     for i in range(1, len(recent) - 2):
-        peak = max(s["cap"] for s in recent[:i])
+        peak_sample = max(recent[:i], key=lambda s: s["cap"])
+        peak = peak_sample["cap"]
         trough = recent[i]["cap"]
         if not peak or not trough:
             continue
+        # The trough must be the actual low since the selected peak.
+        # An older shallow dip must not conceal a later collapse.
+        if any(s["cap"] < trough or s["price"] < recent[i]["price"]
+               for s in recent[i + 1:]):
+            continue
         drop = (peak - trough) / peak
-        if (0.15 <= drop <= 0.40 and
+        price_drop = 1 - recent[i]["price"] / peak_sample["price"]
+        if (0.15 <= drop <= 0.40 and 0.15 <= price_drop <= 0.40 and
                 a["cap"] > trough and
                 b["cap"] >= trough * 1.10 and
                 b["cap"] <= peak * 1.20 and
@@ -214,10 +227,13 @@ def step(state, samples, now=None):
             del state["watchlist"][key]
         hist = state["history"].setdefault(key, [])
         # Never use stale or duplicate snapshots as independent observations.
-        if not hist or s["ts"] > hist[-1]["ts"] + 20:
+        admitted = not hist or s["ts"] > hist[-1]["ts"] + 20
+        if admitted:
             hist.append(s)
             hist[:] = [x for x in hist[-MAX_SNAPSHOTS:] if now - x["ts"] <= MAX_AGE_SECONDS]
         reason = gate(s)
+        if not reason and not admitted:
+            reason = "non_independent_observation"
         if not reason:
             _, reason = staircase(hist)
             if reason == "staircase_confirmed":

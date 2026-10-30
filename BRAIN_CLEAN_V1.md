@@ -29,11 +29,10 @@ or inactive. Historical performance is not inferred from future candles.
 
 ## Operation and monitoring
 
-`.github/workflows/fomo_brain.yml` is replaced **only on this branch** by a
-single clean job. Pull requests run offline tests only. Manual dispatch on
-this branch executes the PAPER experiment if the workflow is available in
-GitHub Actions. The 20-minute cron takes effect **only after merge to the
-default branch**; the experiment is not claimed to be live beforehand.
+The legacy `.github/workflows/fomo_brain.yml` is preserved. The dedicated
+`brain_clean_v1.yml` manual launcher on main checks out this experimental branch.
+`brain_clean_v1_tests.yml` runs offline regressions on pull requests. No new
+schedule is enabled by this repair; manual dispatch remains PAPER only.
 
 `brain-clean-v1-state` is a branch-scoped artifact with the new ledger
 (`brain_clean_v1_state.json`) and last report
@@ -74,3 +73,12 @@ must pass before promoting the PR to main.
 User-supplied FOMO video (16 seconds) and token contract `0x80a5961bae1463a12772ec086904bbe229f27777`, chainId 56. Observed market cap approximately $41.1k, 1-hour change +138.81%, liquidity $8.8k, 1,926 holders, 402 buys versus 165 sells (1h), 292 unique buyers versus 131 sellers, top-10 holding 19.53%. The chart shows a progressive staircase/continuation with shallow pauses, **not a verified 15-40% pullback**. Token was marked unverified. These values are from the video, not fresh API quotes or confirmed future outcomes.
 
 **Expected Clean V1 decision:** no PAPER entry. The scanner is Solana-only and this is BNB Chain; observed liquidity is below the $10k minimum. Label as `CONTINUATION_STAIRCASE_WATCH_ONLY`, not as an erroneously missed eligible trade. Do not loosen the liquidity guard or add BNB execution based on this one example. Study continuation patterns separately offline, with later independent quotes and controls for survivorship bias.
+
+## ESCALERA correctness repair — 2026-10-30
+
+The actual trough must remain the lowest cap and price after the selected peak;
+an earlier shallow dip can no longer hide a later collapse. The price must
+confirm the 15–40% drawdown as well as cap. Mixed pools, observations at most
+20 seconds apart, and a new quote not admitted to history cannot confirm entry.
+The existing valid four-snapshot pattern still opens a 10 EUR PAPER position
+in regression tests. These correctness tests do not establish profitability.
