@@ -202,6 +202,12 @@ def step(state, samples, now=None):
         if s is None or not s["price"] or not s["liquidity"]:
             counts["position_unpriced_hold"] += 1
             continue
+        # Never simulate an exit from a quote older than the last admitted
+        # observation. Out-of-order provider data must not change PAPER cash.
+        prior = state["history"].get(key) or []
+        if prior and s["ts"] <= prior[-1]["ts"]:
+            counts["position_stale_quote_hold"] += 1
+            continue
         move = s["price"] / pos["entry_price"] - 1
         if move <= -0.15 or move >= 0.25:
             # Conservative paper estimate: 1% on each side, no guaranteed execution.
