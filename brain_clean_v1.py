@@ -254,8 +254,16 @@ def step(state, samples, now=None):
                 reason = None
         if not reason and key in state["positions"]:
             reason = "already_open"
-        if not reason and any(x["key"] == key for x in state["closed"]):
-            reason = "already_traded"
+        # Pools are not independent assets: one mint may have several pools.
+        # Never double PAPER exposure or re-enter a previously traded token
+        # by switching its pool address.
+        token = s["address"]
+        if not reason and any(k.split(":", 1)[0] == token
+                              for k in state["positions"]):
+            reason = "already_open_token_other_pool"
+        if not reason and any(x["key"].split(":", 1)[0] == token
+                              for x in state["closed"]):
+            reason = "already_traded_token"
         if not reason and len(state["positions"]) >= MAX_POSITIONS:
             reason = "max_3_positions"
         if not reason and state["cash"] < MAX_ENTRY:
