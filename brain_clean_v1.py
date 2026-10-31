@@ -389,7 +389,7 @@ def tracking_priority(state, now=None):
     signal_slots = max(0, 8 - len(held) - watch_slots - len(cases))
     signals = list(dict.fromkeys(x["address"] for x in recent
                                 if x["address"] not in held + chosen_watches + cases))[:signal_slots]
-    selected = (held + signals + chosen_watches + cases)[:8]
+    selected = (held + chosen_watches + signals + cases)[:8]
     state["tracking_coverage"] = {"pending_watch_contracts": len(watches),
         "selected_watch_contracts": chosen_watches, "requested_contracts": selected,
         "watch_cursor": state["watch_cursor"]}
