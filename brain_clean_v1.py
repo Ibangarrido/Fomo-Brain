@@ -322,6 +322,14 @@ def step(state, samples, now=None):
         if not reason and any(k.split(":", 1)[0] == token
                               for k in state["positions"]):
             reason = "already_open_token_other_pool"
+        # Same ticker is not proof of identical contracts, but simultaneous
+        # same-ticker memes concentrate PAPER exposure. Do not alter existing
+        # positions or ledger; block only an additional concurrent entry.
+        symbol = str(s.get("symbol") or "").strip().casefold()
+        if not reason and symbol and any(
+                str(p.get("symbol") or "").strip().casefold() == symbol
+                for p in state["positions"].values()):
+            reason = "already_open_symbol_other_contract"
         if not reason and any(x["key"].split(":", 1)[0] == token
                               for x in state["closed"]):
             reason = "already_traded_token"
