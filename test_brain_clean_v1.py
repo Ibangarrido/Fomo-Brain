@@ -150,6 +150,64 @@ class CleanPaperTests(unittest.TestCase):
             self.assertEqual(fetch.call_count, 1)
             self.assertTrue(os.path.exists(report_path))
 
+    def test_watch_rotation_survives_serialization_and_failed_quotes(self):
+        import json
+        state = brain.new_state()
+        state["positions"] = {"held:pool": {}}
+        for token in ("a", "b", "c", "d", "e"):
+            state["watchlist"][token + ":pool"] = {"ts": 1000, "price": 1}
+        selected = set()
+        for _ in range(3):
+            requested = brain.tracking_priority(state, now=2000)
+            self.assertEqual(requested[0], "held")
+            self.assertLessEqual(len(requested), 8)
+            selected.update(state["tracking_coverage"]["selected_watch_contracts"])
+            # No quotes returned: cursor still advances and survives restoration.
+            state = json.loads(json.dumps(state))
+        self.assertEqual(selected, {"a", "b", "c", "d", "e"})
+
+    def test_watch_reservations_survive_signal_saturation(self):
+        state = brain.new_state()
+        for i in range(20):
+            row = sample(60000, 1000 + i, key=f"signal{i}:pool")
+            row["address"] = f"signal{i}"
+            state["history"][row["key"]] = [row]
+        state["watchlist"] = {"rejected1:pool": {"ts": 1000},
+                              "rejected2:pool": {"ts": 1000},
+                              "stale:pool": {"ts": -90000},
+                              "bad:pool": {"ts": 1000, "anomaly_seen": True}}
+        selected = brain.tracking_priority(state, now=2000)
+        self.assertIn("rejected1", selected)
+        self.assertIn("rejected2", selected)
+        self.assertNotIn("stale", selected)
+        self.assertNotIn("bad", selected)
+        self.assertEqual(len(selected), 8)
+
+    def test_pool_selection_keeps_exact_holding_and_liquid_discovery_pool(self):
+        def pair(token, pool, liquidity):
+            return {"baseToken": {"address": token}, "pairAddress": pool,
+                    "liquidity": {"usd": liquidity}}
+        raw = [pair("held", "original", 10), pair("held", "liquid", 50000),
+               pair("new", "thin", 10), pair("new", "best", 20000)]
+        selected = brain.select_pairs(raw, {"held:original": {}})
+        self.assertEqual({p["pairAddress"] for p in selected}, {"original", "liquid", "best"})
+
+    def test_learning_summary_uses_validated_contracts_and_preserves_ledger(self):
+        import copy
+        state = brain.new_state()
+        state["outcomes"] = [
+            {"key": "mint:one", "reason": "waiting", "audit_version": 2, "label": "rally_25pct"},
+            {"key": "mint:two", "reason": "waiting", "audit_version": 2, "label": "rally_25pct"},
+            {"key": "legacy:pool", "reason": "waiting", "label": "rally_25pct"}]
+        state["closed"] = [{"pnl_eur": -9}, {"pnl_eur": 2}]
+        before = copy.deepcopy(state)
+        report = brain.learning_summary(state)
+        self.assertEqual(report["by_rejection_reason"]["waiting"]["rally_contracts"], 1)
+        self.assertEqual(report["by_rejection_reason"]["waiting"]["observations"], 2)
+        self.assertEqual(report["realized_paper_pnl_eur"], -7)
+        self.assertFalse(report["automatic_rule_changes"])
+        self.assertEqual(state, before)
+
     def test_new_ledger_has_100_eur_and_no_legacy(self):
         state = brain.new_state()
         self.assertEqual(state["cash"], 100)
