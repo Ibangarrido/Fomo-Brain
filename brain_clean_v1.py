@@ -475,6 +475,33 @@ def learning_summary(state):
             "worst_paper_trade_eur": min((x.get("pnl_eur", 0) for x in closed), default=None)}
 
 
+# Explicit user-authorized PAPER write-offs, keyed by exact mint and pool.
+# No simulated sale or recoverable cash is asserted for these illiquid holdings.
+USER_PAPER_WRITE_OFFS = (
+    "4MinLrUYVTGQ854Jk8WjaxaDMtKHTYRiDqr2BKyCpump:4ksSdLyCtp8XNpoBzS1xoSLpgHCri5D68BLApqsFey1P",
+    "HPPspGtHi9kP9RoC2x4qDYbSmrxv7gY1ZRpeEQXqpump:2eo8AZdKQVwccpqUJ4tA7hqBomLoKgS26EUJXxposd4K",
+)
+
+
+def apply_user_paper_write_offs(state):
+    """Close only the two authorized PAPER holdings, once, with zero recovery."""
+    for key in USER_PAPER_WRITE_OFFS:
+        pos = state["positions"].pop(key, None)
+        if pos is None:
+            continue
+        history = state.get("history", {}).get(key) or []
+        quote = history[-1] if history else {}
+        state["closed"].append({
+            **pos, "exit_at": utcnow(), "exit_price": None, "proceeds": 0.0,
+            "pnl_eur": -pos["cost"], "exit_reason": "user_authorized_paper_write_off",
+            "execution_verified": False, "recovery_assumption": "zero",
+            "last_observed_price": quote.get("price"),
+            "last_observed_liquidity": quote.get("liquidity"),
+            "last_observed_ts": quote.get("ts"),
+        })
+        print("USER_PAPER_WRITE_OFF", key, "zero recovery; no executed sale", flush=True)
+
+
 def execution_sha():
     """Report the checked-out PR head in isolated shadow runs, not the PR merge SHA."""
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
@@ -484,6 +511,8 @@ def execution_sha():
 
 def main():
     state = load_state()
+    apply_user_paper_write_offs(state)
+    save_json(STATE_FILE, state)
     started = time.monotonic()
     previous_run = state.get("last_run", {})
     now = time.time()

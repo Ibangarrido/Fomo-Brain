@@ -548,5 +548,42 @@ class CleanPaperTests(unittest.TestCase):
                 brain.load_state(path)
 
 
+class AuthorizedWriteOffTests(unittest.TestCase):
+    def test_exact_holdings_closed_without_crediting_cash_and_only_once(self):
+        state = brain.new_state()
+        state["cash"] = 64.0955
+        for key in brain.USER_PAPER_WRITE_OFFS:
+            state["positions"][key] = {"key": key, "symbol": "TEST", "cost": 10, "units": 5}
+            state["history"][key] = [{"price": .001, "liquidity": 2000, "ts": 100}]
+        other = {"key": "other:pool", "symbol": "RAM", "cost": 10}
+        state["positions"]["other:pool"] = other.copy()
+        brain.apply_user_paper_write_offs(state)
+        brain.apply_user_paper_write_offs(state)
+        self.assertEqual(state["cash"], 64.0955)
+        self.assertEqual(state["positions"], {"other:pool": other})
+        self.assertEqual(len(state["closed"]), 2)
+        self.assertEqual(sum(x["pnl_eur"] for x in state["closed"]), -20)
+        for row in state["closed"]:
+            self.assertIsNone(row["exit_price"])
+            self.assertFalse(row["execution_verified"])
+            self.assertEqual(row["last_observed_liquidity"], 2000)
+        self.assertEqual(len(state["history"]), 2)
+
+    def test_write_off_survives_reload_and_does_not_touch_other_closed_records(self):
+        import tempfile, os
+        state = brain.new_state()
+        key = brain.USER_PAPER_WRITE_OFFS[0]
+        state["positions"][key] = {"key": key, "cost": 10}
+        state["closed"] = [{"key": "prior:pool", "pnl_eur": 2}]
+        brain.apply_user_paper_write_offs(state)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "state.json")
+            brain.save_json(path, state)
+            restored = brain.load_state(path)
+            brain.apply_user_paper_write_offs(restored)
+        self.assertEqual(restored, state)
+        self.assertEqual(restored["closed"][0], {"key": "prior:pool", "pnl_eur": 2})
+
+
 if __name__ == "__main__":
     unittest.main()
