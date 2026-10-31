@@ -11,6 +11,26 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_shadow_provenance_uses_pr_head_not_github_merge_sha(self):
+        import os
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_SHA": "merge-commit",
+            "CLEAN_SHADOW_HEAD_SHA": "checked-out-head",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "checked-out-head")
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "schedule",
+            "GITHUB_SHA": "main-commit",
+            "CLEAN_SHADOW_HEAD_SHA": "must-not-override-main",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "main-commit")
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_SHA": "merge-commit",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "merge-commit")
+
     def test_tracking_preserves_positions_and_deduplicates_before_limit(self):
         state = brain.new_state()
         state["positions"] = {"held:pool": {}}
