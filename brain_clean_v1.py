@@ -497,6 +497,7 @@ def main():
     first_poll_started_at = now
     report = None
     aggregate = Counter()
+    run_entries = []  # All PAPER entries across polls; final report['entries'] is last poll only.
     discovery_sources = Counter()
     polls_completed = 0
     selection_counts = Counter()
@@ -527,6 +528,7 @@ def main():
         report = step(state, samples, now)
         polls_completed += 1
         aggregate.update(report["counts"])
+        run_entries.extend({"poll": cycle + 1, **entry} for entry in report["entries"])
         save_json(STATE_FILE, state)
         print("CLEAN_POLL", cycle + 1, report["counts"], flush=True)
         if cycle < POLL_CYCLES - 1:
@@ -543,6 +545,8 @@ def main():
     report["polls_completed"] = polls_completed
     report["monitoring_note"] = "Bounded monitoring; GitHub scheduling gaps and stop overshoot remain possible"
     report["aggregate_counts"] = dict(aggregate)
+    report["entries_scope"] = "last_poll_only"
+    report["run_entries"] = run_entries
     report["selection_counts"] = dict(selection_counts)
     report["tracking_coverage"] = state.get("tracking_coverage", {})
     report["learning_summary"] = learning_summary(state)
