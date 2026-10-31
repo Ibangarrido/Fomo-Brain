@@ -378,6 +378,43 @@ class CleanPaperTests(unittest.TestCase):
                 self.assertNotIn("mint:pool2", state["positions"])
                 self.assertEqual(state["cash"], 100 if previously_closed else 90)
 
+    def test_distinct_lumi_contracts_cannot_fill_multiple_paper_slots(self):
+        # Regression: three distinct LUMI/Lumi mints occupied all slots
+        # on 2026-10-31, then all stopped out. Keep existing ledger intact.
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"]["lumi-a:pool"] = {
+            "key": "lumi-a:pool", "symbol": "LUMI",
+            "entry_price": 1.0, "units": 9.9, "cost": 10.0}
+        for i, cap in enumerate([60000, 42000, 45000, 50000]):
+            now = 1000 + i * 60
+            s = sample(cap, now, key="lumi-b:pool")
+            s["address"] = "lumi-b"
+            s["symbol"] = " Lumi "
+            report = brain.step(state, [s], now)
+        self.assertEqual(
+            report["counts"].get("already_open_symbol_other_contract"), 1)
+        self.assertNotIn("paper_entry", report["counts"])
+        self.assertEqual(set(state["positions"]), {"lumi-a:pool"})
+        self.assertEqual(state["cash"], 90.0)
+        self.assertEqual(state["closed"], [])
+
+    def test_different_ticker_is_not_blocked_by_symbol_concentration(self):
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"]["lumi-a:pool"] = {
+            "key": "lumi-a:pool", "symbol": "LUMI",
+            "entry_price": 1.0, "units": 9.9, "cost": 10.0}
+        for i, cap in enumerate([60000, 42000, 45000, 50000]):
+            now = 1000 + i * 60
+            s = sample(cap, now, key="other-mint:pool")
+            s["address"] = "other-mint"
+            s["symbol"] = "OTHER"
+            report = brain.step(state, [s], now)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(len(state["positions"]), 2)
+        self.assertEqual(state["cash"], 80.0)
+
     def test_no_legacy_portfolio_import(self):
         import tempfile
         import json
