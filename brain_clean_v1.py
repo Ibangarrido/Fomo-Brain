@@ -366,6 +366,13 @@ def tracking_priority(state):
         [s["address"] for s in recent] + list(CASE_STUDY_ADDRESSES)))[:8]
 
 
+def execution_sha():
+    """Report the checked-out PR head in isolated shadow runs, not the PR merge SHA."""
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        return os.environ.get("CLEAN_SHADOW_HEAD_SHA") or os.environ.get("GITHUB_SHA")
+    return os.environ.get("GITHUB_SHA")
+
+
 def main():
     state = load_state()
     started = time.monotonic()
@@ -409,7 +416,7 @@ def main():
     report["runtime_seconds"] = round(time.monotonic() - started, 3)
     report["run"] = {"id": os.environ.get("GITHUB_RUN_ID"),
                      "event": os.environ.get("GITHUB_EVENT_NAME"),
-                     "sha": os.environ.get("GITHUB_SHA"), "completed_at": utcnow()}
+                     "sha": execution_sha(), "completed_at": utcnow()}
     report["previous_run"] = previous_run
     report["gap_since_previous_run_seconds"] = (
         round(time.time() - datetime.fromisoformat(previous_run["completed_at"]).timestamp(), 1)
