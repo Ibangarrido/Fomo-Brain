@@ -22,7 +22,7 @@ jobs:
   clean_paper:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - name: Checkout exact triggering commit
         uses: actions/checkout@v4
@@ -68,3 +68,4 @@ jobs:
             brain_clean_v1_report.json
           if-no-files-found: warn
           retention-days: 30
+
