@@ -95,6 +95,61 @@ class CleanPaperTests(unittest.TestCase):
                    return_value=io.BytesIO(json.dumps(payload).encode())):
             self.assertEqual(brain.discover_recent_addresses(limit=1), ["mintA"])
 
+    def test_audit_quarantines_extreme_quote_and_preserves_cash(self):
+        state = brain.new_state()
+        brain.step(state, [sample(60000, 1000)], 1000)
+        report = brain.step(state, [sample(60000000, 1920)], 1920)
+        self.assertEqual(state["outcomes"], [])
+        self.assertEqual(report["counts"]["outcome_quote_anomaly"], 1)
+        brain.step(state, [sample(90000, 1980)], 1980)
+        self.assertEqual(state["outcomes"], [])
+        self.assertEqual(state["cash"], 100)
+
+    def test_audit_ignores_illiquid_baseline(self):
+        state = brain.new_state()
+        thin = sample(60000, 1000)
+        thin["liquidity"] = 10
+        brain.step(state, [thin], 1000)
+        self.assertEqual(state["watchlist"], {})
+        brain.step(state, [sample(90000, 1920)], 1920)
+        self.assertEqual(state["outcomes"], [])
+
+    def test_audit_records_sampled_peak_and_contract_count(self):
+        state = brain.new_state()
+        for key in ("mint:pool", "mint:other"):
+            for cap, ts in ((60000, 1000), (90000, 1500), (80000, 1920)):
+                brain.step(state, [sample(cap, ts, key=key)], ts)
+        report = brain.step(state, [], 1921)
+        self.assertEqual(report["validated_outcomes_v2"], 2)
+        self.assertEqual(report["validated_rally_contracts_v2"], 1)
+        self.assertEqual(state["outcomes"][0]["sampled_peak_pct"], 50)
+        self.assertEqual(state["outcomes"][0]["baseline_ts"], 1000)
+
+    def test_legacy_audit_is_preserved_but_not_validated(self):
+        state = brain.new_state()
+        old = {"key": "mint:pool", "label": "rally_25pct", "return_pct": 100897}
+        state["outcomes"] = [old.copy()]
+        state["watchlist"]["mint:pool"] = {"price": .001, "ts": 1000, "reason": "low_liquidity"}
+        report = brain.step(state, [sample(90000, 1920)], 1920)
+        self.assertEqual(state["outcomes"], [old])
+        self.assertEqual(report["legacy_outcomes_unvalidated"], 1)
+        self.assertEqual(report["validated_outcomes_v2"], 0)
+
+    def test_monitor_loop_stops_with_room_to_save_before_timeout(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as folder:
+            state_path = os.path.join(folder, "state.json")
+            report_path = os.path.join(folder, "report.json")
+            with patch.object(brain, "STATE_FILE", state_path), \
+                 patch.object(brain, "REPORT_FILE", report_path), \
+                 patch.object(brain, "load_state", return_value=brain.new_state()), \
+                 patch.object(brain, "fetch_pairs", return_value=[]) as fetch, \
+                 patch.object(brain.time, "monotonic", side_effect=[0, 620, 621]), \
+                 patch.object(brain.time, "sleep"):
+                brain.main()
+            self.assertEqual(fetch.call_count, 1)
+            self.assertTrue(os.path.exists(report_path))
+
     def test_new_ledger_has_100_eur_and_no_legacy(self):
         state = brain.new_state()
         self.assertEqual(state["cash"], 100)
@@ -173,6 +228,34 @@ class CleanPaperTests(unittest.TestCase):
         self.assertIn("mint:pool", state["positions"])
         self.assertEqual(state["closed"], [])
 
+    def test_pillsey_illiquid_stop_does_not_invent_paper_sale(self):
+        # Clean #10 recorded a stop at $2,235.84 liquidity, below MIN_LIQ.
+        # Preserve the position and cash rather than crediting an unfillable sale.
+        key = ("J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump:"
+               "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz")
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "units": 212264.15094339623,
+                                    "entry_price": 4.664e-05, "cost": 10.0}
+        state["history"][key] = [sample(46339, 1000, key=key, price=4.664e-05)]
+        illiquid = sample(2039, 1600, key=key, price=2.052e-06)
+        illiquid["liquidity"] = 2235.84
+        report = brain.step(state, [illiquid], 1600)
+        self.assertEqual(report["counts"].get("position_low_liquidity_hold"), 1)
+        self.assertNotIn("paper_exit", report["counts"])
+        self.assertEqual(state["cash"], 90.0)
+        self.assertIn(key, state["positions"])
+        self.assertEqual(state["closed"], [])
+
+        # A later, independently observed liquid quote can still trigger a stop.
+        liquid = sample(2039, 1700, key=key, price=2.052e-06)
+        liquid["liquidity"] = brain.MIN_LIQ
+        report = brain.step(state, [liquid], 1700)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        self.assertNotIn(key, state["positions"])
+        self.assertEqual(len(state["closed"]), 1)
+        self.assertAlmostEqual(state["cash"], 90.4312103773585)
+
     def test_low_liquidity_is_not_traded(self):
         state = brain.new_state()
         for i, cap in enumerate([60000, 42000, 45000, 50000, 56000]):
@@ -209,6 +292,34 @@ class CleanPaperTests(unittest.TestCase):
         series = [sample(c, 1000 + i * 30) for i, c in
                   enumerate([60000, 42000, 10000, 45000, 50000])]
         self.assertFalse(brain.staircase(series)[0])
+
+    def test_pillsey_new_peak_collapse_cannot_reuse_older_staircase(self):
+        # Exact Solana mint/pool observed in Clean V1 schedule run 41137991511.
+        # The old 27% dip was followed by a higher peak and a 61% collapse.
+        mint = "J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump"
+        pool = "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz"
+        observed = [
+            (0, 56425, 0.00005679),
+            (36, 41071, 0.00004134),
+            (72, 60555, 0.00006095),
+            (108, 76991, 0.00007749),
+            (144, 114196, 0.00011490),
+            (305, 44804, 0.00004509),
+            (341, 46339, 0.00004664),
+        ]
+        series = [sample(cap, 1000 + offset, key=mint + ":" + pool, price=price)
+                  for offset, cap, price in observed]
+        for observation in series:
+            observation["address"] = mint
+            observation["pool"] = pool
+            observation["symbol"] = "PILLSEY"
+        self.assertEqual(brain.staircase(series), (False, "no_qualified_staircase"))
+        state = brain.new_state()
+        state["history"][series[0]["key"]] = series[:-1]
+        report = brain.step(state, [series[-1]], series[-1]["ts"])
+        self.assertNotIn("paper_entry", report["counts"])
+        self.assertEqual(state["cash"], 100.0)
+        self.assertEqual(state["positions"], {})
 
     def test_cap_recovery_without_price_pattern_is_rejected(self):
         series = [sample(c, 1000 + i * 30, price=p) for i, (c, p) in
@@ -307,4 +418,5 @@ class CleanPaperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
