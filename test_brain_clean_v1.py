@@ -11,6 +11,40 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_lumi_variants_share_one_slot_across_restored_runs(self):
+        import json
+        state = brain.new_state()
+        for i, cap in enumerate([60000, 42000, 45000, 50000]):
+            now = 1000 + i * 60
+            rows = []
+            for mint, symbol in (("first", "LUMI"), ("second", "Lumi"),
+                                 ("third", " $ＬＵＭＩ "), ("other", "OTHER")):
+                row = sample(cap, now, key=mint + ":pool")
+                row.update(address=mint, symbol=symbol)
+                rows.append(row)
+            report = brain.step(state, rows, now)
+            state = json.loads(json.dumps(state))
+        self.assertEqual(set(state["positions"]), {"first:pool", "other:pool"})
+        self.assertEqual(state["cash"], 80)
+        self.assertEqual(report["counts"]["same_symbol_exposure_open"], 2)
+        # The restriction also holds in a later independent poll after restore.
+        row = sample(51000, 1240, key="second:pool")
+        row.update(address="second", symbol="lumi")
+        report = brain.step(state, [row], 1240)
+        self.assertEqual(report["counts"].get("same_symbol_exposure_open"), 1)
+        self.assertEqual(state["cash"], 80)
+
+    def test_closed_symbol_does_not_blacklist_other_contract(self):
+        state = brain.new_state()
+        state["closed"] = [{"key": "old:pool", "symbol": "LUMI"}]
+        for i, cap in enumerate([60000, 42000, 45000, 50000]):
+            now = 1000 + i * 60
+            row = sample(cap, now, key="new:pool")
+            row.update(address="new", symbol="Lumi")
+            report = brain.step(state, [row], now)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(state["closed"], [{"key": "old:pool", "symbol": "LUMI"}])
+
     def test_tracking_preserves_positions_and_deduplicates_before_limit(self):
         state = brain.new_state()
         state["positions"] = {"held:pool": {}}
@@ -476,5 +510,3 @@ class CleanPaperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
