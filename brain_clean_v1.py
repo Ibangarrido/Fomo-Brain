@@ -371,13 +371,79 @@ def step(state, samples, now=None):
             "equity_eur": None, "equity_note": "Unknown until all open positions have current quotes"}
 
 
-def tracking_priority(state):
-    """Holdings first; eligible recent signals before rejected historical pools."""
+def tracking_priority(state, now=None):
+    """Holdings first, then signals, with reserved rotating rejected-token slots."""
+    now = time.time() if now is None else now
+    held = list(dict.fromkeys(k.split(":", 1)[0] for k in state["positions"]))
     recent = sorted((v[-1] for v in state["history"].values() if v and gate(v[-1]) is None),
                     key=lambda s: s["ts"], reverse=True)
-    return list(dict.fromkeys(
-        [k.split(":", 1)[0] for k in state["positions"]] +
-        [s["address"] for s in recent] + list(CASE_STUDY_ADDRESSES)))[:8]
+    watches = sorted({k.split(":", 1)[0] for k, w in state.get("watchlist", {}).items()
+                      if 0 <= now - w["ts"] <= 86400 and not w.get("anomaly_seen")
+                      and k.split(":", 1)[0] not in held})
+    cursor = state.get("watch_cursor", 0)
+    rotating = (watches[cursor % len(watches):] + watches[:cursor % len(watches)]) if watches else []
+    watch_slots = min(2, len(rotating), max(0, 8 - len(held)))
+    chosen_watches = rotating[:watch_slots]
+    state["watch_cursor"] = (cursor + watch_slots) % len(watches) if watches else 0
+    cases = [a for a in CASE_STUDY_ADDRESSES if a not in held and a not in chosen_watches][:1]
+    signal_slots = max(0, 8 - len(held) - watch_slots - len(cases))
+    signals = list(dict.fromkeys(x["address"] for x in recent
+                                if x["address"] not in held + chosen_watches + cases))[:signal_slots]
+    selected = (held + signals + chosen_watches + cases)[:8]
+    state["tracking_coverage"] = {"pending_watch_contracts": len(watches),
+        "selected_watch_contracts": chosen_watches, "requested_contracts": selected,
+        "watch_cursor": state["watch_cursor"]}
+    return selected
+
+
+def select_pairs(raw, positions):
+    """One liquid discovery pool per contract; always retain exact holding pools.
+
+    Never splice histories or migrate an existing position to another pool.
+    """
+    best = {}
+    held = {}
+    for pair in raw:
+        address = (pair.get("baseToken") or {}).get("address")
+        pool = pair.get("pairAddress")
+        if not address or not pool:
+            continue
+        key = address + ":" + pool
+        if key in positions:
+            held[key] = pair
+        prior = best.get(address)
+        liquidity = number((pair.get("liquidity") or {}).get("usd"))
+        if prior is None or liquidity > number((prior.get("liquidity") or {}).get("usd")):
+            best[address] = pair
+    selected = {((p.get("baseToken") or {})["address"] + ":" + p["pairAddress"]): p
+                for p in best.values()}
+    selected.update(held)
+    return list(selected.values())
+
+
+def learning_summary(state):
+    """Descriptive evidence from retained validated rows, never an auto-tuner."""
+    groups = {}
+    for row in state.get("outcomes", []):
+        if row.get("audit_version") != 2:
+            continue
+        group = groups.setdefault(row["reason"], {"observations": 0, "contracts": set(),
+                                                  "rally_contracts": set(), "drop_contracts": set()})
+        token = row["key"].split(":", 1)[0]
+        group["observations"] += 1
+        group["contracts"].add(token)
+        if row["label"] == "rally_25pct":
+            group["rally_contracts"].add(token)
+        if row["label"] == "drop_30pct":
+            group["drop_contracts"].add(token)
+    closed = state.get("closed", [])
+    return {"scope": "retained_v2_observations_only; repeated contracts are not independent trials",
+            "automatic_rule_changes": False,
+            "by_rejection_reason": {reason: {k: len(v) if isinstance(v, set) else v
+                                             for k, v in g.items()} for reason, g in groups.items()},
+            "closed_paper_trades": len(closed),
+            "realized_paper_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in closed), 4),
+            "worst_paper_trade_eur": min((x.get("pnl_eur", 0) for x in closed), default=None)}
 
 
 def main():
@@ -390,13 +456,24 @@ def main():
     aggregate = Counter()
     discovery_sources = Counter()
     polls_completed = 0
+    selection_counts = Counter()
     for cycle in range(POLL_CYCLES):
         if cycle and time.monotonic() - started >= RUN_BUDGET_SECONDS - FETCH_BUDGET_SECONDS:
             break
         now = time.time()
         raw = fetch_pairs(tracked_addresses=tracking_priority(state))
+        selection_counts["raw_pool_observations"] += len(raw)
+        raw = select_pairs(raw, state["positions"])
+        selection_counts["selected_pool_observations"] += len(raw)
         now = time.time()
         samples = [sample(p, now) for p in raw]
+        coverage = state.get("tracking_coverage", {})
+        requested_watches = set(coverage.get("selected_watch_contracts", []))
+        received_keys = {x["key"] for x in samples}
+        pending_keys = [k for k in state.get("watchlist", {})
+                        if k.split(":", 1)[0] in requested_watches]
+        coverage["watch_pool_quotes_received"] = sum(k in received_keys for k in pending_keys)
+        coverage["watch_pool_quotes_missing"] = sum(k not in received_keys for k in pending_keys)
         discovery_sources.update(p.get("_clean_source", "unknown") for p in raw)
         observed_contracts = {s["address"] for s in samples}
         for contract in CASE_STUDY_ADDRESSES:
@@ -423,6 +500,10 @@ def main():
     report["polls_completed"] = polls_completed
     report["monitoring_note"] = "Bounded monitoring; GitHub scheduling gaps and stop overshoot remain possible"
     report["aggregate_counts"] = dict(aggregate)
+    report["selection_counts"] = dict(selection_counts)
+    report["tracking_coverage"] = state.get("tracking_coverage", {})
+    report["learning_summary"] = learning_summary(state)
+    report["unique_contracts_last_poll"] = len({s["address"] for s in samples})
     report["discovery_sources_all_polls"] = dict(discovery_sources)
     report["discovery_sources_last_poll"] = dict(Counter(p.get("_clean_source", "unknown") for p in raw))
     report["runtime_seconds"] = round(time.monotonic() - started, 3)
