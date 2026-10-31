@@ -45,7 +45,7 @@ class ShadowLedgerSafetyTests(unittest.TestCase):
         from brain_clean_v1 import RUN_BUDGET_SECONDS
         workflow = (Path(__file__).parent / ".github" / "workflows" /
                     "brain_clean_v1_shadow.yml").read_text(encoding="utf-8")
-        timeout = re.search(r"(?m)^\\s+timeout-minutes:\\s*(\\d+)\\s*$", workflow)
+        timeout = re.search(r"(?m)^\s+timeout-minutes:\s*(\d+)\s*$", workflow)
         self.assertIsNotNone(timeout)
         self.assertGreaterEqual(int(timeout.group(1)) * 60,
                                 RUN_BUDGET_SECONDS + 120)
