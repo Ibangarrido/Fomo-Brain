@@ -169,6 +169,50 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(report["legacy_outcomes_unvalidated"], 1)
         self.assertEqual(report["validated_outcomes_v2"], 0)
 
+    def test_run_report_keeps_entries_from_earlier_polls(self):
+        # A last-poll-only 'entries' list previously hid real PAPER entries
+        # despite aggregate_counts recording them in the same completed run.
+        import copy
+        state = brain.new_state()
+        saved = {}
+        polls = []
+
+        def fake_step(current, samples, now):
+            polls.append(len(polls) + 1)
+            if len(polls) == 1:
+                current["cash"] -= 10
+                current["positions"]["mint:pool"] = {
+                    "key": "mint:pool", "symbol": "TEST", "cost": 10,
+                    "units": 9.9, "entry_price": 1}
+                return {"counts": {"paper_entry": 1}, "entries": [
+                    {"key": "mint:pool", "symbol": "TEST",
+                     "decision": "PAPER_ENTRY", "reason": "staircase_confirmed"}],
+                    "equity_eur": None}
+            return {"counts": {"already_open": 1}, "entries": [], "equity_eur": None}
+
+        with patch.object(brain, "POLL_CYCLES", 2), \
+             patch.object(brain, "load_state", return_value=state), \
+             patch.object(brain, "fetch_pairs", return_value=[]), \
+             patch.object(brain, "step", side_effect=fake_step), \
+             patch.object(brain, "save_json",
+                          side_effect=lambda path, data: saved.__setitem__(
+                              path, copy.deepcopy(data))), \
+             patch.object(brain.time, "monotonic", return_value=0), \
+             patch.object(brain.time, "sleep"):
+            brain.main()
+
+        report = saved[brain.REPORT_FILE]
+        ledger = saved[brain.STATE_FILE]
+        self.assertEqual(report["entries"], [])  # Backward-compatible last poll.
+        self.assertEqual(report["entries_scope"], "last_poll_only")
+        self.assertEqual(report["aggregate_counts"]["paper_entry"], 1)
+        self.assertEqual(report["run_entries"], [{
+            "poll": 1, "key": "mint:pool", "symbol": "TEST",
+            "decision": "PAPER_ENTRY", "reason": "staircase_confirmed"}])
+        self.assertEqual(ledger["cash"], 90)
+        self.assertEqual(len(ledger["positions"]), 1)
+        self.assertEqual(ledger["closed"], [])
+
     def test_monitor_loop_stops_with_room_to_save_before_timeout(self):
         import tempfile, os
         with tempfile.TemporaryDirectory() as folder:
