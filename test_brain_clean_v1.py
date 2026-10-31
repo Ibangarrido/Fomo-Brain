@@ -11,6 +11,46 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_shadow_provenance_uses_pr_head_not_github_merge_sha(self):
+        import os
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_SHA": "merge-commit",
+            "CLEAN_SHADOW_HEAD_SHA": "checked-out-head",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "checked-out-head")
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "schedule",
+            "GITHUB_SHA": "main-commit",
+            "CLEAN_SHADOW_HEAD_SHA": "must-not-override-main",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "main-commit")
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_SHA": "merge-commit",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "merge-commit")
+
+    def test_recent_major_collapse_blocks_dead_cat_staircase(self):
+        state = brain.new_state()
+        # Real failure shape: an earlier ~400k peak preceded a 40-60k
+        # local staircase, then a >95% simulated loss on PILLSEY.
+        for cap, ts in [(397721, 500), (60000, 1000), (42000, 1060),
+                        (45000, 1120), (50000, 1180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("recent_crash_risk"), 1)
+        self.assertEqual(state["cash"], 100)
+        self.assertEqual(state["positions"], {})
+        self.assertEqual(brain.staircase(state["history"]["mint:pool"][-4:])[0], True)
+
+    def test_old_peak_outside_crash_window_does_not_block_staircase(self):
+        state = brain.new_state()
+        for cap, ts in [(397721, 100), (60000, 3000), (42000, 3060),
+                        (45000, 3120), (50000, 3180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(state["cash"], 90)
+
     def test_lumi_variants_share_one_slot_across_restored_runs(self):
         import json
         state = brain.new_state()
@@ -508,7 +548,6 @@ class CleanPaperTests(unittest.TestCase):
                 brain.load_state(path)
 
 
-
 class AuthorizedWriteOffTests(unittest.TestCase):
     def test_exact_holdings_closed_without_crediting_cash_and_only_once(self):
         state = brain.new_state()
@@ -544,6 +583,7 @@ class AuthorizedWriteOffTests(unittest.TestCase):
             brain.apply_user_paper_write_offs(restored)
         self.assertEqual(restored, state)
         self.assertEqual(restored["closed"][0], {"key": "prior:pool", "pnl_eur": 2})
+
 
 if __name__ == "__main__":
     unittest.main()

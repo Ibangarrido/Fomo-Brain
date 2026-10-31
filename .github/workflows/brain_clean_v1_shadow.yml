@@ -1,0 +1,72 @@
+name: Clean V1 PR23 PAPER shadow validation
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'brain_clean_v1.py'
+      - 'test_brain_clean_v1.py'
+      - 'clean_v1_shadow.py'
+      - 'test_clean_v1_shadow.py'
+      - '.github/workflows/brain_clean_v1_shadow.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: brain-clean-v1-pr23-shadow
+  cancel-in-progress: false
+
+jobs:
+  shadow:
+    if: github.event.pull_request.number == 23 && github.event.pull_request.head.repo.full_name == 'Ibangarrido/Fomo-Brain'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head, not main or merge commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify checkout SHA
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline regression tests
+        run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_shadow.py
+      - name: Restore production PAPER state to ephemeral shadow only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: brain_clean_v1.yml
+          branch: main
+          name: brain-clean-v1-state
+          path: .
+          search_artifacts: true
+          workflow_conclusion: ''
+          if_no_artifact_found: fail
+      - name: Verify restored ledger and preserve its actual cash
+        run: python clean_v1_shadow.py preflight
+      - name: Run PR code on copied PAPER ledger only
+        env:
+          PYTHONUNBUFFERED: '1'
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha }}
+          CLEAN_SHADOW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python brain_clean_v1.py
+      - name: Verify branch provenance and compare balances
+        env:
+          CLEAN_SHADOW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python clean_v1_shadow.py finalize
+      - name: Upload isolated shadow audit (NEVER production artifact name)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-clean-v1-pr23-shadow
+          path: |
+            brain_clean_v1_shadow_baseline.json
+            brain_clean_v1_shadow_comparison.json
+            brain_clean_v1_report.json
+          if-no-files-found: warn
+          retention-days: 14

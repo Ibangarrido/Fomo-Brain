@@ -234,6 +234,22 @@ def staircase(samples):
     return False, "no_qualified_staircase"
 
 
+def recent_crash_risk(history, latest, lookback_seconds=1800):
+    """Block a PAPER re-entry into a collapsed token despite a local staircase.
+
+    A 15-40% local pullback can be a dead-cat bounce after a >60% crash.
+    Use only prior independently sampled prices from this same pool, never
+    future prices, and keep the existing liquidity/confirmation gates.
+    """
+    if not latest.get("price") or not latest.get("cap"):
+        return False
+    earlier = [s for s in history if s["ts"] < latest["ts"]
+               and 0 <= latest["ts"] - s["ts"] <= lookback_seconds
+               and s.get("key") == latest.get("key")]
+    return any(s.get("price", 0) >= latest["price"] * 2.5 or
+               s.get("cap", 0) >= latest["cap"] * 2.5 for s in earlier)
+
+
 def exposure_symbol(symbol):
     """Conservative ticker bucket, not proof that contracts are related."""
     return unicodedata.normalize("NFKC", str(symbol or "")).strip().lstrip("$").strip().casefold()
@@ -318,7 +334,7 @@ def step(state, samples, now=None):
         if not reason:
             _, reason = staircase(hist)
             if reason == "staircase_confirmed":
-                reason = None
+                reason = ("recent_crash_risk" if recent_crash_risk(hist, s) else None)
         if not reason and key in state["positions"]:
             reason = "already_open"
         # Pools are not independent assets: one mint may have several pools.
@@ -459,7 +475,6 @@ def learning_summary(state):
             "worst_paper_trade_eur": min((x.get("pnl_eur", 0) for x in closed), default=None)}
 
 
-
 # Explicit user-authorized PAPER write-offs, keyed by exact mint and pool.
 # No simulated sale or recoverable cash is asserted for these illiquid holdings.
 USER_PAPER_WRITE_OFFS = (
@@ -485,6 +500,13 @@ def apply_user_paper_write_offs(state):
             "last_observed_ts": quote.get("ts"),
         })
         print("USER_PAPER_WRITE_OFF", key, "zero recovery; no executed sale", flush=True)
+
+
+def execution_sha():
+    """Report the checked-out PR head in isolated shadow runs, not the PR merge SHA."""
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        return os.environ.get("CLEAN_SHADOW_HEAD_SHA") or os.environ.get("GITHUB_SHA")
+    return os.environ.get("GITHUB_SHA")
 
 
 def main():
@@ -552,7 +574,7 @@ def main():
     report["runtime_seconds"] = round(time.monotonic() - started, 3)
     report["run"] = {"id": os.environ.get("GITHUB_RUN_ID"),
                      "event": os.environ.get("GITHUB_EVENT_NAME"),
-                     "sha": os.environ.get("GITHUB_SHA"), "completed_at": utcnow()}
+                     "sha": execution_sha(), "completed_at": utcnow()}
     report["previous_run"] = previous_run
     report["gap_since_previous_run_seconds"] = (
         round(first_poll_started_at - datetime.fromisoformat(previous_run["completed_at"]).timestamp(), 1)
