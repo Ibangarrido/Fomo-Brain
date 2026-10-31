@@ -39,6 +39,17 @@ class ShadowLedgerSafetyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             shadow.validate(state)
 
+    def test_shadow_job_timeout_covers_runtime_budget(self):
+        # A shadow run must have enough time to finish, finalize and upload.
+        import re
+        from brain_clean_v1 import RUN_BUDGET_SECONDS
+        workflow = (Path(__file__).parent / ".github" / "workflows" /
+                    "brain_clean_v1_shadow.yml").read_text(encoding="utf-8")
+        timeout = re.search(r"(?m)^\\s+timeout-minutes:\\s*(\\d+)\\s*$", workflow)
+        self.assertIsNotNone(timeout)
+        self.assertGreaterEqual(int(timeout.group(1)) * 60,
+                                RUN_BUDGET_SECONDS + 120)
+
     def test_finalize_refuses_mismatched_commit_or_ledger(self):
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)
