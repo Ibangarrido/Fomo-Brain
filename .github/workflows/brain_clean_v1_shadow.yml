@@ -21,7 +21,7 @@ jobs:
   shadow:
     if: github.event.pull_request.number == 23 && github.event.pull_request.head.repo.full_name == 'Ibangarrido/Fomo-Brain'
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 20
     steps:
       - name: Checkout exact PR head, not main or merge commit
         uses: actions/checkout@v4
