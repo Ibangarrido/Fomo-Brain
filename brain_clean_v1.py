@@ -7,6 +7,7 @@ historical candle: the pattern requires independent snapshots across runs.
 import json
 import os
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -233,6 +234,11 @@ def staircase(samples):
     return False, "no_qualified_staircase"
 
 
+def exposure_symbol(symbol):
+    """Conservative ticker bucket, not proof that contracts are related."""
+    return unicodedata.normalize("NFKC", str(symbol or "")).strip().lstrip("$").strip().casefold()
+
+
 def step(state, samples, now=None):
     now = time.time() if now is None else now
     counts = Counter()
@@ -325,6 +331,13 @@ def step(state, samples, now=None):
         if not reason and any(x["key"].split(":", 1)[0] == token
                               for x in state["closed"]):
             reason = "already_traded_token"
+        # Different mints with the same ticker must not occupy all PAPER slots.
+        # Apply only to concurrent holdings; a closed ticker is not a blacklist.
+        bucket = exposure_symbol(s.get("symbol"))
+        if not reason and bucket and any(
+                exposure_symbol(p.get("symbol")) == bucket
+                for p in state["positions"].values()):
+            reason = "same_symbol_exposure_open"
         if not reason and len(state["positions"]) >= MAX_POSITIONS:
             reason = "max_3_positions"
         if not reason and state["cash"] < MAX_ENTRY:
@@ -522,5 +535,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
