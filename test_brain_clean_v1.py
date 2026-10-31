@@ -31,6 +31,60 @@ class CleanPaperTests(unittest.TestCase):
         }, clear=True):
             self.assertEqual(brain.execution_sha(), "merge-commit")
 
+    def test_recent_major_collapse_blocks_dead_cat_staircase(self):
+        state = brain.new_state()
+        # Real failure shape: an earlier ~400k peak preceded a 40-60k
+        # local staircase, then a >95% simulated loss on PILLSEY.
+        for cap, ts in [(397721, 500), (60000, 1000), (42000, 1060),
+                        (45000, 1120), (50000, 1180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("recent_crash_risk"), 1)
+        self.assertEqual(state["cash"], 100)
+        self.assertEqual(state["positions"], {})
+        self.assertEqual(brain.staircase(state["history"]["mint:pool"][-4:])[0], True)
+
+    def test_old_peak_outside_crash_window_does_not_block_staircase(self):
+        state = brain.new_state()
+        for cap, ts in [(397721, 100), (60000, 3000), (42000, 3060),
+                        (45000, 3120), (50000, 3180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(state["cash"], 90)
+
+    def test_lumi_variants_share_one_slot_across_restored_runs(self):
+        import json
+        state = brain.new_state()
+        for i, cap in enumerate([60000, 42000, 45000, 50000]):
+            now = 1000 + i * 60
+            rows = []
+            for mint, symbol in (("first", "LUMI"), ("second", "Lumi"),
+                                 ("third", " $ＬＵＭＩ "), ("other", "OTHER")):
+                row = sample(cap, now, key=mint + ":pool")
+                row.update(address=mint, symbol=symbol)
+                rows.append(row)
+            report = brain.step(state, rows, now)
+            state = json.loads(json.dumps(state))
+        self.assertEqual(set(state["positions"]), {"first:pool", "other:pool"})
+        self.assertEqual(state["cash"], 80)
+        self.assertEqual(report["counts"]["same_symbol_exposure_open"], 2)
+        # The restriction also holds in a later independent poll after restore.
+        row = sample(51000, 1240, key="second:pool")
+        row.update(address="second", symbol="lumi")
+        report = brain.step(state, [row], 1240)
+        self.assertEqual(report["counts"].get("same_symbol_exposure_open"), 1)
+        self.assertEqual(state["cash"], 80)
+
+    def test_closed_symbol_does_not_blacklist_other_contract(self):
+        state = brain.new_state()
+        state["closed"] = [{"key": "old:pool", "symbol": "LUMI"}]
+        for i, cap in enumerate([60000, 42000, 45000, 50000]):
+            now = 1000 + i * 60
+            row = sample(cap, now, key="new:pool")
+            row.update(address="new", symbol="Lumi")
+            report = brain.step(state, [row], now)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(state["closed"], [{"key": "old:pool", "symbol": "LUMI"}])
+
     def test_tracking_preserves_positions_and_deduplicates_before_limit(self):
         state = brain.new_state()
         state["positions"] = {"held:pool": {}}
@@ -115,6 +169,119 @@ class CleanPaperTests(unittest.TestCase):
                    return_value=io.BytesIO(json.dumps(payload).encode())):
             self.assertEqual(brain.discover_recent_addresses(limit=1), ["mintA"])
 
+    def test_audit_quarantines_extreme_quote_and_preserves_cash(self):
+        state = brain.new_state()
+        brain.step(state, [sample(60000, 1000)], 1000)
+        report = brain.step(state, [sample(60000000, 1920)], 1920)
+        self.assertEqual(state["outcomes"], [])
+        self.assertEqual(report["counts"]["outcome_quote_anomaly"], 1)
+        brain.step(state, [sample(90000, 1980)], 1980)
+        self.assertEqual(state["outcomes"], [])
+        self.assertEqual(state["cash"], 100)
+
+    def test_audit_ignores_illiquid_baseline(self):
+        state = brain.new_state()
+        thin = sample(60000, 1000)
+        thin["liquidity"] = 10
+        brain.step(state, [thin], 1000)
+        self.assertEqual(state["watchlist"], {})
+        brain.step(state, [sample(90000, 1920)], 1920)
+        self.assertEqual(state["outcomes"], [])
+
+    def test_audit_records_sampled_peak_and_contract_count(self):
+        state = brain.new_state()
+        for key in ("mint:pool", "mint:other"):
+            for cap, ts in ((60000, 1000), (90000, 1500), (80000, 1920)):
+                brain.step(state, [sample(cap, ts, key=key)], ts)
+        report = brain.step(state, [], 1921)
+        self.assertEqual(report["validated_outcomes_v2"], 2)
+        self.assertEqual(report["validated_rally_contracts_v2"], 1)
+        self.assertEqual(state["outcomes"][0]["sampled_peak_pct"], 50)
+        self.assertEqual(state["outcomes"][0]["baseline_ts"], 1000)
+
+    def test_legacy_audit_is_preserved_but_not_validated(self):
+        state = brain.new_state()
+        old = {"key": "mint:pool", "label": "rally_25pct", "return_pct": 100897}
+        state["outcomes"] = [old.copy()]
+        state["watchlist"]["mint:pool"] = {"price": .001, "ts": 1000, "reason": "low_liquidity"}
+        report = brain.step(state, [sample(90000, 1920)], 1920)
+        self.assertEqual(state["outcomes"], [old])
+        self.assertEqual(report["legacy_outcomes_unvalidated"], 1)
+        self.assertEqual(report["validated_outcomes_v2"], 0)
+
+    def test_monitor_loop_stops_with_room_to_save_before_timeout(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as folder:
+            state_path = os.path.join(folder, "state.json")
+            report_path = os.path.join(folder, "report.json")
+            with patch.object(brain, "STATE_FILE", state_path), \
+                 patch.object(brain, "REPORT_FILE", report_path), \
+                 patch.object(brain, "load_state", return_value=brain.new_state()), \
+                 patch.object(brain, "fetch_pairs", return_value=[]) as fetch, \
+                 patch.object(brain.time, "monotonic", side_effect=[0, 620, 621]), \
+                 patch.object(brain.time, "sleep"):
+                brain.main()
+            self.assertEqual(fetch.call_count, 1)
+            self.assertTrue(os.path.exists(report_path))
+
+    def test_watch_rotation_survives_serialization_and_failed_quotes(self):
+        import json
+        state = brain.new_state()
+        state["positions"] = {"held:pool": {}}
+        for token in ("a", "b", "c", "d", "e"):
+            state["watchlist"][token + ":pool"] = {"ts": 1000, "price": 1}
+        selected = set()
+        for _ in range(3):
+            requested = brain.tracking_priority(state, now=2000)
+            self.assertEqual(requested[0], "held")
+            self.assertLessEqual(len(requested), 8)
+            selected.update(state["tracking_coverage"]["selected_watch_contracts"])
+            # No quotes returned: cursor still advances and survives restoration.
+            state = json.loads(json.dumps(state))
+        self.assertEqual(selected, {"a", "b", "c", "d", "e"})
+
+    def test_watch_reservations_survive_signal_saturation(self):
+        state = brain.new_state()
+        for i in range(20):
+            row = sample(60000, 1000 + i, key=f"signal{i}:pool")
+            row["address"] = f"signal{i}"
+            state["history"][row["key"]] = [row]
+        state["watchlist"] = {"rejected1:pool": {"ts": 1000},
+                              "rejected2:pool": {"ts": 1000},
+                              "stale:pool": {"ts": -90000},
+                              "bad:pool": {"ts": 1000, "anomaly_seen": True}}
+        selected = brain.tracking_priority(state, now=2000)
+        self.assertIn("rejected1", selected)
+        self.assertIn("rejected2", selected)
+        self.assertNotIn("stale", selected)
+        self.assertNotIn("bad", selected)
+        self.assertEqual(len(selected), 8)
+
+    def test_pool_selection_keeps_exact_holding_and_liquid_discovery_pool(self):
+        def pair(token, pool, liquidity):
+            return {"baseToken": {"address": token}, "pairAddress": pool,
+                    "liquidity": {"usd": liquidity}}
+        raw = [pair("held", "original", 10), pair("held", "liquid", 50000),
+               pair("new", "thin", 10), pair("new", "best", 20000)]
+        selected = brain.select_pairs(raw, {"held:original": {}})
+        self.assertEqual({p["pairAddress"] for p in selected}, {"original", "liquid", "best"})
+
+    def test_learning_summary_uses_validated_contracts_and_preserves_ledger(self):
+        import copy
+        state = brain.new_state()
+        state["outcomes"] = [
+            {"key": "mint:one", "reason": "waiting", "audit_version": 2, "label": "rally_25pct"},
+            {"key": "mint:two", "reason": "waiting", "audit_version": 2, "label": "rally_25pct"},
+            {"key": "legacy:pool", "reason": "waiting", "label": "rally_25pct"}]
+        state["closed"] = [{"pnl_eur": -9}, {"pnl_eur": 2}]
+        before = copy.deepcopy(state)
+        report = brain.learning_summary(state)
+        self.assertEqual(report["by_rejection_reason"]["waiting"]["rally_contracts"], 1)
+        self.assertEqual(report["by_rejection_reason"]["waiting"]["observations"], 2)
+        self.assertEqual(report["realized_paper_pnl_eur"], -7)
+        self.assertFalse(report["automatic_rule_changes"])
+        self.assertEqual(state, before)
+
     def test_new_ledger_has_100_eur_and_no_legacy(self):
         state = brain.new_state()
         self.assertEqual(state["cash"], 100)
@@ -126,26 +293,6 @@ class CleanPaperTests(unittest.TestCase):
                   enumerate([60000, 42000, 45000, 50000])]
         self.assertEqual(brain.staircase(series), (True, "staircase_confirmed"))
         self.assertFalse(brain.staircase(series[:3])[0])
-
-    def test_recent_major_collapse_blocks_dead_cat_staircase(self):
-        state = brain.new_state()
-        # Real failure shape: an earlier ~400k peak preceded a 40-60k
-        # local staircase, then a >95% simulated loss on PILLSEY.
-        for cap, ts in [(397721, 500), (60000, 1000), (42000, 1060),
-                        (45000, 1120), (50000, 1180)]:
-            report = brain.step(state, [sample(cap, ts)], ts)
-        self.assertEqual(report["counts"].get("recent_crash_risk"), 1)
-        self.assertEqual(state["cash"], 100)
-        self.assertEqual(state["positions"], {})
-        self.assertEqual(brain.staircase(state["history"]["mint:pool"][-4:])[0], True)
-
-    def test_old_peak_outside_crash_window_does_not_block_staircase(self):
-        state = brain.new_state()
-        for cap, ts in [(397721, 100), (60000, 3000), (42000, 3060),
-                        (45000, 3120), (50000, 3180)]:
-            report = brain.step(state, [sample(cap, ts)], ts)
-        self.assertEqual(report["counts"].get("paper_entry"), 1)
-        self.assertEqual(state["cash"], 90)
 
     def test_entry_only_after_confirmed_pattern(self):
         state = brain.new_state()
@@ -213,50 +360,33 @@ class CleanPaperTests(unittest.TestCase):
         self.assertIn("mint:pool", state["positions"])
         self.assertEqual(state["closed"], [])
 
-    def test_pillsey_low_liquidity_does_not_fabricate_paper_exit(self):
+    def test_pillsey_illiquid_stop_does_not_invent_paper_sale(self):
+        # Clean #10 recorded a stop at $2,235.84 liquidity, below MIN_LIQ.
+        # Preserve the position and cash rather than crediting an unfillable sale.
         key = ("J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump:"
                "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz")
         state = brain.new_state()
         state["cash"] = 90.0
         state["positions"][key] = {"key": key, "units": 212264.15094339623,
-                                   "entry_price": 4.664e-05, "cost": 10.0}
+                                    "entry_price": 4.664e-05, "cost": 10.0}
         state["history"][key] = [sample(46339, 1000, key=key, price=4.664e-05)]
-        thin = sample(2039, 1600, key=key, price=2.052e-06)
-        thin["liquidity"] = 2235.84
-        report = brain.step(state, [thin], 1600)
+        illiquid = sample(2039, 1600, key=key, price=2.052e-06)
+        illiquid["liquidity"] = 2235.84
+        report = brain.step(state, [illiquid], 1600)
         self.assertEqual(report["counts"].get("position_low_liquidity_hold"), 1)
         self.assertNotIn("paper_exit", report["counts"])
         self.assertEqual(state["cash"], 90.0)
         self.assertIn(key, state["positions"])
         self.assertEqual(state["closed"], [])
+
+        # A later, independently observed liquid quote can still trigger a stop.
         liquid = sample(2039, 1700, key=key, price=2.052e-06)
         liquid["liquidity"] = brain.MIN_LIQ
         report = brain.step(state, [liquid], 1700)
         self.assertEqual(report["counts"].get("paper_exit"), 1)
         self.assertNotIn(key, state["positions"])
         self.assertEqual(len(state["closed"]), 1)
-
-    def test_pillsey_higher_peak_invalidates_earlier_staircase(self):
-        mint = "J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump"
-        pool = "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz"
-        observed = [(0, 56425, .00005679), (36, 41071, .00004134),
-                    (72, 60555, .00006095), (108, 76991, .00007749),
-                    (144, 114196, .00011490), (305, 44804, .00004509),
-                    (341, 46339, .00004664)]
-        series = [sample(cap, 1000 + offset, key=mint + ":" + pool, price=price)
-                  for offset, cap, price in observed]
-        for observation in series:
-            observation["address"] = mint
-            observation["pool"] = pool
-            observation["symbol"] = "PILLSEY"
-        self.assertEqual(brain.staircase(series),
-                         (False, "no_qualified_staircase"))
-        state = brain.new_state()
-        state["history"][series[0]["key"]] = series[:-1]
-        report = brain.step(state, [series[-1]], series[-1]["ts"])
-        self.assertNotIn("paper_entry", report["counts"])
-        self.assertEqual(state["cash"], 100.0)
-        self.assertEqual(state["positions"], {})
+        self.assertAlmostEqual(state["cash"], 90.4312103773585)
 
     def test_low_liquidity_is_not_traded(self):
         state = brain.new_state()
@@ -294,6 +424,34 @@ class CleanPaperTests(unittest.TestCase):
         series = [sample(c, 1000 + i * 30) for i, c in
                   enumerate([60000, 42000, 10000, 45000, 50000])]
         self.assertFalse(brain.staircase(series)[0])
+
+    def test_pillsey_new_peak_collapse_cannot_reuse_older_staircase(self):
+        # Exact Solana mint/pool observed in Clean V1 schedule run 41137991511.
+        # The old 27% dip was followed by a higher peak and a 61% collapse.
+        mint = "J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump"
+        pool = "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz"
+        observed = [
+            (0, 56425, 0.00005679),
+            (36, 41071, 0.00004134),
+            (72, 60555, 0.00006095),
+            (108, 76991, 0.00007749),
+            (144, 114196, 0.00011490),
+            (305, 44804, 0.00004509),
+            (341, 46339, 0.00004664),
+        ]
+        series = [sample(cap, 1000 + offset, key=mint + ":" + pool, price=price)
+                  for offset, cap, price in observed]
+        for observation in series:
+            observation["address"] = mint
+            observation["pool"] = pool
+            observation["symbol"] = "PILLSEY"
+        self.assertEqual(brain.staircase(series), (False, "no_qualified_staircase"))
+        state = brain.new_state()
+        state["history"][series[0]["key"]] = series[:-1]
+        report = brain.step(state, [series[-1]], series[-1]["ts"])
+        self.assertNotIn("paper_entry", report["counts"])
+        self.assertEqual(state["cash"], 100.0)
+        self.assertEqual(state["positions"], {})
 
     def test_cap_recovery_without_price_pattern_is_rejected(self):
         series = [sample(c, 1000 + i * 30, price=p) for i, (c, p) in
@@ -378,43 +536,6 @@ class CleanPaperTests(unittest.TestCase):
                 self.assertNotIn("mint:pool2", state["positions"])
                 self.assertEqual(state["cash"], 100 if previously_closed else 90)
 
-    def test_distinct_lumi_contracts_cannot_fill_multiple_paper_slots(self):
-        # Regression: three distinct LUMI/Lumi mints occupied all slots
-        # on 2026-10-31, then all stopped out. Keep existing ledger intact.
-        state = brain.new_state()
-        state["cash"] = 90.0
-        state["positions"]["lumi-a:pool"] = {
-            "key": "lumi-a:pool", "symbol": "LUMI",
-            "entry_price": 1.0, "units": 9.9, "cost": 10.0}
-        for i, cap in enumerate([60000, 42000, 45000, 50000]):
-            now = 1000 + i * 60
-            s = sample(cap, now, key="lumi-b:pool")
-            s["address"] = "lumi-b"
-            s["symbol"] = " Lumi "
-            report = brain.step(state, [s], now)
-        self.assertEqual(
-            report["counts"].get("already_open_symbol_other_contract"), 1)
-        self.assertNotIn("paper_entry", report["counts"])
-        self.assertEqual(set(state["positions"]), {"lumi-a:pool"})
-        self.assertEqual(state["cash"], 90.0)
-        self.assertEqual(state["closed"], [])
-
-    def test_different_ticker_is_not_blocked_by_symbol_concentration(self):
-        state = brain.new_state()
-        state["cash"] = 90.0
-        state["positions"]["lumi-a:pool"] = {
-            "key": "lumi-a:pool", "symbol": "LUMI",
-            "entry_price": 1.0, "units": 9.9, "cost": 10.0}
-        for i, cap in enumerate([60000, 42000, 45000, 50000]):
-            now = 1000 + i * 60
-            s = sample(cap, now, key="other-mint:pool")
-            s["address"] = "other-mint"
-            s["symbol"] = "OTHER"
-            report = brain.step(state, [s], now)
-        self.assertEqual(report["counts"].get("paper_entry"), 1)
-        self.assertEqual(len(state["positions"]), 2)
-        self.assertEqual(state["cash"], 80.0)
-
     def test_no_legacy_portfolio_import(self):
         import tempfile
         import json
@@ -429,4 +550,3 @@ class CleanPaperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

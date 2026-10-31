@@ -7,6 +7,7 @@ historical candle: the pattern requires independent snapshots across runs.
 import json
 import os
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -24,7 +25,8 @@ MIN_CAP, MAX_CAP = 30000.0, 2000000.0
 MIN_BUY_RATIO = 0.50
 MAX_SNAPSHOTS = 30
 MAX_AGE_SECONDS = 6 * 3600
-POLL_CYCLES = 5
+POLL_CYCLES = 24
+RUN_BUDGET_SECONDS = 660
 POLL_SECONDS = 30
 FETCH_BUDGET_SECONDS = 45
 SIGNAL_MAX_WINDOW_SECONDS = 8 * 60
@@ -218,10 +220,8 @@ def staircase(samples):
         if any(s["cap"] < trough or s["price"] < recent[i]["price"]
                for s in recent[i + 1:]):
             continue
-        # An intervening higher peak resets the swing. The earlier shallow
-        # dip must not validate a later collapse as an ESCALERA recovery.
-        if any(s["cap"] > peak or s["price"] > peak_sample["price"]
-               for s in recent[i + 1:-2]):
+        if any(x["cap"] > peak or x["price"] > peak_sample["price"]
+               for x in recent[i + 1:-2]):
             continue
         drop = (peak - trough) / peak
         price_drop = 1 - recent[i]["price"] / peak_sample["price"]
@@ -250,6 +250,11 @@ def recent_crash_risk(history, latest, lookback_seconds=1800):
                s.get("cap", 0) >= latest["cap"] * 2.5 for s in earlier)
 
 
+def exposure_symbol(symbol):
+    """Conservative ticker bucket, not proof that contracts are related."""
+    return unicodedata.normalize("NFKC", str(symbol or "")).strip().lstrip("$").strip().casefold()
+
+
 def step(state, samples, now=None):
     now = time.time() if now is None else now
     counts = Counter()
@@ -261,8 +266,6 @@ def step(state, samples, now=None):
         if s is None or not s["price"] or not s["liquidity"]:
             counts["position_unpriced_hold"] += 1
             continue
-        # Insufficient pool liquidity cannot support a verified PAPER fill.
-        # Keep cash, positions and closed trades unchanged.
         if s["liquidity"] < MIN_LIQ:
             counts["position_low_liquidity_hold"] += 1
             continue
@@ -280,6 +283,8 @@ def step(state, samples, now=None):
             state["closed"].append({**pos, "exit_at": utcnow(),
                                     "exit_price": s["price"], "proceeds": proceeds,
                                     "pnl_eur": proceeds - pos["cost"],
+                                    "observed_move_pct": round(move * 100, 2),
+                                    "stop_overshoot_pct": round(max(0, -move - .15) * 100, 2),
                                     "exit_reason": "stop_15pct" if move <= -0.15 else "target_25pct"})
             del state["positions"][key]
             counts["paper_exit"] += 1
@@ -291,12 +296,33 @@ def step(state, samples, now=None):
         # Outcomes must use independently admitted, chronological observations.
         admitted = not hist or s["ts"] > hist[-1]["ts"] + 20
         watch = state["watchlist"].get(key)
-        if admitted and watch and s["ts"] - watch["ts"] >= 900 and s["price"]:
-            change = s["price"] / watch["price"] - 1
-            label = "rally_25pct" if change >= .25 else ("drop_30pct" if change <= -.30 else "neutral")
-            state["outcomes"].append({"key": key, "reason": watch["reason"],
-                                      "return_pct": round(change * 100, 2), "label": label})
-            counts["outcome_" + label] += 1
+        # Research v2 requires liquid baseline and subsequent samples. Old
+        # records remain intact but cannot silently become validated evidence.
+        if admitted and watch and watch.get("audit_version") == 2:
+            if s["price"] and s["liquidity"] >= MIN_LIQ:
+                ratio = s["price"] / watch["price"]
+                if ratio > 10 or ratio < .1:
+                    watch["anomaly_seen"] = True
+                    counts["outcome_quote_anomaly"] += 1
+                elif not watch.get("anomaly_seen"):
+                    watch["peak_price"] = max(watch["peak_price"], s["price"])
+                    watch["low_price"] = min(watch["low_price"], s["price"])
+                    if s["ts"] - watch["ts"] >= 900:
+                        change = ratio - 1
+                        label = "rally_25pct" if change >= .25 else ("drop_30pct" if change <= -.30 else "neutral")
+                        state["outcomes"].append({
+                            "audit_version": 2, "key": key, "address": s["address"],
+                            "symbol": s["symbol"], "reason": watch["reason"],
+                            "baseline_ts": watch["ts"], "observed_ts": s["ts"],
+                            "baseline_price": watch["price"], "observed_price": s["price"],
+                            "sampled_peak_pct": round((watch["peak_price"] / watch["price"] - 1) * 100, 2),
+                            "sampled_low_pct": round((watch["low_price"] / watch["price"] - 1) * 100, 2),
+                            "return_pct": round(change * 100, 2), "label": label})
+                        counts["outcome_" + label] += 1
+                        del state["watchlist"][key]
+        elif admitted and watch:
+            # Preserve historical outcomes; restart only the pending research
+            # baseline under v2 rules, never wallet balances or trade history.
             del state["watchlist"][key]
         # Never use stale or duplicate snapshots as independent observations.
         if admitted:
@@ -318,17 +344,16 @@ def step(state, samples, now=None):
         if not reason and any(k.split(":", 1)[0] == token
                               for k in state["positions"]):
             reason = "already_open_token_other_pool"
-        # A ticker is not a token identity, but simultaneous same-ticker
-        # positions can concentrate PAPER exposure in correlated meme hype.
-        # Never rewrite existing holdings; block only additional entries.
-        symbol = str(s.get("symbol") or "").strip().casefold()
-        if not reason and symbol and any(
-                str(p.get("symbol") or "").strip().casefold() == symbol
-                for p in state["positions"].values()):
-            reason = "already_open_symbol_other_contract"
         if not reason and any(x["key"].split(":", 1)[0] == token
                               for x in state["closed"]):
             reason = "already_traded_token"
+        # Different mints with the same ticker must not occupy all PAPER slots.
+        # Apply only to concurrent holdings; a closed ticker is not a blacklist.
+        bucket = exposure_symbol(s.get("symbol"))
+        if not reason and bucket and any(
+                exposure_symbol(p.get("symbol")) == bucket
+                for p in state["positions"].values()):
+            reason = "same_symbol_exposure_open"
         if not reason and len(state["positions"]) >= MAX_POSITIONS:
             reason = "max_3_positions"
         if not reason and state["cash"] < MAX_ENTRY:
@@ -336,8 +361,12 @@ def step(state, samples, now=None):
         if reason:
             counts[reason] += 1
             decisions.append({"key": key, "symbol": s["symbol"], "decision": "REJECT", "reason": reason})
-            if s["price"] and key not in state["watchlist"] and reason not in ("already_open", "already_traded"):
-                state["watchlist"][key] = {"price": s["price"], "ts": s["ts"], "reason": reason}
+            if (s["price"] and s["liquidity"] >= MIN_LIQ and s["cap"]
+                    and key not in state["watchlist"]
+                    and reason not in ("already_open", "already_traded_token", "already_open_token_other_pool")):
+                state["watchlist"][key] = {"price": s["price"], "ts": s["ts"], "reason": reason,
+                                            "audit_version": 2, "peak_price": s["price"],
+                                            "low_price": s["price"]}
             continue
         cost = MAX_ENTRY
         units = cost * 0.99 / s["price"]
@@ -361,17 +390,89 @@ def step(state, samples, now=None):
             "cash_eur": round(state["cash"], 4), "open_positions": len(state["positions"]),
             "closed_trades": len(state["closed"]),
             "outcomes_total": len(state["outcomes"]),
+            "validated_outcomes_v2": sum(x.get("audit_version") == 2 for x in state["outcomes"]),
+            "validated_rally_contracts_v2": len({x["key"].split(":", 1)[0] for x in state["outcomes"]
+                if x.get("audit_version") == 2 and x["label"] == "rally_25pct"}),
+            "recent_validated_outcomes_v2": [x for x in state["outcomes"] if x.get("audit_version") == 2][-20:],
+            "quarantined_watches": sum(bool(w.get("anomaly_seen")) for w in state["watchlist"].values()),
+            "legacy_outcomes_unvalidated": sum(x.get("audit_version") != 2 for x in state["outcomes"]),
             "outcomes_by_label": dict(Counter(x["label"] for x in state["outcomes"])),
             "equity_eur": None, "equity_note": "Unknown until all open positions have current quotes"}
 
 
-def tracking_priority(state):
-    """Holdings first; eligible recent signals before rejected historical pools."""
+def tracking_priority(state, now=None):
+    """Holdings first, then signals, with reserved rotating rejected-token slots."""
+    now = time.time() if now is None else now
+    held = list(dict.fromkeys(k.split(":", 1)[0] for k in state["positions"]))
     recent = sorted((v[-1] for v in state["history"].values() if v and gate(v[-1]) is None),
                     key=lambda s: s["ts"], reverse=True)
-    return list(dict.fromkeys(
-        [k.split(":", 1)[0] for k in state["positions"]] +
-        [s["address"] for s in recent] + list(CASE_STUDY_ADDRESSES)))[:8]
+    watches = sorted({k.split(":", 1)[0] for k, w in state.get("watchlist", {}).items()
+                      if 0 <= now - w["ts"] <= 86400 and not w.get("anomaly_seen")
+                      and k.split(":", 1)[0] not in held})
+    cursor = state.get("watch_cursor", 0)
+    rotating = (watches[cursor % len(watches):] + watches[:cursor % len(watches)]) if watches else []
+    watch_slots = min(2, len(rotating), max(0, 8 - len(held)))
+    chosen_watches = rotating[:watch_slots]
+    state["watch_cursor"] = (cursor + watch_slots) % len(watches) if watches else 0
+    cases = [a for a in CASE_STUDY_ADDRESSES if a not in held and a not in chosen_watches][:1]
+    signal_slots = max(0, 8 - len(held) - watch_slots - len(cases))
+    signals = list(dict.fromkeys(x["address"] for x in recent
+                                if x["address"] not in held + chosen_watches + cases))[:signal_slots]
+    selected = (held + chosen_watches + signals + cases)[:8]
+    state["tracking_coverage"] = {"pending_watch_contracts": len(watches),
+        "selected_watch_contracts": chosen_watches, "requested_contracts": selected,
+        "watch_cursor": state["watch_cursor"]}
+    return selected
+
+
+def select_pairs(raw, positions):
+    """One liquid discovery pool per contract; always retain exact holding pools.
+
+    Never splice histories or migrate an existing position to another pool.
+    """
+    best = {}
+    held = {}
+    for pair in raw:
+        address = (pair.get("baseToken") or {}).get("address")
+        pool = pair.get("pairAddress")
+        if not address or not pool:
+            continue
+        key = address + ":" + pool
+        if key in positions:
+            held[key] = pair
+        prior = best.get(address)
+        liquidity = number((pair.get("liquidity") or {}).get("usd"))
+        if prior is None or liquidity > number((prior.get("liquidity") or {}).get("usd")):
+            best[address] = pair
+    selected = {((p.get("baseToken") or {})["address"] + ":" + p["pairAddress"]): p
+                for p in best.values()}
+    selected.update(held)
+    return list(selected.values())
+
+
+def learning_summary(state):
+    """Descriptive evidence from retained validated rows, never an auto-tuner."""
+    groups = {}
+    for row in state.get("outcomes", []):
+        if row.get("audit_version") != 2:
+            continue
+        group = groups.setdefault(row["reason"], {"observations": 0, "contracts": set(),
+                                                  "rally_contracts": set(), "drop_contracts": set()})
+        token = row["key"].split(":", 1)[0]
+        group["observations"] += 1
+        group["contracts"].add(token)
+        if row["label"] == "rally_25pct":
+            group["rally_contracts"].add(token)
+        if row["label"] == "drop_30pct":
+            group["drop_contracts"].add(token)
+    closed = state.get("closed", [])
+    return {"scope": "retained_v2_observations_only; repeated contracts are not independent trials",
+            "automatic_rule_changes": False,
+            "by_rejection_reason": {reason: {k: len(v) if isinstance(v, set) else v
+                                             for k, v in g.items()} for reason, g in groups.items()},
+            "closed_paper_trades": len(closed),
+            "realized_paper_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in closed), 4),
+            "worst_paper_trade_eur": min((x.get("pnl_eur", 0) for x in closed), default=None)}
 
 
 def execution_sha():
@@ -386,14 +487,29 @@ def main():
     started = time.monotonic()
     previous_run = state.get("last_run", {})
     now = time.time()
+    first_poll_started_at = now
     report = None
     aggregate = Counter()
     discovery_sources = Counter()
+    polls_completed = 0
+    selection_counts = Counter()
     for cycle in range(POLL_CYCLES):
+        if cycle and time.monotonic() - started >= RUN_BUDGET_SECONDS - FETCH_BUDGET_SECONDS:
+            break
         now = time.time()
         raw = fetch_pairs(tracked_addresses=tracking_priority(state))
+        selection_counts["raw_pool_observations"] += len(raw)
+        raw = select_pairs(raw, state["positions"])
+        selection_counts["selected_pool_observations"] += len(raw)
         now = time.time()
         samples = [sample(p, now) for p in raw]
+        coverage = state.get("tracking_coverage", {})
+        requested_watches = set(coverage.get("selected_watch_contracts", []))
+        received_keys = {x["key"] for x in samples}
+        pending_keys = [k for k in state.get("watchlist", {})
+                        if k.split(":", 1)[0] in requested_watches]
+        coverage["watch_pool_quotes_received"] = sum(k in received_keys for k in pending_keys)
+        coverage["watch_pool_quotes_missing"] = sum(k not in received_keys for k in pending_keys)
         discovery_sources.update(p.get("_clean_source", "unknown") for p in raw)
         observed_contracts = {s["address"] for s in samples}
         for contract in CASE_STUDY_ADDRESSES:
@@ -402,14 +518,14 @@ def main():
             else:
                 print("CASE_STUDY_OBSERVED", contract, flush=True)
         report = step(state, samples, now)
+        polls_completed += 1
         aggregate.update(report["counts"])
         save_json(STATE_FILE, state)
         print("CLEAN_POLL", cycle + 1, report["counts"], flush=True)
         if cycle < POLL_CYCLES - 1:
             time.sleep(POLL_SECONDS)
     quotes = {s["key"]: s for s in samples}
-    if all(k in quotes and quotes[k]["price"] and
-           quotes[k]["liquidity"] >= MIN_LIQ and
+    if all(k in quotes and quotes[k]["price"] and quotes[k]["liquidity"] >= MIN_LIQ and
            (not state["history"].get(k) or
             quotes[k]["ts"] >= state["history"][k][-1]["ts"])
            for k in state["positions"]):
@@ -417,8 +533,13 @@ def main():
             p["units"] * quotes[k]["price"] * 0.99 for k, p in state["positions"].items()), 4)
         report["equity_note"] = "Mark-to-market estimate with 1% exit cost; no guaranteed fills"
     save_json(STATE_FILE, state)
-    report["polls_completed"] = POLL_CYCLES
+    report["polls_completed"] = polls_completed
+    report["monitoring_note"] = "Bounded monitoring; GitHub scheduling gaps and stop overshoot remain possible"
     report["aggregate_counts"] = dict(aggregate)
+    report["selection_counts"] = dict(selection_counts)
+    report["tracking_coverage"] = state.get("tracking_coverage", {})
+    report["learning_summary"] = learning_summary(state)
+    report["unique_contracts_last_poll"] = len({s["address"] for s in samples})
     report["discovery_sources_all_polls"] = dict(discovery_sources)
     report["discovery_sources_last_poll"] = dict(Counter(p.get("_clean_source", "unknown") for p in raw))
     report["runtime_seconds"] = round(time.monotonic() - started, 3)
@@ -427,7 +548,7 @@ def main():
                      "sha": execution_sha(), "completed_at": utcnow()}
     report["previous_run"] = previous_run
     report["gap_since_previous_run_seconds"] = (
-        round(time.time() - datetime.fromisoformat(previous_run["completed_at"]).timestamp(), 1)
+        round(first_poll_started_at - datetime.fromisoformat(previous_run["completed_at"]).timestamp(), 1)
         if previous_run.get("completed_at") else None)
     state["last_run"] = report["run"]
     save_json(STATE_FILE, state)
@@ -437,4 +558,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
