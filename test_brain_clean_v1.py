@@ -193,6 +193,51 @@ class CleanPaperTests(unittest.TestCase):
         self.assertIn("mint:pool", state["positions"])
         self.assertEqual(state["closed"], [])
 
+    def test_pillsey_low_liquidity_does_not_fabricate_paper_exit(self):
+        key = ("J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump:"
+               "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz")
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "units": 212264.15094339623,
+                                   "entry_price": 4.664e-05, "cost": 10.0}
+        state["history"][key] = [sample(46339, 1000, key=key, price=4.664e-05)]
+        thin = sample(2039, 1600, key=key, price=2.052e-06)
+        thin["liquidity"] = 2235.84
+        report = brain.step(state, [thin], 1600)
+        self.assertEqual(report["counts"].get("position_low_liquidity_hold"), 1)
+        self.assertNotIn("paper_exit", report["counts"])
+        self.assertEqual(state["cash"], 90.0)
+        self.assertIn(key, state["positions"])
+        self.assertEqual(state["closed"], [])
+        liquid = sample(2039, 1700, key=key, price=2.052e-06)
+        liquid["liquidity"] = brain.MIN_LIQ
+        report = brain.step(state, [liquid], 1700)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        self.assertNotIn(key, state["positions"])
+        self.assertEqual(len(state["closed"]), 1)
+
+    def test_pillsey_higher_peak_invalidates_earlier_staircase(self):
+        mint = "J5jxG3PFaWpj6BLEQExyC6FSqSvaTKNdQ9G3sZwBpump"
+        pool = "13NbvbDB8ThpQdYXv7TifeU9mFKtJ2TDERpHC7m7ghzz"
+        observed = [(0, 56425, .00005679), (36, 41071, .00004134),
+                    (72, 60555, .00006095), (108, 76991, .00007749),
+                    (144, 114196, .00011490), (305, 44804, .00004509),
+                    (341, 46339, .00004664)]
+        series = [sample(cap, 1000 + offset, key=mint + ":" + pool, price=price)
+                  for offset, cap, price in observed]
+        for observation in series:
+            observation["address"] = mint
+            observation["pool"] = pool
+            observation["symbol"] = "PILLSEY"
+        self.assertEqual(brain.staircase(series),
+                         (False, "no_qualified_staircase"))
+        state = brain.new_state()
+        state["history"][series[0]["key"]] = series[:-1]
+        report = brain.step(state, [series[-1]], series[-1]["ts"])
+        self.assertNotIn("paper_entry", report["counts"])
+        self.assertEqual(state["cash"], 100.0)
+        self.assertEqual(state["positions"], {})
+
     def test_low_liquidity_is_not_traded(self):
         state = brain.new_state()
         for i, cap in enumerate([60000, 42000, 45000, 50000, 56000]):
