@@ -481,13 +481,31 @@ def learning_summary(state):
         if row["label"] == "drop_30pct":
             group["drop_contracts"].add(token)
     closed = state.get("closed", [])
+    # Diagnostics only: historical stops may lack prior-quote metadata.
+    # Never treat a missing audit field as a zero-gap or a verified fill.
+    stops = [x for x in closed if x.get("exit_reason") == "stop_15pct"]
+    excessive = [x for x in stops if isinstance(x.get("observed_move_pct"), (int, float))
+                 and x["observed_move_pct"] < -20]
+    audited = [x for x in excessive
+               if isinstance(x.get("previous_quote_price"), (int, float))
+               and x["previous_quote_price"] > 0
+               and isinstance(x.get("quote_gap_seconds"), (int, float))
+               and isinstance(x.get("quote_jump_pct"), (int, float))]
     return {"scope": "retained_v2_observations_only; repeated contracts are not independent trials",
             "automatic_rule_changes": False,
             "by_rejection_reason": {reason: {k: len(v) if isinstance(v, set) else v
                                              for k, v in g.items()} for reason, g in groups.items()},
             "closed_paper_trades": len(closed),
             "realized_paper_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in closed), 4),
-            "worst_paper_trade_eur": min((x.get("pnl_eur", 0) for x in closed), default=None)}
+            "worst_paper_trade_eur": min((x.get("pnl_eur", 0) for x in closed), default=None),
+            "stop_overshoot_audit": {
+                "stop_exits": len(stops),
+                "excessive_stops_below_minus_20pct": len(excessive),
+                "excessive_stops_with_prior_quote_audit": len(audited),
+                "excessive_stops_missing_prior_quote_audit": len(excessive) - len(audited),
+                "excessive_stops_realized_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in excessive), 4),
+                "note": "Observed PAPER prices, not guaranteed executable stop fills; legacy rows may lack quote history",
+            }}
 
 
 # Explicit user-authorized PAPER write-offs, keyed by exact mint and pool.
