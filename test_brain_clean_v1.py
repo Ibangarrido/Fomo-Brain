@@ -388,6 +388,32 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(len(state["closed"]), 1)
         self.assertAlmostEqual(state["cash"], 90.4312103773585)
 
+    def test_learning_summary_stop_overshoot_coverage_is_historical_safe(self):
+        state = brain.new_state()
+        state["closed"] = [
+            {"exit_reason": "stop_15pct", "observed_move_pct": -36.72,
+             "pnl_eur": -3.8, "previous_quote_price": 0.9,
+             "quote_gap_seconds": 37.6, "quote_jump_pct": -33.19},
+            {"exit_reason": "stop_15pct", "observed_move_pct": -25.0,
+             "pnl_eur": -2.5},  # historical row; no audit metadata
+            {"exit_reason": "stop_15pct", "observed_move_pct": -15.2,
+             "pnl_eur": -1.6},
+            {"exit_reason": "target_25pct", "observed_move_pct": 30,
+             "pnl_eur": 2.7},
+            {"exit_reason": "user_authorized_paper_write_off", "pnl_eur": -10},
+        ]
+        before = brain.new_state()
+        before["closed"] = [dict(x) for x in state["closed"]]
+        summary = brain.learning_summary(state)
+        audit = summary["stop_overshoot_audit"]
+        self.assertEqual(audit["stop_exits"], 3)
+        self.assertEqual(audit["excessive_stops_below_minus_20pct"], 2)
+        self.assertEqual(audit["excessive_stops_with_prior_quote_audit"], 1)
+        self.assertEqual(audit["excessive_stops_missing_prior_quote_audit"], 1)
+        self.assertAlmostEqual(audit["excessive_stops_realized_pnl_eur"], -6.3)
+        self.assertEqual(state, before)
+        self.assertFalse(summary["automatic_rule_changes"])
+
     def test_stop_audit_records_prior_quote_gap_without_changing_cash(self):
         state = brain.new_state()
         state["cash"] = 90.0
