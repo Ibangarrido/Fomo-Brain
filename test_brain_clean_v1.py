@@ -11,6 +11,44 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_user_muskx_veto_across_pools_and_symbols(self):
+        for pool in ("one", "two"):
+            state = brain.new_state()
+            for i, cap in enumerate([60000, 42000, 45000, 50000]):
+                row = sample(cap, 1000 + i * 60)
+                row.update(address=next(iter(brain.USER_EXCLUDED_MINTS)),
+                           key=next(iter(brain.USER_EXCLUDED_MINTS)) + ":" + pool,
+                           pool=pool, symbol="RENAMED")
+                report = brain.step(state, [row], row["ts"])
+            self.assertEqual(report["counts"].get("user_excluded_muskx"), 1)
+            self.assertEqual(state["cash"], 100)
+            self.assertFalse(state["positions"])
+
+    def test_mechanical_run_then_valid_dip_is_blocked_after_restore(self):
+        import json
+        state = brain.new_state()
+        caps = [40000, 43000, 46000, 49000, 52000, 55000, 58000, 60000,
+                42000, 45000, 50000]
+        for i, cap in enumerate(caps):
+            ts = 1000 + i * 30
+            report = brain.step(state, [sample(cap, ts)], ts)
+            state = json.loads(json.dumps(state))
+        self.assertEqual(report["counts"].get("mechanical_staircase_risk"), 1)
+        self.assertEqual(state["cash"], 100)
+        self.assertFalse(state["positions"])
+
+    def test_mechanical_detector_requires_independent_matching_quotes(self):
+        rows = [sample(40000 + i * 3000, 1000 + i * 30) for i in range(8)]
+        self.assertTrue(brain.mechanical_staircase_risk(rows))
+        rows[-1]["price"] = rows[0]["price"]
+        self.assertFalse(brain.mechanical_staircase_risk(rows))
+        rows[-1]["price"] = rows[-1]["cap"] / 100000
+        rows[-1]["key"] = "other:pool"
+        self.assertFalse(brain.mechanical_staircase_risk(rows))
+        rows[-1]["key"] = "mint:pool"
+        rows[-1]["ts"] = rows[-2]["ts"]
+        self.assertFalse(brain.mechanical_staircase_risk(rows))
+
     def test_shadow_provenance_uses_pr_head_not_github_merge_sha(self):
         import os
         with patch.dict(os.environ, {
@@ -749,3 +787,4 @@ class AuthorizedWriteOffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

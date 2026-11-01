@@ -167,7 +167,54 @@ def sample(pair, now):
             "ts": now}
 
 
+USER_EXCLUDED_MINTS = frozenset({
+    "nEK7tW9g2ezPciTXMHWf175gXWdMnbjajipTdrXpump",  # MUSKX: user veto
+})
+
+
+def mechanical_staircase_risk(history):
+    """Conservative snapshot heuristic, not proof of bots or a future collapse.
+
+    Eight independent same-pool quotes over >=3 minutes, >=20% gain,
+    >=85% rising steps and <=3% drawdown in both price and cap.
+    Retain the veto for 30 minutes after the observed sequence, so a first
+    dip cannot immediately turn the suspicious run into an entry signal.
+    This is not a candle/holder analysis: those data are unavailable here.
+    """
+    if not history:
+        return False
+    latest_ts = history[-1]["ts"]
+    for end in range(8, len(history) + 1):
+        window = history[end - 8:end]
+        if not 0 <= latest_ts - window[-1]["ts"] <= 1800:
+            continue
+        if len({s["key"] for s in window}) != 1:
+            continue
+        if not 180 <= window[-1]["ts"] - window[0]["ts"] <= SIGNAL_MAX_WINDOW_SECONDS:
+            continue
+        if any(b["ts"] <= a["ts"] + 20 for a, b in zip(window, window[1:])):
+            continue
+        suspicious = True
+        for field in ("price", "cap"):
+            values = [s[field] for s in window]
+            if any(v <= 0 for v in values):
+                suspicious = False
+                break
+            peak, drawdown = values[0], 0.0
+            for value in values:
+                peak = max(peak, value)
+                drawdown = max(drawdown, 1 - value / peak)
+            rising = sum(b > a for a, b in zip(values, values[1:])) / 7
+            if values[-1] / values[0] < 1.20 or rising < .85 or drawdown > .03:
+                suspicious = False
+        if suspicious:
+            return True
+    return False
+
+
 def gate(s):
+    if s.get("address") in USER_EXCLUDED_MINTS:
+        return "user_excluded_muskx"
     if not s["price"] or not s["cap"] or not s["liquidity"]:
         return "missing_verified_market_quote"
     if s["age_seconds"] is None or s["age_seconds"] < 300:
@@ -391,6 +438,13 @@ def step(state, samples, now=None):
         reason = gate(s)
         if not reason and not admitted:
             reason = "non_independent_observation"
+        vetoes = state.setdefault("mechanical_veto_until", {})
+        vetoes = {k: until for k, until in vetoes.items() if until > now}
+        state["mechanical_veto_until"] = vetoes
+        if admitted and mechanical_staircase_risk(hist):
+            vetoes[s["address"]] = max(vetoes.get(s["address"], 0), s["ts"] + 1800)
+        if not reason and vetoes.get(s["address"], 0) > now:
+            reason = "mechanical_staircase_risk"
         if not reason:
             _, reason = staircase(hist)
             if reason == "no_qualified_staircase":
@@ -694,3 +748,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
