@@ -421,6 +421,28 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(result2["shadow_exit_audit"][0]["first_low_liquidity_ts"], 1600)
         self.assertEqual(result2["shadow_exit_audit"][0]["last_liquidity_usd"], 1500)
 
+    def test_shadow_quote_missing_and_liquidity_recovery_are_not_executable(self):
+        state = brain.new_state()
+        key = "mint:pool"
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "symbol": "TEST", "units": 100,
+            "entry_price": .1, "cost": 10.0, "entry_quote_ts": 1000}
+        state["history"][key] = [sample(50000, 1000, key=key, price=.1)]
+        low = sample(50000, 1600, key=key, price=.09)
+        low["liquidity"] = 2000
+        brain.step(state, [low], 1600)
+        missing = brain.step(state, [], 1650)
+        self.assertEqual(missing["shadow_exit_audit"][0]["quote_status"], "MISSING_OR_INVALID")
+        self.assertEqual(missing["shadow_exit_audit"][0]["route_status"], "UNVERIFIED")
+        liquid = sample(50000, 1700, key=key, price=.09)
+        liquid["liquidity"] = brain.MIN_LIQ
+        recovered = brain.step(state, [liquid], 1700)
+        self.assertEqual(recovered["shadow_exit_audit"][0]["quote_status"], "OBSERVED_ABOVE_MIN_LIQ")
+        self.assertEqual(recovered["shadow_exit_audit"][0]["route_status"], "UNVERIFIED")
+        self.assertEqual(state["cash"], 90.0)
+        self.assertEqual(state["closed"], [])
+        self.assertIn(key, state["positions"])
+
     def test_pillsey_illiquid_stop_does_not_invent_paper_sale(self):
         # Clean #10 recorded a stop at $2,235.84 liquidity, below MIN_LIQ.
         # Preserve the position and cash rather than crediting an unfillable sale.
