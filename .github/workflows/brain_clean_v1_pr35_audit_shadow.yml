@@ -70,8 +70,11 @@ jobs:
       - name: Execute repair code against isolated PAPER copy
         env:
           PYTHONUNBUFFERED: '1'
-          GITHUB_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python brain_clean_v1.py
+          REPAIR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # GITHUB_SHA is a runner-provided default; step env cannot override it.
+          # Override only for this child process so ledger provenance records checked-out HEAD.
+          GITHUB_SHA="$REPAIR_HEAD" python brain_clean_v1.py
       - name: Verify multi-poll entry audit and repair provenance
         env:
           REPAIR_HEAD: ${{ github.event.pull_request.head.sha }}
