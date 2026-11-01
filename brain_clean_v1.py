@@ -281,6 +281,14 @@ def step(state, samples, now=None):
             counts["position_unpriced_hold"] += 1
             continue
         if s["liquidity"] < MIN_LIQ:
+            # SHADOW only: observed pool liquidity is not an executable swap route.
+            audit = pos.setdefault("shadow_exit_audit", {})
+            if not audit.get("first_low_liquidity_ts"):
+                audit["first_low_liquidity_ts"] = s["ts"]
+                audit["first_low_liquidity_usd"] = s["liquidity"]
+            audit["last_observed_ts"] = s["ts"]
+            audit["last_liquidity_usd"] = s["liquidity"]
+            audit["route_status"] = "UNVERIFIED"
             counts["position_low_liquidity_hold"] += 1
             continue
         # Never simulate an exit from a quote older than the last admitted
@@ -417,7 +425,8 @@ def step(state, samples, now=None):
         state["cash"] -= cost
         state["positions"][key] = {"key": key, "symbol": s["symbol"],
                                     "entry_at": utcnow(), "entry_price": s["price"],
-                                    "units": units, "cost": cost, "entry_cap": s["cap"]}
+                                    "units": units, "cost": cost, "entry_cap": s["cap"],
+                                    "entry_quote_ts": s["ts"], "entry_liquidity_usd": s["liquidity"]}
         counts["paper_entry"] += 1
         decisions.append({"key": key, "symbol": s["symbol"], "decision": "PAPER_ENTRY",
                           "reason": "staircase_confirmed"})
@@ -433,6 +442,17 @@ def step(state, samples, now=None):
             "entries": [d for d in decisions if d["decision"] == "PAPER_ENTRY"],
             "cash_eur": round(state["cash"], 4), "open_positions": len(state["positions"]),
             "closed_trades": len(state["closed"]),
+            "shadow_exit_audit": [
+                {"key": k, "entry_liquidity_usd": p.get("entry_liquidity_usd"),
+                 "first_low_liquidity_ts": p.get("shadow_exit_audit", {}).get("first_low_liquidity_ts"),
+                 "last_liquidity_usd": p.get("shadow_exit_audit", {}).get("last_liquidity_usd"),
+                 "route_status": "UNVERIFIED",
+                 "seconds_to_first_low_liquidity":
+                    round(p["shadow_exit_audit"]["first_low_liquidity_ts"] - p["entry_quote_ts"], 2)
+                    if isinstance(p.get("entry_quote_ts"), (int, float)) and
+                    isinstance(p.get("shadow_exit_audit", {}).get("first_low_liquidity_ts"), (int, float))
+                    else None}
+                for k, p in state["positions"].items()],
             "outcomes_total": len(state["outcomes"]),
             "validated_outcomes_v2": sum(x.get("audit_version") == 2 for x in state["outcomes"]),
             "validated_rally_contracts_v2": len({x["key"].split(":", 1)[0] for x in state["outcomes"]
