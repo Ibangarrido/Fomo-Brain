@@ -443,6 +443,29 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(state["closed"], [])
         self.assertIn(key, state["positions"])
 
+    def test_shadow_out_of_order_liquidity_does_not_rewrite_first_loss(self):
+        state = brain.new_state()
+        key = "mint:pool"
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "symbol": "TEST", "units": 100,
+            "entry_price": .1, "cost": 10.0, "entry_quote_ts": 1000}
+        state["history"][key] = [sample(50000, 1000, key=key, price=.1)]
+        low = sample(50000, 1600, key=key, price=.09)
+        low["liquidity"] = 2000
+        brain.step(state, [low], 1600)
+        stale = sample(50000, 1500, key=key, price=.09)
+        stale["liquidity"] = 15000
+        result = brain.step(state, [stale], 1700)
+        self.assertEqual(result["counts"].get("shadow_stale_observation_ignored"), 1)
+        self.assertEqual(result["shadow_exit_audit"][0]["last_liquidity_usd"], 2000)
+        self.assertIsNone(result["shadow_exit_audit"][0]["first_liquidity_recovery_ts"])
+        recovered = sample(50000, 1800, key=key, price=.09)
+        recovered["liquidity"] = 15000
+        result = brain.step(state, [recovered], 1800)
+        self.assertEqual(result["shadow_exit_audit"][0]["first_liquidity_recovery_ts"], 1800)
+        self.assertEqual(state["cash"], 90.0)
+        self.assertEqual(state["closed"], [])
+
     def test_pillsey_illiquid_stop_does_not_invent_paper_sale(self):
         # Clean #10 recorded a stop at $2,235.84 liquidity, below MIN_LIQ.
         # Preserve the position and cash rather than crediting an unfillable sale.
