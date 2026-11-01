@@ -39,6 +39,7 @@ class RestoreTests(unittest.TestCase):
                               download_step)
                 self.assertIn("run-id: ${{ steps.restore.outputs.source_run }}",
                               download_step)
+                self.assertIn("merge-multiple: true", download_step)
                 self.assertIn("github-token: ${{ github.token }}",
                               download_step)
 
