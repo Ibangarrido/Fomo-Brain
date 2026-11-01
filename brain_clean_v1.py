@@ -277,6 +277,13 @@ def step(state, samples, now=None):
     # Existing positions: do not invent an exit when market quotes are missing.
     for key, pos in list(state["positions"].items()):
         s = quotes.get(key)
+        # SHADOW freshness must never regress on an out-of-order quote.
+        # Missing data is a monitoring gap, not evidence of a new price.
+        audit = pos.setdefault("shadow_exit_audit", {})
+        if s is not None and isinstance(s.get("ts"), (int, float)) and \
+                s["ts"] < audit.get("last_observed_ts", float("-inf")):
+            counts["shadow_stale_observation_ignored"] += 1
+            continue
         if s is None or not s["price"] or not s["liquidity"]:
             audit = pos.setdefault("shadow_exit_audit", {})
             audit["quote_status"] = "MISSING_OR_INVALID"
@@ -286,7 +293,7 @@ def step(state, samples, now=None):
         if s["liquidity"] < MIN_LIQ:
             # SHADOW only: observed pool liquidity is not an executable swap route.
             audit = pos.setdefault("shadow_exit_audit", {})
-            if not audit.get("first_low_liquidity_ts"):
+            if audit.get("first_low_liquidity_ts") is None:
                 audit["first_low_liquidity_ts"] = s["ts"]
                 audit["first_low_liquidity_usd"] = s["liquidity"]
             if s["ts"] >= audit.get("last_observed_ts", float("-inf")):
@@ -301,7 +308,7 @@ def step(state, samples, now=None):
         audit = pos.setdefault("shadow_exit_audit", {})
         if s["ts"] >= audit.get("last_observed_ts", float("-inf")):
             if audit.get("quote_status") == "OBSERVED_LOW_LIQUIDITY":
-                audit["first_liquidity_recovery_ts"] = s["ts"]
+                audit.setdefault("first_liquidity_recovery_ts", s["ts"])
                 counts["shadow_liquidity_recovery_observed"] += 1
             audit["last_observed_ts"] = s["ts"]
             audit["last_liquidity_usd"] = s["liquidity"]
