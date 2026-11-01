@@ -6,6 +6,8 @@ on:
       - 'brain_clean_v1.py'
       - 'test_brain_clean_v1.py'
       - 'clean_v1_shadow.py'
+      - 'clean_v1_restore.py'
+      - 'test_clean_v1_restore.py'
       - 'test_clean_v1_shadow.py'
       - '.github/workflows/brain_clean_v1_shadow.yml'
 
@@ -36,17 +38,23 @@ jobs:
         with:
           python-version: '3.12'
       - name: Offline regression tests
-        run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_shadow.py
-      - name: Restore production PAPER state to ephemeral shadow only
-        uses: dawidd6/action-download-artifact@v11
+        run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_shadow.py test_clean_v1_restore.py
+      - name: Select latest production PAPER ledger for ephemeral shadow
+        id: restore
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python clean_v1_restore.py select
+      - name: Download exact production artifact into ephemeral runner
+        uses: actions/download-artifact@v4
         with:
-          workflow: brain_clean_v1.yml
-          branch: main
-          name: brain-clean-v1-state
+          artifact-ids: ${{ steps.restore.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
           path: .
-          search_artifacts: true
-          workflow_conclusion: ''
-          if_no_artifact_found: fail
+      - name: Verify restored PAPER ledger provenance
+        env:
+          CLEAN_RESTORE_SOURCE_RUN: ${{ steps.restore.outputs.source_run }}
+        run: python clean_v1_restore.py verify
       - name: Verify restored ledger and preserve its actual cash
         run: python clean_v1_shadow.py preflight
       - name: Run PR code on copied PAPER ledger only
