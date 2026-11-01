@@ -49,6 +49,7 @@ jobs:
         with:
           artifact-ids: ${{ steps.restore.outputs.artifact_id }}
           run-id: ${{ steps.restore.outputs.source_run }}
+          merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           path: .
