@@ -4,6 +4,9 @@ on:
     paths:
       - 'brain_clean_v1.py'
       - 'test_brain_clean_v1.py'
+      - 'brain_clean_v1_paper2.py'
+      - 'test_brain_clean_v1_paper2.py'
+      - 'brain_clean_v1_paper2_seed.json'
       - 'clean_v1_restore.py'
       - 'test_clean_v1_restore.py'
       - '.github/workflows/brain_clean_v1*.yml'
@@ -12,6 +15,9 @@ on:
     paths:
       - 'brain_clean_v1.py'
       - 'test_brain_clean_v1.py'
+      - 'brain_clean_v1_paper2.py'
+      - 'test_brain_clean_v1_paper2.py'
+      - 'brain_clean_v1_paper2_seed.json'
       - '.github/workflows/brain_clean_v1*.yml'
 permissions:
   contents: read
@@ -26,4 +32,4 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_restore.py
+      - run: python -m unittest -v test_brain_clean_v1.py test_brain_clean_v1_paper2.py test_clean_v1_restore.py
