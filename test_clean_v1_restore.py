@@ -26,6 +26,22 @@ class RestoreTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             restore.newest_artifact(rows, 10)
 
+    def test_cross_run_download_pins_selected_source_run(self):
+        # Regression: PR shadow #18 selected a valid production artifact,
+        # but download-artifact defaulted to the PR's own run ID and found none.
+        from pathlib import Path
+        for workflow in ("brain_clean_v1_shadow.yml", "brain_clean_v1.yml"):
+            with self.subTest(workflow=workflow):
+                content = (Path(__file__).parent / ".github" / "workflows" / workflow).read_text()
+                download_step = content.split("uses: actions/download-artifact@v4", 1)[1]
+                download_step = download_step.split("      - name:", 1)[0]
+                self.assertIn("artifact-ids: ${{ steps.restore.outputs.artifact_id }}",
+                              download_step)
+                self.assertIn("run-id: ${{ steps.restore.outputs.source_run }}",
+                              download_step)
+                self.assertIn("github-token: ${{ github.token }}",
+                              download_step)
+
     def test_fail_closed_if_source_run_does_not_match_ledger(self):
         state = {"version": 1, "cash": 60.14, "positions": {}, "closed": [],
                  "last_run": {"id": "147"}}
