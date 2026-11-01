@@ -402,8 +402,8 @@ class CleanPaperTests(unittest.TestCase):
              "pnl_eur": 2.7},
             {"exit_reason": "user_authorized_paper_write_off", "pnl_eur": -10},
         ]
-        before = brain.new_state()
-        before["closed"] = [dict(x) for x in state["closed"]]
+        import copy
+        before = copy.deepcopy(state)
         summary = brain.learning_summary(state)
         audit = summary["stop_overshoot_audit"]
         self.assertEqual(audit["stop_exits"], 3)
