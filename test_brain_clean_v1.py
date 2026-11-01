@@ -33,14 +33,15 @@ class CleanPaperTests(unittest.TestCase):
 
     def test_shadow_three_step_recovery_does_not_change_paper_entry(self):
         state = brain.new_state()
-        # Last two quotes rise, but the third-from-last is the peak:
-        # the shadow filter rejects, while existing ESCALERA still enters.
-        for cap, ts in [(60000, 1000), (42000, 1060),
-                        (45000, 1120), (50000, 1180)]:
+        # A higher intermediate quote, then a dip and final bounce:
+        # ESCALERA accepts the last two rising quotes; the shadow rule
+        # would require three consecutive rising quotes.
+        for cap, ts in [(60000, 1000), (42000, 1060), (51000, 1120),
+                        (45000, 1180), (50000, 1240)]:
             report = brain.step(state, [sample(cap, ts)], ts)
         self.assertEqual(report["counts"].get("paper_entry"), 1)
-        self.assertEqual(report["counts"].get("shadow_three_step_pass"), 1)
-        self.assertEqual(report["counts"].get("shadow_three_step_would_block", 0), 0)
+        self.assertEqual(report["counts"].get("shadow_three_step_would_block"), 1)
+        self.assertEqual(report["counts"].get("shadow_three_step_pass", 0), 0)
         self.assertEqual(state["cash"], 90)
 
     def test_shadow_counterfactual_is_pure_and_requires_three_rising_quotes(self):
