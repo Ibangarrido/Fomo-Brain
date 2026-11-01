@@ -250,6 +250,20 @@ def recent_crash_risk(history, latest, lookback_seconds=1800):
                s.get("cap", 0) >= latest["cap"] * 2.5 for s in earlier)
 
 
+def shadow_three_step_recovery(history):
+    """Counterfactual only: require three independent rising price/cap quotes.
+
+    Never gates PAPER entries. Compare its classifications with future
+    outcomes before considering any strategy change.
+    """
+    if len(history) < 3:
+        return False
+    tail = history[-3:]
+    return all(b["ts"] > a["ts"] + 20
+               and b["cap"] > a["cap"] and b["price"] > a["price"]
+               for a, b in zip(tail, tail[1:]))
+
+
 def exposure_symbol(symbol):
     """Conservative ticker bucket, not proof that contracts are related."""
     return unicodedata.normalize("NFKC", str(symbol or "")).strip().lstrip("$").strip().casefold()
@@ -350,6 +364,11 @@ def step(state, samples, now=None):
             _, reason = staircase(hist)
             if reason == "staircase_confirmed":
                 reason = ("recent_crash_risk" if recent_crash_risk(hist, s) else None)
+                if reason is None:
+                    # Shadow-only candidate filter: log a counterfactual,
+                    # without changing PAPER entries, stops or risk limits.
+                    counts["shadow_three_step_pass" if shadow_three_step_recovery(hist)
+                           else "shadow_three_step_would_block"] += 1
         if not reason and key in state["positions"]:
             reason = "already_open"
         # Pools are not independent assets: one mint may have several pools.
