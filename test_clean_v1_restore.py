@@ -1,0 +1,41 @@
+import unittest
+from unittest.mock import patch
+import clean_v1_restore as restore
+
+
+def artifact(ident, uploaded, run_id, branch="main"):
+    return {"id": ident, "name": restore.NAME, "expired": False,
+            "created_at": uploaded, "workflow_run": {"id": run_id, "head_branch": branch}}
+
+
+class RestoreTests(unittest.TestCase):
+    def test_upload_time_wins_over_misordered_run_ids(self):
+        # Observed: #148 selected #145 although #147 had uploaded later.
+        rows = [artifact(145, "2026-11-01T09:00:32Z", 41290468094),
+                artifact(147, "2026-11-01T09:31:36Z", 41292725360),
+                artifact(146, "2026-11-01T09:15:44Z", 41291541978)]
+        self.assertEqual(restore.newest_artifact(rows, 41293853380)["id"], 147)
+        self.assertEqual(restore.newest_artifact(list(reversed(rows)), 41293853380)["id"], 147)
+
+    def test_ignore_current_run_expired_and_other_branches(self):
+        rows = [artifact(1, "2026-11-01T09:00:00Z", 10),
+                artifact(2, "2026-11-01T10:00:00Z", 20, "feature"),
+                artifact(3, "2026-11-01T11:00:00Z", 30)]
+        rows[-1]["expired"] = True
+        self.assertEqual(restore.newest_artifact(rows, 40)["id"], 1)
+        with self.assertRaises(RuntimeError):
+            restore.newest_artifact(rows, 10)
+
+    def test_fail_closed_if_source_run_does_not_match_ledger(self):
+        state = {"version": 1, "cash": 60.14, "positions": {}, "closed": [],
+                 "last_run": {"id": "147"}}
+        report = {"run": {"id": "147"}}
+        restore.verify_ledger(state, report, "147")
+        with self.assertRaises(RuntimeError):
+            restore.verify_ledger(state, report, "145")
+        with self.assertRaises(RuntimeError):
+            restore.verify_ledger(state, {"run": {"id": "145"}}, "147")
+
+
+if __name__ == "__main__":
+    unittest.main()
