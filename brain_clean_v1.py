@@ -186,7 +186,7 @@ def gate(s):
     return None
 
 
-def staircase(samples):
+def staircase(samples, min_pullback=0.15):
     """Four independent observations: peak -> trough -> recovery -> breakout.
 
     No future data, no interpolated candles and no stale multi-hour signals.
@@ -225,7 +225,7 @@ def staircase(samples):
             continue
         drop = (peak - trough) / peak
         price_drop = 1 - recent[i]["price"] / peak_sample["price"]
-        if (0.15 <= drop <= 0.40 and 0.15 <= price_drop <= 0.40 and
+        if (min_pullback <= drop <= 0.40 and min_pullback <= price_drop <= 0.40 and
                 a["cap"] > trough and
                 b["cap"] >= trough * 1.10 and
                 b["cap"] <= peak * 1.20 and
@@ -362,6 +362,16 @@ def step(state, samples, now=None):
             reason = "non_independent_observation"
         if not reason:
             _, reason = staircase(hist)
+            if reason == "no_qualified_staircase":
+                # Prospective 12% vs 15% signal comparison only.
+                # Do not change CONTROL entries or book hypothetical proceeds.
+                alt_ok, _ = staircase(hist, min_pullback=0.12)
+                if alt_ok and not recent_crash_risk(hist, s):
+                    counts["shadow_12pct_extra_signal"] += 1
+                    decisions.append({"key": key, "symbol": s["symbol"],
+                                      "decision": "SHADOW_12PCT_SIGNAL",
+                                      "reason": "12pct_pullback_vs_control_15pct",
+                                      "quote_ts": s["ts"], "price": s["price"]})
             if reason == "staircase_confirmed":
                 reason = ("recent_crash_risk" if recent_crash_risk(hist, s) else None)
                 if reason is None:
