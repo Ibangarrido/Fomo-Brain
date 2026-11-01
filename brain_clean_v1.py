@@ -278,6 +278,9 @@ def step(state, samples, now=None):
     for key, pos in list(state["positions"].items()):
         s = quotes.get(key)
         if s is None or not s["price"] or not s["liquidity"]:
+            audit = pos.setdefault("shadow_exit_audit", {})
+            audit["quote_status"] = "MISSING_OR_INVALID"
+            audit["route_status"] = "UNVERIFIED"
             counts["position_unpriced_hold"] += 1
             continue
         if s["liquidity"] < MIN_LIQ:
@@ -286,11 +289,24 @@ def step(state, samples, now=None):
             if not audit.get("first_low_liquidity_ts"):
                 audit["first_low_liquidity_ts"] = s["ts"]
                 audit["first_low_liquidity_usd"] = s["liquidity"]
-            audit["last_observed_ts"] = s["ts"]
-            audit["last_liquidity_usd"] = s["liquidity"]
+            if s["ts"] >= audit.get("last_observed_ts", float("-inf")):
+                audit["last_observed_ts"] = s["ts"]
+                audit["last_liquidity_usd"] = s["liquidity"]
+                audit["quote_status"] = "OBSERVED_LOW_LIQUIDITY"
             audit["route_status"] = "UNVERIFIED"
             counts["position_low_liquidity_hold"] += 1
             continue
+        # A liquid pool is only a recovery of the liquidity indicator, never
+        # proof that an external swap route exists or that a fill is possible.
+        audit = pos.setdefault("shadow_exit_audit", {})
+        if s["ts"] >= audit.get("last_observed_ts", float("-inf")):
+            if audit.get("quote_status") == "OBSERVED_LOW_LIQUIDITY":
+                audit["first_liquidity_recovery_ts"] = s["ts"]
+                counts["shadow_liquidity_recovery_observed"] += 1
+            audit["last_observed_ts"] = s["ts"]
+            audit["last_liquidity_usd"] = s["liquidity"]
+            audit["quote_status"] = "OBSERVED_ABOVE_MIN_LIQ"
+            audit["route_status"] = "UNVERIFIED"
         # Never simulate an exit from a quote older than the last admitted
         # observation. Out-of-order provider data must not change PAPER cash.
         prior = state["history"].get(key) or []
@@ -446,6 +462,8 @@ def step(state, samples, now=None):
                 {"key": k, "entry_liquidity_usd": p.get("entry_liquidity_usd"),
                  "first_low_liquidity_ts": p.get("shadow_exit_audit", {}).get("first_low_liquidity_ts"),
                  "last_liquidity_usd": p.get("shadow_exit_audit", {}).get("last_liquidity_usd"),
+                 "quote_status": p.get("shadow_exit_audit", {}).get("quote_status", "UNKNOWN"),
+                 "first_liquidity_recovery_ts": p.get("shadow_exit_audit", {}).get("first_liquidity_recovery_ts"),
                  "route_status": "UNVERIFIED",
                  "seconds_to_first_low_liquidity":
                     round(p["shadow_exit_audit"]["first_low_liquidity_ts"] - p["entry_quote_ts"], 2)
