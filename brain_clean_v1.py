@@ -277,6 +277,16 @@ def step(state, samples, now=None):
             continue
         move = s["price"] / pos["entry_price"] - 1
         if move <= -0.15 or move >= 0.25:
+            # Audit the last admitted quote before the exit, not an invented
+            # stop fill. These fields are diagnostic and never change trading.
+            previous = prior[-1] if prior else None
+            previous_price = previous.get("price") if previous else None
+            previous_ts = previous.get("ts") if previous else None
+            quote_gap_seconds = (round(s["ts"] - previous_ts, 2)
+                                 if isinstance(previous_ts, (int, float)) else None)
+            quote_jump_pct = (round((s["price"] / previous_price - 1) * 100, 2)
+                              if isinstance(previous_price, (int, float)) and previous_price > 0
+                              else None)
             # Conservative paper estimate: 1% on each side, no guaranteed execution.
             proceeds = pos["units"] * s["price"] * 0.99
             state["cash"] += proceeds
@@ -285,6 +295,11 @@ def step(state, samples, now=None):
                                     "pnl_eur": proceeds - pos["cost"],
                                     "observed_move_pct": round(move * 100, 2),
                                     "stop_overshoot_pct": round(max(0, -move - .15) * 100, 2),
+                                    "previous_quote_price": previous_price,
+                                    "previous_quote_ts": previous_ts,
+                                    "exit_quote_ts": s["ts"],
+                                    "quote_gap_seconds": quote_gap_seconds,
+                                    "quote_jump_pct": quote_jump_pct,
                                     "exit_reason": "stop_15pct" if move <= -0.15 else "target_25pct"})
             del state["positions"][key]
             counts["paper_exit"] += 1
