@@ -388,6 +388,36 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(len(state["closed"]), 1)
         self.assertAlmostEqual(state["cash"], 90.4312103773585)
 
+    def test_stop_audit_records_prior_quote_gap_without_changing_cash(self):
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"]["mint:pool"] = {
+            "key": "mint:pool", "units": 9.9, "entry_price": 1.0, "cost": 10.0}
+        state["history"]["mint:pool"] = [sample(60000, 1000, price=0.90)]
+        report = brain.step(state, [sample(60000, 1040, price=0.65)], 1040)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        closed = state["closed"][0]
+        self.assertEqual(closed["previous_quote_price"], 0.90)
+        self.assertEqual(closed["previous_quote_ts"], 1000)
+        self.assertEqual(closed["exit_quote_ts"], 1040)
+        self.assertEqual(closed["quote_gap_seconds"], 40)
+        self.assertEqual(closed["quote_jump_pct"], -27.78)
+        self.assertEqual(closed["stop_overshoot_pct"], 20.0)
+        self.assertAlmostEqual(state["cash"], 90.0 + 9.9 * 0.65 * 0.99)
+        self.assertEqual(state["positions"], {})
+
+    def test_stop_audit_without_prior_quote_does_not_invent_history(self):
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"]["mint:pool"] = {
+            "key": "mint:pool", "units": 9.9, "entry_price": 1.0, "cost": 10.0}
+        report = brain.step(state, [sample(60000, 1040, price=0.65)], 1040)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        closed = state["closed"][0]
+        self.assertIsNone(closed["previous_quote_price"])
+        self.assertIsNone(closed["quote_gap_seconds"])
+        self.assertIsNone(closed["quote_jump_pct"])
+
     def test_low_liquidity_is_not_traded(self):
         state = brain.new_state()
         for i, cap in enumerate([60000, 42000, 45000, 50000, 56000]):
