@@ -31,6 +31,29 @@ class CleanPaperTests(unittest.TestCase):
         }, clear=True):
             self.assertEqual(brain.execution_sha(), "merge-commit")
 
+    def test_shadow_three_step_recovery_does_not_change_paper_entry(self):
+        state = brain.new_state()
+        # Last two quotes rise, but the third-from-last is the peak:
+        # the shadow filter rejects, while existing ESCALERA still enters.
+        for cap, ts in [(60000, 1000), (42000, 1060),
+                        (45000, 1120), (50000, 1180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(report["counts"].get("shadow_three_step_pass"), 1)
+        self.assertEqual(report["counts"].get("shadow_three_step_would_block", 0), 0)
+        self.assertEqual(state["cash"], 90)
+
+    def test_shadow_counterfactual_is_pure_and_requires_three_rising_quotes(self):
+        history = [sample(c, 1000 + i * 60) for i, c in
+                   enumerate([60000, 42000, 45000, 50000])]
+        import copy
+        before = copy.deepcopy(history)
+        self.assertTrue(brain.shadow_three_step_recovery(history))
+        history[-2]["price"] = history[-3]["price"] * 0.99
+        self.assertFalse(brain.shadow_three_step_recovery(history))
+        self.assertNotEqual(history, before)
+        self.assertFalse(brain.shadow_three_step_recovery(history[:2]))
+
     def test_recent_major_collapse_blocks_dead_cat_staircase(self):
         state = brain.new_state()
         # Real failure shape: an earlier ~400k peak preceded a 40-60k
