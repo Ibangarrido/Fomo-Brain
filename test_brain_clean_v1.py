@@ -312,6 +312,19 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(state["positions"], {})
         self.assertNotIn("m4", state)
 
+    def test_twelve_percent_shadow_signal_does_not_enter_control(self):
+        state = brain.new_state()
+        for i, cap in enumerate([60000, 51600, 54000, 58000]):
+            ts = 1000 + i * 60
+            result = brain.step(state, [sample(cap, ts)], ts)
+        history = state["history"]["mint:pool"]
+        self.assertFalse(brain.staircase(history)[0])
+        self.assertTrue(brain.staircase(history, min_pullback=0.12)[0])
+        self.assertEqual(result["counts"].get("shadow_12pct_extra_signal"), 1)
+        self.assertNotIn("paper_entry", result["counts"])
+        self.assertEqual(state["cash"], 100)
+        self.assertEqual(state["positions"], {})
+
     def test_staircase_requires_independent_recovery(self):
         series = [sample(c, 1000 + i * 60) for i, c in
                   enumerate([60000, 42000, 45000, 50000])]
