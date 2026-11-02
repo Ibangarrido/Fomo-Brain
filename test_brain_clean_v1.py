@@ -685,6 +685,25 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(state, before)
         self.assertFalse(summary["automatic_rule_changes"])
 
+    def test_active_stop_rejects_future_and_aged_quotes_without_cash_mutation(self):
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"]["mint:pool"] = {
+            "key": "mint:pool", "units": 10.0, "entry_price": 1.0, "cost": 10.0}
+        for ts in (2000, 1000 - brain.MAX_AGE_SECONDS - 1):
+            report = brain.step(state, [sample(60000, ts, price=0.5)], now=1000)
+            self.assertEqual(report["counts"].get("position_invalid_timestamp_hold"), 1)
+            self.assertEqual(state["cash"], 90.0)
+            self.assertEqual(len(state["closed"]), 0)
+        report = brain.step(state, [sample(60000, 1000, price=0.65)], now=1000)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        closed = state["closed"][0]
+        self.assertEqual(closed["execution_type"], "PAPER_INDICATIVE_UNVERIFIED")
+        self.assertEqual(closed["route_status"], "UNVERIFIED")
+        self.assertEqual(closed["stop_threshold_pct"], -15.0)
+        self.assertEqual(closed["quote_age_at_poll_seconds"], 0)
+        self.assertEqual(closed["exit_liquidity_usd"], 15000)
+
     def test_stop_audit_records_prior_quote_gap_without_changing_cash(self):
         state = brain.new_state()
         state["cash"] = 90.0
