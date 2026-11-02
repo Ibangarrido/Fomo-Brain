@@ -1,4 +1,3 @@
-import math
 """Brain Clean V1: isolated, auditable ESCALERA paper experiment.
 
 Never signs transactions, calls a broker, or imports legacy portfolio state.
@@ -6,6 +5,7 @@ All market data is public DexScreener data. A single observation is not a
 historical candle: the pattern requires independent snapshots across runs.
 """
 import json
+import math
 import os
 import time
 import unicodedata
