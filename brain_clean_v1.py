@@ -321,6 +321,31 @@ def step(state, samples, now=None):
     counts = Counter()
     decisions = []
     quotes = {s["key"]: s for s in samples}
+    # Isolated holdings are not sold or valued, but remain monitored by exact pool.
+    for key, pos in state.get("isolated_positions", {}).items():
+        audit = pos.setdefault("monitoring_audit", {})
+        quote = quotes.get(key)
+        if quote is None or not quote.get("price") or not quote.get("liquidity"):
+            audit["quote_status"] = "MISSING_OR_INVALID"
+            counts["isolated_quote_missing"] += 1
+            continue
+        ts = quote.get("ts")
+        if not isinstance(ts, (int, float)) or ts < audit.get("last_observed_ts", float("-inf")):
+            audit["quote_status"] = "OUT_OF_ORDER_OR_UNTIMED"
+            counts["isolated_quote_stale"] += 1
+            continue
+        fingerprint = [quote["price"], quote["liquidity"], quote.get("volume1h")]
+        if fingerprint != audit.get("last_snapshot_values"):
+            audit["last_snapshot_values"] = fingerprint
+            audit["last_snapshot_changed_ts"] = ts
+        audit.update({
+            "quote_status": "OBSERVED_INDICATIVE_NOT_EXECUTABLE",
+            "last_observed_ts": ts, "price_usd": quote["price"],
+            "liquidity_usd": quote["liquidity"],
+            "volume1h_usd": quote.get("volume1h"),
+            "snapshot_unchanged_seconds": round(max(0, ts - audit["last_snapshot_changed_ts"]), 2),
+        })
+        counts["isolated_quote_observed"] += 1
     # Existing positions: do not invent an exit when market quotes are missing.
     for key, pos in list(state["positions"].items()):
         s = quotes.get(key)
@@ -569,7 +594,8 @@ def step(state, samples, now=None):
 def tracking_priority(state, now=None):
     """Holdings first, then signals, with reserved rotating rejected-token slots."""
     now = time.time() if now is None else now
-    held = list(dict.fromkeys(k.split(":", 1)[0] for k in state["positions"]))
+    held = list(dict.fromkeys(k.split(":", 1)[0] for k in
+                              list(state["positions"]) + list(state.get("isolated_positions", {}))))
     recent = sorted((v[-1] for v in state["history"].values() if v and gate(v[-1]) is None),
                     key=lambda s: s["ts"], reverse=True)
     watches = sorted({k.split(":", 1)[0] for k, w in state.get("watchlist", {}).items()
@@ -736,7 +762,8 @@ def main():
         now = time.time()
         raw = fetch_pairs(tracked_addresses=tracking_priority(state))
         selection_counts["raw_pool_observations"] += len(raw)
-        raw = select_pairs(raw, state["positions"])
+        raw = select_pairs(raw, {**state.get("isolated_positions", {}),
+                                 **state["positions"]})
         selection_counts["selected_pool_observations"] += len(raw)
         now = time.time()
         samples = [sample(p, now) for p in raw]
@@ -772,7 +799,8 @@ def main():
     save_json(STATE_FILE, state)
     report["isolated_positions"] = [{"key": k, "symbol": p.get("symbol"),
         "status": p.get("isolation_status"), "route_status": "UNVERIFIED",
-        "realizable_value_eur": None} for k, p in state.get("isolated_positions", {}).items()]
+        "realizable_value_eur": None, "monitoring": p.get("monitoring_audit", {})}
+        for k, p in state.get("isolated_positions", {}).items()]
     report["polls_completed"] = polls_completed
     report["monitoring_note"] = "Bounded monitoring; GitHub scheduling gaps and stop overshoot remain possible"
     report["aggregate_counts"] = dict(aggregate)
