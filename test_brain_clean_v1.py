@@ -11,6 +11,206 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_isolated_quote_rejects_stale_and_future_observations(self):
+        state = brain.new_state()
+        state["isolated_positions"] = {"mint:pool": {"key": "mint:pool", "symbol": "MARVIN"}}
+        sample = {"key": "mint:pool", "address": "mint", "pool": "pool",
+                  "symbol": "MARVIN", "price": 0.00001, "cap": 50000,
+                  "liquidity": 1000, "volume1h": 0, "buys5m": 0,
+                  "sells5m": 0, "age_seconds": 3600, "ts": 1000}
+        brain.step(state, [sample], now=1000 + brain.MAX_AGE_SECONDS + 1)
+        audit = state["isolated_positions"]["mint:pool"]["monitoring_audit"]
+        self.assertEqual(audit["quote_status"], "STALE_FUTURE_OUT_OF_ORDER_OR_UNTIMED")
+        self.assertNotIn("price_usd", audit)
+        sample["ts"] = 3000
+        brain.step(state, [sample], now=2000)
+        self.assertNotIn("price_usd", audit)
+        sample["ts"] = 2000
+        brain.step(state, [sample], now=2000)
+        self.assertEqual(audit["price_usd"], 0.00001)
+        sample["ts"] = 1999
+        brain.step(state, [sample], now=2000)
+        self.assertEqual(audit["last_observed_ts"], 2000)
+
+    def test_authorized_isolation_preserves_cash_and_is_idempotent(self):
+        state = brain.new_state()
+        state["cash"] = 33.9529
+        for symbol in ("MARVIN", "REGRET", "paws"):
+            key = symbol.lower() + ":pool"
+            state["positions"][key] = {"key": key, "symbol": symbol,
+                                       "cost": 10, "units": 100}
+        before_closed = list(state["closed"])
+        self.assertEqual(brain.isolate_authorized_paper_positions(state), 3)
+        self.assertEqual(state["positions"], {})
+        self.assertEqual(state["cash"], 33.9529)
+        self.assertEqual(state["closed"], before_closed)
+        self.assertEqual(brain.isolate_authorized_paper_positions(state), 3)
+        self.assertEqual(len(state["isolated_positions"]), 3)
+        self.assertTrue(all(p["realizable_value_eur"] is None
+                            for p in state["isolated_positions"].values()))
+
+    def test_isolated_holding_keeps_exact_pool_and_quote_monitoring(self):
+        state = brain.new_state()
+        state["cash"] = 33.9529
+        key = "mint:originalpool"
+        state["positions"][key] = {"key": key, "symbol": "MARVIN",
+                                    "cost": 10, "units": 100}
+        brain.isolate_authorized_paper_positions(state)
+        self.assertIn("mint", brain.tracking_priority(state, now=10000))
+        pool_a = {"baseToken": {"address": "mint"}, "pairAddress": "originalpool",
+                  "liquidity": {"usd": 2000}}
+        pool_b = {"baseToken": {"address": "mint"}, "pairAddress": "newpool",
+                  "liquidity": {"usd": 15000}}
+        selected = brain.select_pairs([pool_a, pool_b],
+                                       {**state["isolated_positions"], **state["positions"]})
+        self.assertEqual({x["pairAddress"] for x in selected},
+                         {"originalpool", "newpool"})
+        q = sample(1900, 10000, key=key, price=0.00000194)
+        q["address"], q["pool"], q["symbol"] = "mint", "originalpool", "MARVIN"
+        q["liquidity"] = 2000
+        brain.step(state, [q], now=10000)
+        audit = state["isolated_positions"][key]["monitoring_audit"]
+        self.assertEqual(audit["quote_status"], "OBSERVED_INDICATIVE_NOT_EXECUTABLE")
+        self.assertEqual(audit["liquidity_usd"], 2000)
+        self.assertEqual(state["cash"], 33.9529)
+        self.assertEqual(state["closed"], [])
+        self.assertEqual(state["positions"], {})
+        self.assertIsNone(state["isolated_positions"][key]["realizable_value_eur"])
+
+    def test_isolated_assets_prevent_false_total_equity(self):
+        state = brain.new_state()
+        state["isolated_positions"] = {"mint:pool": {
+            "symbol": "MARVIN", "realizable_value_eur": None}}
+        report = {"equity_eur": 32.5327, "equity_note": "indicative"}
+        brain.mask_unrealizable_total_equity(report, state)
+        self.assertIsNone(report["equity_eur"])
+        self.assertEqual(report["active_book_indicative_eur"], 32.5327)
+        self.assertIn("TOTAL_UNKNOWN", report["equity_note"])
+        control_report = {"equity_eur": 100.0}
+        brain.mask_unrealizable_total_equity(control_report, brain.new_state())
+        self.assertEqual(control_report["equity_eur"], 100.0)
+
+    def test_isolated_missing_quote_remains_unknown_not_zero(self):
+        state = brain.new_state()
+        state["positions"]["mint:pool"] = {"key": "mint:pool", "symbol": "paws",
+                                              "cost": 10, "units": 100}
+        brain.isolate_authorized_paper_positions(state)
+        brain.step(state, [], now=10000)
+        self.assertEqual(state["isolated_positions"]["mint:pool"]
+                         ["monitoring_audit"]["quote_status"], "MISSING_OR_INVALID")
+        self.assertEqual(state["cash"], 100)
+        self.assertEqual(state["closed"], [])
+
+    def test_isolation_skips_ambiguous_ticker(self):
+        state = brain.new_state()
+        for suffix in ("one", "two"):
+            state["positions"][suffix + ":pool"] = {
+                "key": suffix + ":pool", "symbol": "MARVIN", "cost": 10}
+        self.assertEqual(brain.isolate_authorized_paper_positions(state), 0)
+        self.assertEqual(len(state["positions"]), 2)
+
+    def test_user_muskx_veto_across_pools_and_symbols(self):
+        for pool in ("one", "two"):
+            state = brain.new_state()
+            for i, cap in enumerate([60000, 42000, 45000, 50000]):
+                row = sample(cap, 1000 + i * 60)
+                row.update(address=next(iter(brain.USER_EXCLUDED_MINTS)),
+                           key=next(iter(brain.USER_EXCLUDED_MINTS)) + ":" + pool,
+                           pool=pool, symbol="RENAMED")
+                report = brain.step(state, [row], row["ts"])
+            self.assertEqual(report["counts"].get("user_excluded_muskx"), 1)
+            self.assertEqual(state["cash"], 100)
+            self.assertFalse(state["positions"])
+
+    def test_mechanical_run_then_valid_dip_is_blocked_after_restore(self):
+        import json
+        state = brain.new_state()
+        caps = [40000, 43000, 46000, 49000, 52000, 55000, 58000, 60000,
+                42000, 45000, 50000]
+        for i, cap in enumerate(caps):
+            ts = 1000 + i * 30
+            report = brain.step(state, [sample(cap, ts)], ts)
+            state = json.loads(json.dumps(state))
+        self.assertEqual(report["counts"].get("mechanical_staircase_risk"), 1)
+        self.assertEqual(state["cash"], 100)
+        self.assertFalse(state["positions"])
+
+    def test_mechanical_detector_requires_independent_matching_quotes(self):
+        rows = [sample(40000 + i * 3000, 1000 + i * 30) for i in range(8)]
+        self.assertTrue(brain.mechanical_staircase_risk(rows))
+        rows[-1]["price"] = rows[0]["price"]
+        self.assertFalse(brain.mechanical_staircase_risk(rows))
+        rows[-1]["price"] = rows[-1]["cap"] / 100000
+        rows[-1]["key"] = "other:pool"
+        self.assertFalse(brain.mechanical_staircase_risk(rows))
+        rows[-1]["key"] = "mint:pool"
+        rows[-1]["ts"] = rows[-2]["ts"]
+        self.assertFalse(brain.mechanical_staircase_risk(rows))
+
+    def test_shadow_provenance_uses_pr_head_not_github_merge_sha(self):
+        import os
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_SHA": "merge-commit",
+            "CLEAN_SHADOW_HEAD_SHA": "checked-out-head",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "checked-out-head")
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "schedule",
+            "GITHUB_SHA": "main-commit",
+            "CLEAN_SHADOW_HEAD_SHA": "must-not-override-main",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "main-commit")
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_SHA": "merge-commit",
+        }, clear=True):
+            self.assertEqual(brain.execution_sha(), "merge-commit")
+
+    def test_shadow_three_step_recovery_does_not_change_paper_entry(self):
+        state = brain.new_state()
+        # A higher intermediate quote, then a dip and final bounce:
+        # ESCALERA accepts the last two rising quotes; the shadow rule
+        # would require three consecutive rising quotes.
+        for cap, ts in [(60000, 1000), (42000, 1060), (51000, 1120),
+                        (45000, 1180), (50000, 1240)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(report["counts"].get("shadow_three_step_would_block"), 1)
+        self.assertEqual(report["counts"].get("shadow_three_step_pass", 0), 0)
+        self.assertEqual(state["cash"], 90)
+
+    def test_shadow_counterfactual_is_pure_and_requires_three_rising_quotes(self):
+        history = [sample(c, 1000 + i * 60) for i, c in
+                   enumerate([60000, 42000, 45000, 50000])]
+        import copy
+        before = copy.deepcopy(history)
+        self.assertTrue(brain.shadow_three_step_recovery(history))
+        history[-2]["price"] = history[-3]["price"] * 0.99
+        self.assertFalse(brain.shadow_three_step_recovery(history))
+        self.assertNotEqual(history, before)
+        self.assertFalse(brain.shadow_three_step_recovery(history[:2]))
+
+    def test_recent_major_collapse_blocks_dead_cat_staircase(self):
+        state = brain.new_state()
+        # Real failure shape: an earlier ~400k peak preceded a 40-60k
+        # local staircase, then a >95% simulated loss on PILLSEY.
+        for cap, ts in [(397721, 500), (60000, 1000), (42000, 1060),
+                        (45000, 1120), (50000, 1180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("recent_crash_risk"), 1)
+        self.assertEqual(state["cash"], 100)
+        self.assertEqual(state["positions"], {})
+        self.assertEqual(brain.staircase(state["history"]["mint:pool"][-4:])[0], True)
+
+    def test_old_peak_outside_crash_window_does_not_block_staircase(self):
+        state = brain.new_state()
+        for cap, ts in [(397721, 100), (60000, 3000), (42000, 3060),
+                        (45000, 3120), (50000, 3180)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertEqual(state["cash"], 90)
+
     def test_lumi_variants_share_one_slot_across_restored_runs(self):
         import json
         state = brain.new_state()
@@ -248,6 +448,19 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(state["positions"], {})
         self.assertNotIn("m4", state)
 
+    def test_twelve_percent_shadow_signal_does_not_enter_control(self):
+        state = brain.new_state()
+        for i, cap in enumerate([60000, 51600, 54000, 58000]):
+            ts = 1000 + i * 60
+            result = brain.step(state, [sample(cap, ts)], ts)
+        history = state["history"]["mint:pool"]
+        self.assertFalse(brain.staircase(history)[0])
+        self.assertTrue(brain.staircase(history, min_pullback=0.12)[0])
+        self.assertEqual(result["counts"].get("shadow_12pct_extra_signal"), 1)
+        self.assertNotIn("paper_entry", result["counts"])
+        self.assertEqual(state["cash"], 100)
+        self.assertEqual(state["positions"], {})
+
     def test_staircase_requires_independent_recovery(self):
         series = [sample(c, 1000 + i * 60) for i, c in
                   enumerate([60000, 42000, 45000, 50000])]
@@ -320,6 +533,104 @@ class CleanPaperTests(unittest.TestCase):
         self.assertIn("mint:pool", state["positions"])
         self.assertEqual(state["closed"], [])
 
+    def test_shadow_liquidity_audit_preserves_cash_and_marks_route_unverified(self):
+        state = brain.new_state()
+        key = "mint:pool"
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "symbol": "TEST", "units": 100,
+            "entry_price": .1, "cost": 10.0, "entry_quote_ts": 1000,
+            "entry_liquidity_usd": 15000}
+        state["history"][key] = [sample(50000, 1000, key=key, price=.1)]
+        low = sample(50000, 1600, key=key, price=.01)
+        low["liquidity"] = 2000
+        result = brain.step(state, [low], 1600)
+        audit = result["shadow_exit_audit"][0]
+        self.assertEqual(audit["seconds_to_first_low_liquidity"], 600)
+        self.assertEqual(audit["route_status"], "UNVERIFIED")
+        self.assertEqual(audit["last_liquidity_usd"], 2000)
+        self.assertEqual(state["cash"], 90.0)
+        self.assertIn(key, state["positions"])
+        self.assertEqual(state["closed"], [])
+        low2 = sample(50000, 1700, key=key, price=.009)
+        low2["liquidity"] = 1500
+        result2 = brain.step(state, [low2], 1700)
+        self.assertEqual(result2["shadow_exit_audit"][0]["first_low_liquidity_ts"], 1600)
+        self.assertEqual(result2["shadow_exit_audit"][0]["last_liquidity_usd"], 1500)
+
+    def test_shadow_quote_missing_and_liquidity_recovery_are_not_executable(self):
+        state = brain.new_state()
+        key = "mint:pool"
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "symbol": "TEST", "units": 100,
+            "entry_price": .1, "cost": 10.0, "entry_quote_ts": 1000}
+        state["history"][key] = [sample(50000, 1000, key=key, price=.1)]
+        low = sample(50000, 1600, key=key, price=.09)
+        low["liquidity"] = 2000
+        brain.step(state, [low], 1600)
+        missing = brain.step(state, [], 1650)
+        self.assertEqual(missing["shadow_exit_audit"][0]["quote_status"], "MISSING_OR_INVALID")
+        self.assertEqual(missing["shadow_exit_audit"][0]["route_status"], "UNVERIFIED")
+        liquid = sample(50000, 1700, key=key, price=.09)
+        liquid["liquidity"] = brain.MIN_LIQ
+        recovered = brain.step(state, [liquid], 1700)
+        self.assertEqual(recovered["shadow_exit_audit"][0]["quote_status"], "OBSERVED_ABOVE_MIN_LIQ")
+        self.assertEqual(recovered["shadow_exit_audit"][0]["route_status"], "UNVERIFIED")
+        self.assertEqual(state["cash"], 90.0)
+        self.assertEqual(state["closed"], [])
+        self.assertIn(key, state["positions"])
+
+    def test_shadow_identical_snapshot_is_not_proof_of_fresh_provider_data(self):
+        state = brain.new_state()
+        key = "mint:pool"
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "symbol": "TEST",
+            "units": 100, "entry_price": .1, "cost": 10.0}
+        state["history"][key] = [sample(50000, 1000, key=key, price=.1)]
+        first = sample(50000, 1600, key=key, price=.09)
+        first["liquidity"] = 2000
+        first["volume1h"] = 0
+        brain.step(state, [first], 1600)
+        repeat = sample(50000, 1900, key=key, price=.09)
+        repeat["liquidity"] = 2000
+        repeat["volume1h"] = 0
+        report = brain.step(state, [repeat], 1900)
+        audit = report["shadow_exit_audit"][0]
+        self.assertEqual(audit["consecutive_identical_snapshots"], 1)
+        self.assertEqual(audit["snapshot_unchanged_seconds"], 300)
+        self.assertFalse(audit["provider_freshness_verified"])
+        self.assertEqual(report["counts"]["shadow_unchanged_snapshot_observed"], 1)
+        changed = sample(50000, 2000, key=key, price=.09)
+        changed["liquidity"] = 2500
+        changed["volume1h"] = 0
+        report = brain.step(state, [changed], 2000)
+        self.assertEqual(report["shadow_exit_audit"][0]["consecutive_identical_snapshots"], 0)
+        self.assertEqual(report["shadow_exit_audit"][0]["snapshot_unchanged_seconds"], 0)
+        self.assertEqual(state["cash"], 90.0)
+        self.assertEqual(state["closed"], [])
+
+    def test_shadow_out_of_order_liquidity_does_not_rewrite_first_loss(self):
+        state = brain.new_state()
+        key = "mint:pool"
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "symbol": "TEST", "units": 100,
+            "entry_price": .1, "cost": 10.0, "entry_quote_ts": 1000}
+        state["history"][key] = [sample(50000, 1000, key=key, price=.1)]
+        low = sample(50000, 1600, key=key, price=.09)
+        low["liquidity"] = 2000
+        brain.step(state, [low], 1600)
+        stale = sample(50000, 1500, key=key, price=.09)
+        stale["liquidity"] = 15000
+        result = brain.step(state, [stale], 1700)
+        self.assertEqual(result["counts"].get("shadow_stale_observation_ignored"), 1)
+        self.assertEqual(result["shadow_exit_audit"][0]["last_liquidity_usd"], 2000)
+        self.assertIsNone(result["shadow_exit_audit"][0]["first_liquidity_recovery_ts"])
+        recovered = sample(50000, 1800, key=key, price=.09)
+        recovered["liquidity"] = 15000
+        result = brain.step(state, [recovered], 1800)
+        self.assertEqual(result["shadow_exit_audit"][0]["first_liquidity_recovery_ts"], 1800)
+        self.assertEqual(state["cash"], 90.0)
+        self.assertEqual(state["closed"], [])
+
     def test_pillsey_illiquid_stop_does_not_invent_paper_sale(self):
         # Clean #10 recorded a stop at $2,235.84 liquidity, below MIN_LIQ.
         # Preserve the position and cash rather than crediting an unfillable sale.
@@ -347,6 +658,62 @@ class CleanPaperTests(unittest.TestCase):
         self.assertNotIn(key, state["positions"])
         self.assertEqual(len(state["closed"]), 1)
         self.assertAlmostEqual(state["cash"], 90.4312103773585)
+
+    def test_learning_summary_stop_overshoot_coverage_is_historical_safe(self):
+        state = brain.new_state()
+        state["closed"] = [
+            {"exit_reason": "stop_15pct", "observed_move_pct": -36.72,
+             "pnl_eur": -3.8, "previous_quote_price": 0.9,
+             "quote_gap_seconds": 37.6, "quote_jump_pct": -33.19},
+            {"exit_reason": "stop_15pct", "observed_move_pct": -25.0,
+             "pnl_eur": -2.5},  # historical row; no audit metadata
+            {"exit_reason": "stop_15pct", "observed_move_pct": -15.2,
+             "pnl_eur": -1.6},
+            {"exit_reason": "target_25pct", "observed_move_pct": 30,
+             "pnl_eur": 2.7},
+            {"exit_reason": "user_authorized_paper_write_off", "pnl_eur": -10},
+        ]
+        import copy
+        before = copy.deepcopy(state)
+        summary = brain.learning_summary(state)
+        audit = summary["stop_overshoot_audit"]
+        self.assertEqual(audit["stop_exits"], 3)
+        self.assertEqual(audit["excessive_stops_below_minus_20pct"], 2)
+        self.assertEqual(audit["excessive_stops_with_prior_quote_audit"], 1)
+        self.assertEqual(audit["excessive_stops_missing_prior_quote_audit"], 1)
+        self.assertAlmostEqual(audit["excessive_stops_realized_pnl_eur"], -6.3)
+        self.assertEqual(state, before)
+        self.assertFalse(summary["automatic_rule_changes"])
+
+    def test_stop_audit_records_prior_quote_gap_without_changing_cash(self):
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"]["mint:pool"] = {
+            "key": "mint:pool", "units": 9.9, "entry_price": 1.0, "cost": 10.0}
+        state["history"]["mint:pool"] = [sample(60000, 1000, price=0.90)]
+        report = brain.step(state, [sample(60000, 1040, price=0.65)], 1040)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        closed = state["closed"][0]
+        self.assertEqual(closed["previous_quote_price"], 0.90)
+        self.assertEqual(closed["previous_quote_ts"], 1000)
+        self.assertEqual(closed["exit_quote_ts"], 1040)
+        self.assertEqual(closed["quote_gap_seconds"], 40)
+        self.assertEqual(closed["quote_jump_pct"], -27.78)
+        self.assertEqual(closed["stop_overshoot_pct"], 20.0)
+        self.assertAlmostEqual(state["cash"], 90.0 + 9.9 * 0.65 * 0.99)
+        self.assertEqual(state["positions"], {})
+
+    def test_stop_audit_without_prior_quote_does_not_invent_history(self):
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"]["mint:pool"] = {
+            "key": "mint:pool", "units": 9.9, "entry_price": 1.0, "cost": 10.0}
+        report = brain.step(state, [sample(60000, 1040, price=0.65)], 1040)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        closed = state["closed"][0]
+        self.assertIsNone(closed["previous_quote_price"])
+        self.assertIsNone(closed["quote_gap_seconds"])
+        self.assertIsNone(closed["quote_jump_pct"])
 
     def test_low_liquidity_is_not_traded(self):
         state = brain.new_state()
@@ -508,7 +875,6 @@ class CleanPaperTests(unittest.TestCase):
                 brain.load_state(path)
 
 
-
 class AuthorizedWriteOffTests(unittest.TestCase):
     def test_exact_holdings_closed_without_crediting_cash_and_only_once(self):
         state = brain.new_state()
@@ -545,5 +911,7 @@ class AuthorizedWriteOffTests(unittest.TestCase):
         self.assertEqual(restored, state)
         self.assertEqual(restored["closed"][0], {"key": "prior:pool", "pnl_eur": 2})
 
+
 if __name__ == "__main__":
     unittest.main()
+

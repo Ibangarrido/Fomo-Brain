@@ -167,7 +167,54 @@ def sample(pair, now):
             "ts": now}
 
 
+USER_EXCLUDED_MINTS = frozenset({
+    "nEK7tW9g2ezPciTXMHWf175gXWdMnbjajipTdrXpump",  # MUSKX: user veto
+})
+
+
+def mechanical_staircase_risk(history):
+    """Conservative snapshot heuristic, not proof of bots or a future collapse.
+
+    Eight independent same-pool quotes over >=3 minutes, >=20% gain,
+    >=85% rising steps and <=3% drawdown in both price and cap.
+    Retain the veto for 30 minutes after the observed sequence, so a first
+    dip cannot immediately turn the suspicious run into an entry signal.
+    This is not a candle/holder analysis: those data are unavailable here.
+    """
+    if not history:
+        return False
+    latest_ts = history[-1]["ts"]
+    for end in range(8, len(history) + 1):
+        window = history[end - 8:end]
+        if not 0 <= latest_ts - window[-1]["ts"] <= 1800:
+            continue
+        if len({s["key"] for s in window}) != 1:
+            continue
+        if not 180 <= window[-1]["ts"] - window[0]["ts"] <= SIGNAL_MAX_WINDOW_SECONDS:
+            continue
+        if any(b["ts"] <= a["ts"] + 20 for a, b in zip(window, window[1:])):
+            continue
+        suspicious = True
+        for field in ("price", "cap"):
+            values = [s[field] for s in window]
+            if any(v <= 0 for v in values):
+                suspicious = False
+                break
+            peak, drawdown = values[0], 0.0
+            for value in values:
+                peak = max(peak, value)
+                drawdown = max(drawdown, 1 - value / peak)
+            rising = sum(b > a for a, b in zip(values, values[1:])) / 7
+            if values[-1] / values[0] < 1.20 or rising < .85 or drawdown > .03:
+                suspicious = False
+        if suspicious:
+            return True
+    return False
+
+
 def gate(s):
+    if s.get("address") in USER_EXCLUDED_MINTS:
+        return "user_excluded_muskx"
     if not s["price"] or not s["cap"] or not s["liquidity"]:
         return "missing_verified_market_quote"
     if s["age_seconds"] is None or s["age_seconds"] < 300:
@@ -186,7 +233,7 @@ def gate(s):
     return None
 
 
-def staircase(samples):
+def staircase(samples, min_pullback=0.15):
     """Four independent observations: peak -> trough -> recovery -> breakout.
 
     No future data, no interpolated candles and no stale multi-hour signals.
@@ -225,13 +272,43 @@ def staircase(samples):
             continue
         drop = (peak - trough) / peak
         price_drop = 1 - recent[i]["price"] / peak_sample["price"]
-        if (0.15 <= drop <= 0.40 and 0.15 <= price_drop <= 0.40 and
+        if (min_pullback <= drop <= 0.40 and min_pullback <= price_drop <= 0.40 and
                 a["cap"] > trough and
                 b["cap"] >= trough * 1.10 and
                 b["cap"] <= peak * 1.20 and
                 a["price"] > recent[i]["price"]):
             return True, "staircase_confirmed"
     return False, "no_qualified_staircase"
+
+
+def recent_crash_risk(history, latest, lookback_seconds=1800):
+    """Block a PAPER re-entry into a collapsed token despite a local staircase.
+
+    A 15-40% local pullback can be a dead-cat bounce after a >60% crash.
+    Use only prior independently sampled prices from this same pool, never
+    future prices, and keep the existing liquidity/confirmation gates.
+    """
+    if not latest.get("price") or not latest.get("cap"):
+        return False
+    earlier = [s for s in history if s["ts"] < latest["ts"]
+               and 0 <= latest["ts"] - s["ts"] <= lookback_seconds
+               and s.get("key") == latest.get("key")]
+    return any(s.get("price", 0) >= latest["price"] * 2.5 or
+               s.get("cap", 0) >= latest["cap"] * 2.5 for s in earlier)
+
+
+def shadow_three_step_recovery(history):
+    """Counterfactual only: require three independent rising price/cap quotes.
+
+    Never gates PAPER entries. Compare its classifications with future
+    outcomes before considering any strategy change.
+    """
+    if len(history) < 3:
+        return False
+    tail = history[-3:]
+    return all(b["ts"] > a["ts"] + 20
+               and b["cap"] > a["cap"] and b["price"] > a["price"]
+               for a, b in zip(tail, tail[1:]))
 
 
 def exposure_symbol(symbol):
@@ -244,15 +321,88 @@ def step(state, samples, now=None):
     counts = Counter()
     decisions = []
     quotes = {s["key"]: s for s in samples}
+    # Isolated holdings are not sold or valued, but remain monitored by exact pool.
+    for key, pos in state.get("isolated_positions", {}).items():
+        audit = pos.setdefault("monitoring_audit", {})
+        quote = quotes.get(key)
+        if quote is None or not quote.get("price") or not quote.get("liquidity"):
+            audit["quote_status"] = "MISSING_OR_INVALID"
+            counts["isolated_quote_missing"] += 1
+            continue
+        ts = quote.get("ts")
+        if (not isinstance(ts, (int, float)) or isinstance(ts, bool)
+                or not float("-inf") < ts < float("inf")
+                or ts > now + 60 or ts < now - MAX_AGE_SECONDS
+                or ts < audit.get("last_observed_ts", float("-inf"))):
+            audit["quote_status"] = "STALE_FUTURE_OUT_OF_ORDER_OR_UNTIMED"
+            counts["isolated_quote_stale"] += 1
+            continue
+        fingerprint = [quote["price"], quote["liquidity"], quote.get("volume1h")]
+        if fingerprint != audit.get("last_snapshot_values"):
+            audit["last_snapshot_values"] = fingerprint
+            audit["last_snapshot_changed_ts"] = ts
+        audit.update({
+            "quote_status": "OBSERVED_INDICATIVE_NOT_EXECUTABLE",
+            "last_observed_ts": ts, "price_usd": quote["price"],
+            "liquidity_usd": quote["liquidity"],
+            "volume1h_usd": quote.get("volume1h"),
+            "snapshot_unchanged_seconds": round(max(0, ts - audit["last_snapshot_changed_ts"]), 2),
+        })
+        counts["isolated_quote_observed"] += 1
     # Existing positions: do not invent an exit when market quotes are missing.
     for key, pos in list(state["positions"].items()):
         s = quotes.get(key)
+        # SHADOW freshness must never regress on an out-of-order quote.
+        # Missing data is a monitoring gap, not evidence of a new price.
+        audit = pos.setdefault("shadow_exit_audit", {})
+        if s is not None and isinstance(s.get("ts"), (int, float)) and \
+                s["ts"] < audit.get("last_observed_ts", float("-inf")):
+            counts["shadow_stale_observation_ignored"] += 1
+            continue
         if s is None or not s["price"] or not s["liquidity"]:
+            audit = pos.setdefault("shadow_exit_audit", {})
+            audit["quote_status"] = "MISSING_OR_INVALID"
+            audit["route_status"] = "UNVERIFIED"
             counts["position_unpriced_hold"] += 1
             continue
+        # SHADOW only: a new retrieval timestamp does not prove the provider
+        # published a new market snapshot. Track unchanged quote fields.
+        if s["ts"] > audit.get("last_observed_ts", float("-inf")):
+            fingerprint = [s["price"], s["liquidity"], s.get("volume1h")]
+            if audit.get("last_snapshot_values") == fingerprint:
+                audit["consecutive_identical_snapshots"] = (
+                    audit.get("consecutive_identical_snapshots", 0) + 1)
+                counts["shadow_unchanged_snapshot_observed"] += 1
+            else:
+                audit["last_snapshot_values"] = fingerprint
+                audit["last_snapshot_changed_ts"] = s["ts"]
+                audit["consecutive_identical_snapshots"] = 0
+            audit["snapshot_unchanged_seconds"] = round(
+                max(0, s["ts"] - audit["last_snapshot_changed_ts"]), 2)
         if s["liquidity"] < MIN_LIQ:
+            # SHADOW only: observed pool liquidity is not an executable swap route.
+            audit = pos.setdefault("shadow_exit_audit", {})
+            if audit.get("first_low_liquidity_ts") is None:
+                audit["first_low_liquidity_ts"] = s["ts"]
+                audit["first_low_liquidity_usd"] = s["liquidity"]
+            if s["ts"] >= audit.get("last_observed_ts", float("-inf")):
+                audit["last_observed_ts"] = s["ts"]
+                audit["last_liquidity_usd"] = s["liquidity"]
+                audit["quote_status"] = "OBSERVED_LOW_LIQUIDITY"
+            audit["route_status"] = "UNVERIFIED"
             counts["position_low_liquidity_hold"] += 1
             continue
+        # A liquid pool is only a recovery of the liquidity indicator, never
+        # proof that an external swap route exists or that a fill is possible.
+        audit = pos.setdefault("shadow_exit_audit", {})
+        if s["ts"] >= audit.get("last_observed_ts", float("-inf")):
+            if audit.get("quote_status") == "OBSERVED_LOW_LIQUIDITY":
+                audit.setdefault("first_liquidity_recovery_ts", s["ts"])
+                counts["shadow_liquidity_recovery_observed"] += 1
+            audit["last_observed_ts"] = s["ts"]
+            audit["last_liquidity_usd"] = s["liquidity"]
+            audit["quote_status"] = "OBSERVED_ABOVE_MIN_LIQ"
+            audit["route_status"] = "UNVERIFIED"
         # Never simulate an exit from a quote older than the last admitted
         # observation. Out-of-order provider data must not change PAPER cash.
         prior = state["history"].get(key) or []
@@ -261,6 +411,16 @@ def step(state, samples, now=None):
             continue
         move = s["price"] / pos["entry_price"] - 1
         if move <= -0.15 or move >= 0.25:
+            # Audit the last admitted quote before the exit, not an invented
+            # stop fill. These fields are diagnostic and never change trading.
+            previous = prior[-1] if prior else None
+            previous_price = previous.get("price") if previous else None
+            previous_ts = previous.get("ts") if previous else None
+            quote_gap_seconds = (round(s["ts"] - previous_ts, 2)
+                                 if isinstance(previous_ts, (int, float)) else None)
+            quote_jump_pct = (round((s["price"] / previous_price - 1) * 100, 2)
+                              if isinstance(previous_price, (int, float)) and previous_price > 0
+                              else None)
             # Conservative paper estimate: 1% on each side, no guaranteed execution.
             proceeds = pos["units"] * s["price"] * 0.99
             state["cash"] += proceeds
@@ -269,6 +429,11 @@ def step(state, samples, now=None):
                                     "pnl_eur": proceeds - pos["cost"],
                                     "observed_move_pct": round(move * 100, 2),
                                     "stop_overshoot_pct": round(max(0, -move - .15) * 100, 2),
+                                    "previous_quote_price": previous_price,
+                                    "previous_quote_ts": previous_ts,
+                                    "exit_quote_ts": s["ts"],
+                                    "quote_gap_seconds": quote_gap_seconds,
+                                    "quote_jump_pct": quote_jump_pct,
                                     "exit_reason": "stop_15pct" if move <= -0.15 else "target_25pct"})
             del state["positions"][key]
             counts["paper_exit"] += 1
@@ -315,16 +480,43 @@ def step(state, samples, now=None):
         reason = gate(s)
         if not reason and not admitted:
             reason = "non_independent_observation"
+        vetoes = state.setdefault("mechanical_veto_until", {})
+        vetoes = {k: until for k, until in vetoes.items() if until > now}
+        state["mechanical_veto_until"] = vetoes
+        if admitted and mechanical_staircase_risk(hist):
+            vetoes[s["address"]] = max(vetoes.get(s["address"], 0), s["ts"] + 1800)
+        if not reason and vetoes.get(s["address"], 0) > now:
+            reason = "mechanical_staircase_risk"
         if not reason:
             _, reason = staircase(hist)
+            if reason == "no_qualified_staircase":
+                # Prospective 12% vs 15% signal comparison only.
+                # Do not change CONTROL entries or book hypothetical proceeds.
+                alt_ok, _ = staircase(hist, min_pullback=0.12)
+                if alt_ok and not recent_crash_risk(hist, s):
+                    counts["shadow_12pct_extra_signal"] += 1
+                    decisions.append({"key": key, "symbol": s["symbol"],
+                                      "decision": "SHADOW_12PCT_SIGNAL",
+                                      "reason": "12pct_pullback_vs_control_15pct",
+                                      "quote_ts": s["ts"], "price": s["price"]})
             if reason == "staircase_confirmed":
-                reason = None
+                reason = ("recent_crash_risk" if recent_crash_risk(hist, s) else None)
+                if reason is None:
+                    # Shadow-only candidate filter: log a counterfactual,
+                    # without changing PAPER entries, stops or risk limits.
+                    counts["shadow_three_step_pass" if shadow_three_step_recovery(hist)
+                           else "shadow_three_step_would_block"] += 1
+        if not reason and key in state.get("isolated_positions", {}):
+            reason = "user_isolated_unpriced_token"
         if not reason and key in state["positions"]:
             reason = "already_open"
         # Pools are not independent assets: one mint may have several pools.
         # Never double PAPER exposure or re-enter a previously traded token
         # by switching its pool address.
         token = s["address"]
+        if not reason and any(k.split(":", 1)[0] == token
+                              for k in state.get("isolated_positions", {})):
+            reason = "user_isolated_token_other_pool"
         if not reason and any(k.split(":", 1)[0] == token
                               for k in state["positions"]):
             reason = "already_open_token_other_pool"
@@ -357,7 +549,8 @@ def step(state, samples, now=None):
         state["cash"] -= cost
         state["positions"][key] = {"key": key, "symbol": s["symbol"],
                                     "entry_at": utcnow(), "entry_price": s["price"],
-                                    "units": units, "cost": cost, "entry_cap": s["cap"]}
+                                    "units": units, "cost": cost, "entry_cap": s["cap"],
+                                    "entry_quote_ts": s["ts"], "entry_liquidity_usd": s["liquidity"]}
         counts["paper_entry"] += 1
         decisions.append({"key": key, "symbol": s["symbol"], "decision": "PAPER_ENTRY",
                           "reason": "staircase_confirmed"})
@@ -373,6 +566,23 @@ def step(state, samples, now=None):
             "entries": [d for d in decisions if d["decision"] == "PAPER_ENTRY"],
             "cash_eur": round(state["cash"], 4), "open_positions": len(state["positions"]),
             "closed_trades": len(state["closed"]),
+            "shadow_exit_audit": [
+                {"key": k, "entry_liquidity_usd": p.get("entry_liquidity_usd"),
+                 "first_low_liquidity_ts": p.get("shadow_exit_audit", {}).get("first_low_liquidity_ts"),
+                 "last_liquidity_usd": p.get("shadow_exit_audit", {}).get("last_liquidity_usd"),
+                 "quote_status": p.get("shadow_exit_audit", {}).get("quote_status", "UNKNOWN"),
+                 "first_liquidity_recovery_ts": p.get("shadow_exit_audit", {}).get("first_liquidity_recovery_ts"),
+                 "route_status": "UNVERIFIED",
+                 "provider_freshness_verified": False,
+                 "snapshot_unchanged_seconds": p.get("shadow_exit_audit", {}).get("snapshot_unchanged_seconds"),
+                 "consecutive_identical_snapshots": p.get("shadow_exit_audit", {}).get("consecutive_identical_snapshots", 0),
+                 "last_snapshot_changed_ts": p.get("shadow_exit_audit", {}).get("last_snapshot_changed_ts"),
+                 "seconds_to_first_low_liquidity":
+                    round(p["shadow_exit_audit"]["first_low_liquidity_ts"] - p["entry_quote_ts"], 2)
+                    if isinstance(p.get("entry_quote_ts"), (int, float)) and
+                    isinstance(p.get("shadow_exit_audit", {}).get("first_low_liquidity_ts"), (int, float))
+                    else None}
+                for k, p in state["positions"].items()],
             "outcomes_total": len(state["outcomes"]),
             "validated_outcomes_v2": sum(x.get("audit_version") == 2 for x in state["outcomes"]),
             "validated_rally_contracts_v2": len({x["key"].split(":", 1)[0] for x in state["outcomes"]
@@ -387,7 +597,8 @@ def step(state, samples, now=None):
 def tracking_priority(state, now=None):
     """Holdings first, then signals, with reserved rotating rejected-token slots."""
     now = time.time() if now is None else now
-    held = list(dict.fromkeys(k.split(":", 1)[0] for k in state["positions"]))
+    held = list(dict.fromkeys(k.split(":", 1)[0] for k in
+                              list(state["positions"]) + list(state.get("isolated_positions", {}))))
     recent = sorted((v[-1] for v in state["history"].values() if v and gate(v[-1]) is None),
                     key=lambda s: s["ts"], reverse=True)
     watches = sorted({k.split(":", 1)[0] for k, w in state.get("watchlist", {}).items()
@@ -450,14 +661,31 @@ def learning_summary(state):
         if row["label"] == "drop_30pct":
             group["drop_contracts"].add(token)
     closed = state.get("closed", [])
+    # Diagnostics only: historical stops may lack prior-quote metadata.
+    # Never treat a missing audit field as a zero-gap or a verified fill.
+    stops = [x for x in closed if x.get("exit_reason") == "stop_15pct"]
+    excessive = [x for x in stops if isinstance(x.get("observed_move_pct"), (int, float))
+                 and x["observed_move_pct"] < -20]
+    audited = [x for x in excessive
+               if isinstance(x.get("previous_quote_price"), (int, float))
+               and x["previous_quote_price"] > 0
+               and isinstance(x.get("quote_gap_seconds"), (int, float))
+               and isinstance(x.get("quote_jump_pct"), (int, float))]
     return {"scope": "retained_v2_observations_only; repeated contracts are not independent trials",
             "automatic_rule_changes": False,
             "by_rejection_reason": {reason: {k: len(v) if isinstance(v, set) else v
                                              for k, v in g.items()} for reason, g in groups.items()},
             "closed_paper_trades": len(closed),
             "realized_paper_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in closed), 4),
-            "worst_paper_trade_eur": min((x.get("pnl_eur", 0) for x in closed), default=None)}
-
+            "worst_paper_trade_eur": min((x.get("pnl_eur", 0) for x in closed), default=None),
+            "stop_overshoot_audit": {
+                "stop_exits": len(stops),
+                "excessive_stops_below_minus_20pct": len(excessive),
+                "excessive_stops_with_prior_quote_audit": len(audited),
+                "excessive_stops_missing_prior_quote_audit": len(excessive) - len(audited),
+                "excessive_stops_realized_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in excessive), 4),
+                "note": "Observed PAPER prices, not guaranteed executable stop fills; legacy rows may lack quote history",
+            }}
 
 
 # Explicit user-authorized PAPER write-offs, keyed by exact mint and pool.
@@ -487,9 +715,53 @@ def apply_user_paper_write_offs(state):
         print("USER_PAPER_WRITE_OFF", key, "zero recovery; no executed sale", flush=True)
 
 
+PAPER_ISOLATE_SYMBOLS = frozenset(("MARVIN", "REGRET", "PAWS"))
+
+
+def isolate_authorized_paper_positions(state):
+    """Separate unique authorized PAPER holdings without sale, cash or P&L."""
+    positions = state.setdefault("positions", {})
+    isolated = state.setdefault("isolated_positions", {})
+    for symbol in PAPER_ISOLATE_SYMBOLS:
+        matches = [(key, pos) for key, pos in positions.items()
+                   if str(pos.get("symbol", "")).strip().upper() == symbol]
+        if len(matches) != 1:
+            continue  # ambiguous ticker: do not guess contract
+        key, pos = matches[0]
+        if key in isolated:
+            continue
+        isolated[key] = {**pos, "isolation_reason": "user_authorized_unverifiable_exit",
+                         "isolation_status": "UNPRICED_NOT_SOLD",
+                         "realizable_value_eur": None, "route_status": "UNVERIFIED",
+                         "isolated_at": utcnow()}
+        del positions[key]
+    return len(isolated)
+
+
+def mask_unrealizable_total_equity(report, state):
+    """Never label the active-book estimate as total equity with isolated assets."""
+    if not state.get("isolated_positions"):
+        return
+    if report.get("equity_eur") is not None:
+        report["active_book_indicative_eur"] = report["equity_eur"]
+    report["equity_eur"] = None
+    report["equity_note"] = (
+        "TOTAL_UNKNOWN: isolated assets have no verified executable exit; "
+        "active-book indicative value is not total portfolio equity"
+    )
+
+
+def execution_sha():
+    """Report the checked-out PR head in isolated shadow runs, not the PR merge SHA."""
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        return os.environ.get("CLEAN_SHADOW_HEAD_SHA") or os.environ.get("GITHUB_SHA")
+    return os.environ.get("GITHUB_SHA")
+
+
 def main():
     state = load_state()
     apply_user_paper_write_offs(state)
+    isolate_authorized_paper_positions(state)
     save_json(STATE_FILE, state)
     started = time.monotonic()
     previous_run = state.get("last_run", {})
@@ -506,7 +778,8 @@ def main():
         now = time.time()
         raw = fetch_pairs(tracked_addresses=tracking_priority(state))
         selection_counts["raw_pool_observations"] += len(raw)
-        raw = select_pairs(raw, state["positions"])
+        raw = select_pairs(raw, {**state.get("isolated_positions", {}),
+                                 **state["positions"]})
         selection_counts["selected_pool_observations"] += len(raw)
         now = time.time()
         samples = [sample(p, now) for p in raw]
@@ -539,7 +812,12 @@ def main():
         report["equity_eur"] = round(state["cash"] + sum(
             p["units"] * quotes[k]["price"] * 0.99 for k, p in state["positions"].items()), 4)
         report["equity_note"] = "Mark-to-market estimate with 1% exit cost; no guaranteed fills"
+    mask_unrealizable_total_equity(report, state)
     save_json(STATE_FILE, state)
+    report["isolated_positions"] = [{"key": k, "symbol": p.get("symbol"),
+        "status": p.get("isolation_status"), "route_status": "UNVERIFIED",
+        "realizable_value_eur": None, "monitoring": p.get("monitoring_audit", {})}
+        for k, p in state.get("isolated_positions", {}).items()]
     report["polls_completed"] = polls_completed
     report["monitoring_note"] = "Bounded monitoring; GitHub scheduling gaps and stop overshoot remain possible"
     report["aggregate_counts"] = dict(aggregate)
@@ -552,7 +830,7 @@ def main():
     report["runtime_seconds"] = round(time.monotonic() - started, 3)
     report["run"] = {"id": os.environ.get("GITHUB_RUN_ID"),
                      "event": os.environ.get("GITHUB_EVENT_NAME"),
-                     "sha": os.environ.get("GITHUB_SHA"), "completed_at": utcnow()}
+                     "sha": execution_sha(), "completed_at": utcnow()}
     report["previous_run"] = previous_run
     report["gap_since_previous_run_seconds"] = (
         round(first_poll_started_at - datetime.fromisoformat(previous_run["completed_at"]).timestamp(), 1)
@@ -565,3 +843,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

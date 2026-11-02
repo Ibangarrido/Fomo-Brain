@@ -41,19 +41,25 @@ jobs:
         with:
           python-version: '3.12'
       - name: Offline regression tests
-        run: python -m unittest -v test_brain_clean_v1.py
-      - name: Restore latest saved Clean V1 ledger
-        uses: dawidd6/action-download-artifact@v11
+        run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_restore.py
+      - name: Select newest completed PAPER ledger by artifact upload time
+        id: restore
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python clean_v1_restore.py select
+      - name: Download exact selected PAPER artifact
+        uses: actions/download-artifact@v4
         with:
-          workflow: brain_clean_v1.yml
-          branch: main
-          name: brain-clean-v1-state
+          artifact-ids: ${{ steps.restore.outputs.artifact_id }}
+          run-id: ${{ steps.restore.outputs.source_run }}
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
           path: .
-          search_artifacts: true
-          # A failed run may have saved newer cash/positions. Never roll back
-          # to the last successful ledger after a partial PAPER execution.
-          workflow_conclusion: ''
-          if_no_artifact_found: fail
+      - name: Verify restored PAPER ledger provenance
+        env:
+          CLEAN_RESTORE_SOURCE_RUN: ${{ steps.restore.outputs.source_run }}
+        run: python clean_v1_restore.py verify
       - name: Run isolated PAPER experiment
         env:
           PYTHONUNBUFFERED: '1'
