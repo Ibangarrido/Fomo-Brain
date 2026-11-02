@@ -1,3 +1,4 @@
+import math
 """Brain Clean V1: isolated, auditable ESCALERA paper experiment.
 
 Never signs transactions, calls a broker, or imports legacy portfolio state.
@@ -685,6 +686,32 @@ def median_quote_gap(stops):
     return gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2
 
 
+def stop_loss_diagnosis(row):
+    """Evidence flags, not causal attribution or proof of executable proceeds."""
+    if row.get("exit_reason") != "stop_15pct":
+        return None
+    gap = row.get("quote_gap_seconds")
+    jump = row.get("quote_jump_pct")
+    liquidity = row.get("exit_liquidity_usd")
+    age = row.get("quote_age_at_poll_seconds")
+    flags = []
+    if isinstance(gap, (int, float)) and not isinstance(gap, bool) and math.isfinite(gap) and gap > 60:
+        flags.append("QUOTE_INTERVAL_OVER_60S")
+    if isinstance(jump, (int, float)) and not isinstance(jump, bool) and math.isfinite(jump) and jump <= -15:
+        flags.append("OBSERVED_PRICE_GAP_15PCT")
+    if isinstance(liquidity, (int, float)) and not isinstance(liquidity, bool) and math.isfinite(liquidity) and liquidity < MIN_LIQ:
+        flags.append("BELOW_MIN_LIQUIDITY")
+    if isinstance(age, (int, float)) and not isinstance(age, bool) and math.isfinite(age) and age > MAX_AGE_SECONDS:
+        flags.append("STALE_EXIT_QUOTE")
+    if row.get("execution_verified") is not True:
+        flags.append("EXECUTION_UNVERIFIED")
+    if not isinstance(gap, (int, float)) or isinstance(gap, bool) or not math.isfinite(gap) or gap < 0:
+        flags.append("QUOTE_INTERVAL_UNKNOWN")
+    if not isinstance(jump, (int, float)) or isinstance(jump, bool) or not math.isfinite(jump):
+        flags.append("PRICE_GAP_UNKNOWN")
+    return flags
+
+
 def learning_summary(state):
     """Descriptive evidence from retained validated rows, never an auto-tuner."""
     groups = {}
@@ -731,6 +758,8 @@ def learning_summary(state):
                     x.get("stop_overshoot_severity") not in ("NONE", "HIGH", "SEVERE")
                     for x in stops),
                 "median_quote_gap_seconds": median_quote_gap(stops),
+                "stop_diagnostic_counts": dict(Counter(
+                    flag for x in stops for flag in stop_loss_diagnosis(x))),
                 "unverified_stop_exits": sum(
                     x.get("execution_verified") is not True for x in stops),
                 "note": "Observed PAPER prices, not guaranteed executable stop fills; legacy rows may lack quote history",
