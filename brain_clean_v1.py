@@ -321,12 +321,14 @@ def step(state, samples, now=None):
                 reason = None
         if not reason and key in state["positions"]:
             reason = "already_open"
+        if not reason and key in state.get("isolated_positions", {}):
+            reason = "user_isolated_unpriced_token"
         # Pools are not independent assets: one mint may have several pools.
         # Never double PAPER exposure or re-enter a previously traded token
         # by switching its pool address.
         token = s["address"]
         if not reason and any(k.split(":", 1)[0] == token
-                              for k in state["positions"]):
+                              for k in list(state["positions"]) + list(state.get("isolated_positions", {}))):
             reason = "already_open_token_other_pool"
         if not reason and any(x["key"].split(":", 1)[0] == token
                               for x in state["closed"]):
@@ -336,7 +338,7 @@ def step(state, samples, now=None):
         bucket = exposure_symbol(s.get("symbol"))
         if not reason and bucket and any(
                 exposure_symbol(p.get("symbol")) == bucket
-                for p in state["positions"].values()):
+                for p in list(state["positions"].values()) + list(state.get("isolated_positions", {}).values())):
             reason = "same_symbol_exposure_open"
         if not reason and len(state["positions"]) >= MAX_POSITIONS:
             reason = "max_3_positions"
@@ -387,7 +389,8 @@ def step(state, samples, now=None):
 def tracking_priority(state, now=None):
     """Holdings first, then signals, with reserved rotating rejected-token slots."""
     now = time.time() if now is None else now
-    held = list(dict.fromkeys(k.split(":", 1)[0] for k in state["positions"]))
+    held = list(dict.fromkeys(k.split(":", 1)[0] for k in
+                              list(state["positions"]) + list(state.get("isolated_positions", {}))))
     recent = sorted((v[-1] for v in state["history"].values() if v and gate(v[-1]) is None),
                     key=lambda s: s["ts"], reverse=True)
     watches = sorted({k.split(":", 1)[0] for k, w in state.get("watchlist", {}).items()
@@ -487,9 +490,33 @@ def apply_user_paper_write_offs(state):
         print("USER_PAPER_WRITE_OFF", key, "zero recovery; no executed sale", flush=True)
 
 
+PAPER_ISOLATE_SYMBOLS = frozenset(("MARVIN", "REGRET", "PAWS"))
+
+
+def isolate_authorized_paper_positions(state):
+    """Move only uniquely identified PAPER holdings; never book a sale or reset cash."""
+    positions = state.setdefault("positions", {})
+    isolated = state.setdefault("isolated_positions", {})
+    for symbol in PAPER_ISOLATE_SYMBOLS:
+        matches = [(k, p) for k, p in positions.items()
+                   if str(p.get("symbol", "")).strip().upper() == symbol]
+        if len(matches) != 1:
+            continue  # Ambiguous ticker: fail closed rather than guess a contract.
+        key, pos = matches[0]
+        if key in isolated:
+            continue
+        isolated[key] = {**pos, "isolation_status": "UNPRICED_NOT_SOLD",
+                         "isolation_reason": "user_authorized_unverifiable_exit",
+                         "realizable_value_eur": None, "route_status": "UNVERIFIED",
+                         "isolated_at": utcnow()}
+        del positions[key]
+    return len(isolated)
+
+
 def main():
     state = load_state()
     apply_user_paper_write_offs(state)
+    isolate_authorized_paper_positions(state)
     save_json(STATE_FILE, state)
     started = time.monotonic()
     previous_run = state.get("last_run", {})
@@ -506,7 +533,7 @@ def main():
         now = time.time()
         raw = fetch_pairs(tracked_addresses=tracking_priority(state))
         selection_counts["raw_pool_observations"] += len(raw)
-        raw = select_pairs(raw, state["positions"])
+        raw = select_pairs(raw, {**state.get("isolated_positions", {}), **state["positions"]})
         selection_counts["selected_pool_observations"] += len(raw)
         now = time.time()
         samples = [sample(p, now) for p in raw]
@@ -539,6 +566,12 @@ def main():
         report["equity_eur"] = round(state["cash"] + sum(
             p["units"] * quotes[k]["price"] * 0.99 for k, p in state["positions"].items()), 4)
         report["equity_note"] = "Mark-to-market estimate with 1% exit cost; no guaranteed fills"
+    if state.get("isolated_positions"):
+        report["equity_eur"] = None
+        report["equity_note"] = "TOTAL_UNKNOWN: isolated PAPER assets lack verified executable exit"
+        report["isolated_positions"] = [{"key": k, "symbol": p.get("symbol"),
+            "status": p.get("isolation_status"), "route_status": "UNVERIFIED",
+            "realizable_value_eur": None} for k, p in state["isolated_positions"].items()]
     save_json(STATE_FILE, state)
     report["polls_completed"] = polls_completed
     report["monitoring_note"] = "Bounded monitoring; GitHub scheduling gaps and stop overshoot remain possible"
