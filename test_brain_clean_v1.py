@@ -933,6 +933,25 @@ class AuthorizedWriteOffTests(unittest.TestCase):
 
 
 class StopExitAuditRegressionTests(unittest.TestCase):
+    def test_stop_diagnosis_separates_evidence_from_unknowns(self):
+        observed = {"exit_reason": "stop_15pct", "quote_gap_seconds": 120,
+                    "quote_jump_pct": -25, "exit_liquidity_usd": 2000,
+                    "quote_age_at_poll_seconds": 10, "execution_verified": False}
+        flags = brain.stop_loss_diagnosis(observed)
+        self.assertIn("QUOTE_INTERVAL_OVER_60S", flags)
+        self.assertIn("OBSERVED_PRICE_GAP_15PCT", flags)
+        self.assertIn("BELOW_MIN_LIQUIDITY", flags)
+        self.assertIn("EXECUTION_UNVERIFIED", flags)
+        self.assertNotIn("STALE_EXIT_QUOTE", flags)
+        unknown = brain.stop_loss_diagnosis({"exit_reason": "stop_15pct"})
+        self.assertIn("QUOTE_INTERVAL_UNKNOWN", unknown)
+        self.assertIn("PRICE_GAP_UNKNOWN", unknown)
+        self.assertIsNone(brain.stop_loss_diagnosis({"exit_reason": "target_25pct"}))
+        state = brain.new_state()
+        state["closed"] = [observed]
+        counts = brain.learning_summary(state)["stop_overshoot_audit"]["stop_diagnostic_counts"]
+        self.assertEqual(counts["OBSERVED_PRICE_GAP_15PCT"], 1)
+
     def test_quote_gap_median_even_odd_and_corrupt_legacy(self):
         self.assertIsNone(brain.median_quote_gap([]))
         self.assertEqual(brain.median_quote_gap([
