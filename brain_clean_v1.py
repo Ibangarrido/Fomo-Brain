@@ -712,6 +712,20 @@ def learning_summary(state):
                 "excessive_stops_missing_prior_quote_audit": len(excessive) - len(audited),
                 "excessive_stops_realized_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in excessive), 4),
                 "verified_stop_fills": None,
+                "classified_high": sum(x.get("stop_overshoot_severity") == "HIGH" for x in stops),
+                "classified_severe": sum(x.get("stop_overshoot_severity") == "SEVERE" for x in stops),
+                "classification_missing_legacy": sum(
+                    x.get("stop_overshoot_severity") not in ("NONE", "HIGH", "SEVERE")
+                    for x in stops),
+                "median_quote_gap_seconds": (
+                    sorted(x["quote_gap_seconds"] for x in stops
+                           if isinstance(x.get("quote_gap_seconds"), (int, float)))[
+                        sum(isinstance(x.get("quote_gap_seconds"), (int, float))
+                            for x in stops) // 2]
+                    if any(isinstance(x.get("quote_gap_seconds"), (int, float))
+                           for x in stops) else None),
+                "unverified_stop_exits": sum(
+                    x.get("execution_verified") is not True for x in stops),
                 "note": "Observed PAPER prices, not guaranteed executable stop fills; legacy rows may lack quote history",
             }}
 
