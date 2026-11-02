@@ -11,6 +11,33 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_control_isolation_preserves_cash_history_and_is_idempotent(self):
+        state = brain.new_state()
+        state["cash"] = 33.9529
+        state["closed"] = [{"key": "previous:pool", "pnl_eur": -2}]
+        for name in ("MARVIN", "REGRET", "paws"):
+            state["positions"][name + ":pool"] = {"symbol": name, "cost": 10, "units": 100}
+        before_closed = list(state["closed"])
+        self.assertEqual(brain.isolate_authorized_paper_positions(state), 3)
+        self.assertEqual(len(state["positions"]), 0)
+        self.assertEqual(len(state["isolated_positions"]), 3)
+        self.assertEqual(state["cash"], 33.9529)
+        self.assertEqual(state["closed"], before_closed)
+        self.assertEqual(brain.isolate_authorized_paper_positions(state), 3)
+        self.assertEqual(len(state["isolated_positions"]), 3)
+        self.assertTrue(all(p["realizable_value_eur"] is None
+                            for p in state["isolated_positions"].values()))
+
+    def test_control_isolation_ambiguous_symbol_fails_closed(self):
+        state = brain.new_state()
+        state["positions"] = {
+            "a:pool": {"symbol": "MARVIN"},
+            "b:pool": {"symbol": "MARVIN"},
+        }
+        brain.isolate_authorized_paper_positions(state)
+        self.assertEqual(len(state["positions"]), 2)
+        self.assertFalse(state["isolated_positions"])
+
     def test_lumi_variants_share_one_slot_across_restored_runs(self):
         import json
         state = brain.new_state()
