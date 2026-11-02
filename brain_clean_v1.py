@@ -735,6 +735,19 @@ def isolate_authorized_paper_positions(state):
     return len(isolated)
 
 
+def mask_unrealizable_total_equity(report, state):
+    """Never label the active-book estimate as total equity with isolated assets."""
+    if not state.get("isolated_positions"):
+        return
+    if report.get("equity_eur") is not None:
+        report["active_book_indicative_eur"] = report["equity_eur"]
+    report["equity_eur"] = None
+    report["equity_note"] = (
+        "TOTAL_UNKNOWN: isolated assets have no verified executable exit; "
+        "active-book indicative value is not total portfolio equity"
+    )
+
+
 def execution_sha():
     """Report the checked-out PR head in isolated shadow runs, not the PR merge SHA."""
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
@@ -796,6 +809,7 @@ def main():
         report["equity_eur"] = round(state["cash"] + sum(
             p["units"] * quotes[k]["price"] * 0.99 for k, p in state["positions"].items()), 4)
         report["equity_note"] = "Mark-to-market estimate with 1% exit cost; no guaranteed fills"
+    mask_unrealizable_total_equity(report, state)
     save_json(STATE_FILE, state)
     report["isolated_positions"] = [{"key": k, "symbol": p.get("symbol"),
         "status": p.get("isolation_status"), "route_status": "UNVERIFIED",
