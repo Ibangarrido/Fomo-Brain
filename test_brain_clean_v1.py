@@ -481,6 +481,35 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(state["closed"], [])
         self.assertIn(key, state["positions"])
 
+    def test_shadow_identical_snapshot_is_not_proof_of_fresh_provider_data(self):
+        state = brain.new_state()
+        key = "mint:pool"
+        state["cash"] = 90.0
+        state["positions"][key] = {"key": key, "symbol": "TEST",
+            "units": 100, "entry_price": .1, "cost": 10.0}
+        state["history"][key] = [sample(50000, 1000, key=key, price=.1)]
+        first = sample(50000, 1600, key=key, price=.09)
+        first["liquidity"] = 2000
+        first["volume1h"] = 0
+        brain.step(state, [first], 1600)
+        repeat = sample(50000, 1900, key=key, price=.09)
+        repeat["liquidity"] = 2000
+        repeat["volume1h"] = 0
+        report = brain.step(state, [repeat], 1900)
+        audit = report["shadow_exit_audit"][0]
+        self.assertEqual(audit["consecutive_identical_snapshots"], 1)
+        self.assertEqual(audit["snapshot_unchanged_seconds"], 300)
+        self.assertFalse(audit["provider_freshness_verified"])
+        self.assertEqual(report["counts"]["shadow_unchanged_snapshot_observed"], 1)
+        changed = sample(50000, 2000, key=key, price=.09)
+        changed["liquidity"] = 2500
+        changed["volume1h"] = 0
+        report = brain.step(state, [changed], 2000)
+        self.assertEqual(report["shadow_exit_audit"][0]["consecutive_identical_snapshots"], 0)
+        self.assertEqual(report["shadow_exit_audit"][0]["snapshot_unchanged_seconds"], 0)
+        self.assertEqual(state["cash"], 90.0)
+        self.assertEqual(state["closed"], [])
+
     def test_shadow_out_of_order_liquidity_does_not_rewrite_first_loss(self):
         state = brain.new_state()
         key = "mint:pool"
