@@ -444,6 +444,11 @@ def step(state, samples, now=None):
                                     "pnl_eur": proceeds - pos["cost"],
                                     "observed_move_pct": round(move * 100, 2),
                                     "stop_overshoot_pct": round(max(0, -move - .15) * 100, 2),
+                                    "stop_breached": move <= -0.15,
+                                    "stop_overshoot_alert": move < -0.20,
+                                    "stop_overshoot_severity": ("SEVERE" if move < -0.30 else
+                                                                "HIGH" if move < -0.20 else
+                                                                "NONE"),
                                     "previous_quote_price": previous_price,
                                     "previous_quote_ts": previous_ts,
                                     "exit_quote_ts": s["ts"],
