@@ -450,6 +450,8 @@ def step(state, samples, now=None):
                                     "quote_gap_seconds": quote_gap_seconds,
                                     "quote_jump_pct": quote_jump_pct,
                                     "execution_type": "PAPER_INDICATIVE_UNVERIFIED",
+                                    "execution_verified": False,
+                                    "realizable_proceeds_eur": None,
                                     "route_status": "UNVERIFIED",
                                     "exit_liquidity_usd": s["liquidity"],
                                     "stop_threshold_pct": -15.0,
@@ -704,6 +706,7 @@ def learning_summary(state):
                 "excessive_stops_with_prior_quote_audit": len(audited),
                 "excessive_stops_missing_prior_quote_audit": len(excessive) - len(audited),
                 "excessive_stops_realized_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in excessive), 4),
+                "verified_stop_fills": None,
                 "note": "Observed PAPER prices, not guaranteed executable stop fills; legacy rows may lack quote history",
             }}
 
