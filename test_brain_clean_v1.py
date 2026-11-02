@@ -11,6 +11,25 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_isolated_quote_rejects_stale_and_future_observations(self):
+        state = brain.new_state()
+        state["isolated_positions"] = {"mint:pool": {"key": "mint:pool", "symbol": "MARVIN"}}
+        sample = {"key": "mint:pool", "price": 0.00001, "liquidity": 1000,
+                  "volume1h": 0, "ts": 1000}
+        brain.step(state, [sample], now=1000 + brain.MAX_AGE_SECONDS + 1)
+        audit = state["isolated_positions"]["mint:pool"]["monitoring_audit"]
+        self.assertEqual(audit["quote_status"], "STALE_FUTURE_OUT_OF_ORDER_OR_UNTIMED")
+        self.assertNotIn("price_usd", audit)
+        sample["ts"] = 3000
+        brain.step(state, [sample], now=2000)
+        self.assertNotIn("price_usd", audit)
+        sample["ts"] = 2000
+        brain.step(state, [sample], now=2000)
+        self.assertEqual(audit["price_usd"], 0.00001)
+        sample["ts"] = 1999
+        brain.step(state, [sample], now=2000)
+        self.assertEqual(audit["last_observed_ts"], 2000)
+
     def test_authorized_isolation_preserves_cash_and_is_idempotent(self):
         state = brain.new_state()
         state["cash"] = 33.9529
