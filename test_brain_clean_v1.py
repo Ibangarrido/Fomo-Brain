@@ -933,6 +933,19 @@ class AuthorizedWriteOffTests(unittest.TestCase):
 
 
 class StopExitAuditRegressionTests(unittest.TestCase):
+    def test_quote_gap_median_even_odd_and_corrupt_legacy(self):
+        self.assertIsNone(brain.median_quote_gap([]))
+        self.assertEqual(brain.median_quote_gap([
+            {"quote_gap_seconds": 20}, {"quote_gap_seconds": 100}]), 60)
+        self.assertEqual(brain.median_quote_gap([
+            {"quote_gap_seconds": 20}, {"quote_gap_seconds": 60},
+            {"quote_gap_seconds": 100}]), 60)
+        self.assertEqual(brain.median_quote_gap([
+            {"quote_gap_seconds": -10}, {"quote_gap_seconds": float("nan")},
+            {"quote_gap_seconds": None}, {"quote_gap_seconds": True},
+            {"quote_gap_seconds": 30}, {"quote_gap_seconds": 90}]), 60)
+
+
     def test_stop_exit_is_explicitly_unverified_and_overshoot_measured(self):
         state = brain.new_state()
         state["cash"] = 90.0
