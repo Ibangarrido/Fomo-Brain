@@ -946,6 +946,9 @@ class StopExitAuditRegressionTests(unittest.TestCase):
         row = state["closed"][-1]
         self.assertEqual(row["exit_reason"], "stop_15pct")
         self.assertAlmostEqual(row["stop_overshoot_pct"], 15.0)
+        self.assertTrue(row["stop_breached"])
+        self.assertTrue(row["stop_overshoot_alert"])
+        self.assertEqual(row["stop_overshoot_severity"], "HIGH")
         self.assertEqual(row["quote_gap_seconds"], 60)
         self.assertEqual(row["route_status"], "UNVERIFIED")
         self.assertEqual(row["execution_type"], "PAPER_INDICATIVE_UNVERIFIED")
