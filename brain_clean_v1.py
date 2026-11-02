@@ -478,12 +478,17 @@ def step(state, samples, now=None):
                     # without changing PAPER entries, stops or risk limits.
                     counts["shadow_three_step_pass" if shadow_three_step_recovery(hist)
                            else "shadow_three_step_would_block"] += 1
+        if not reason and key in state.get("isolated_positions", {}):
+            reason = "user_isolated_unpriced_token"
         if not reason and key in state["positions"]:
             reason = "already_open"
         # Pools are not independent assets: one mint may have several pools.
         # Never double PAPER exposure or re-enter a previously traded token
         # by switching its pool address.
         token = s["address"]
+        if not reason and any(k.split(":", 1)[0] == token
+                              for k in state.get("isolated_positions", {})):
+            reason = "user_isolated_token_other_pool"
         if not reason and any(k.split(":", 1)[0] == token
                               for k in state["positions"]):
             reason = "already_open_token_other_pool"
@@ -681,6 +686,29 @@ def apply_user_paper_write_offs(state):
         print("USER_PAPER_WRITE_OFF", key, "zero recovery; no executed sale", flush=True)
 
 
+PAPER_ISOLATE_SYMBOLS = frozenset(("MARVIN", "REGRET", "PAWS"))
+
+
+def isolate_authorized_paper_positions(state):
+    """Separate unique authorized PAPER holdings without sale, cash or P&L."""
+    positions = state.setdefault("positions", {})
+    isolated = state.setdefault("isolated_positions", {})
+    for symbol in PAPER_ISOLATE_SYMBOLS:
+        matches = [(key, pos) for key, pos in positions.items()
+                   if str(pos.get("symbol", "")).strip().upper() == symbol]
+        if len(matches) != 1:
+            continue  # ambiguous ticker: do not guess contract
+        key, pos = matches[0]
+        if key in isolated:
+            continue
+        isolated[key] = {**pos, "isolation_reason": "user_authorized_unverifiable_exit",
+                         "isolation_status": "UNPRICED_NOT_SOLD",
+                         "realizable_value_eur": None, "route_status": "UNVERIFIED",
+                         "isolated_at": utcnow()}
+        del positions[key]
+    return len(isolated)
+
+
 def execution_sha():
     """Report the checked-out PR head in isolated shadow runs, not the PR merge SHA."""
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
@@ -691,6 +719,7 @@ def execution_sha():
 def main():
     state = load_state()
     apply_user_paper_write_offs(state)
+    isolate_authorized_paper_positions(state)
     save_json(STATE_FILE, state)
     started = time.monotonic()
     previous_run = state.get("last_run", {})
@@ -741,6 +770,9 @@ def main():
             p["units"] * quotes[k]["price"] * 0.99 for k, p in state["positions"].items()), 4)
         report["equity_note"] = "Mark-to-market estimate with 1% exit cost; no guaranteed fills"
     save_json(STATE_FILE, state)
+    report["isolated_positions"] = [{"key": k, "symbol": p.get("symbol"),
+        "status": p.get("isolation_status"), "route_status": "UNVERIFIED",
+        "realizable_value_eur": None} for k, p in state.get("isolated_positions", {}).items()]
     report["polls_completed"] = polls_completed
     report["monitoring_note"] = "Bounded monitoring; GitHub scheduling gaps and stop overshoot remain possible"
     report["aggregate_counts"] = dict(aggregate)
