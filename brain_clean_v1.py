@@ -751,6 +751,22 @@ def learning_summary(state):
                 "excessive_stops_with_prior_quote_audit": len(audited),
                 "excessive_stops_missing_prior_quote_audit": len(excessive) - len(audited),
                 "excessive_stops_realized_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in excessive), 4),
+                "complete_stop_evidence": sum(
+                    "QUOTE_INTERVAL_UNKNOWN" not in stop_loss_diagnosis(x)
+                    and "PRICE_GAP_UNKNOWN" not in stop_loss_diagnosis(x)
+                    and isinstance(x.get("exit_liquidity_usd"), (int, float))
+                    and isinstance(x.get("quote_age_at_poll_seconds"), (int, float))
+                    and x.get("route_status") is not None
+                    for x in stops),
+                "stop_evidence_coverage_pct": (
+                    round(100 * sum(
+                        "QUOTE_INTERVAL_UNKNOWN" not in stop_loss_diagnosis(x)
+                        and "PRICE_GAP_UNKNOWN" not in stop_loss_diagnosis(x)
+                        and isinstance(x.get("exit_liquidity_usd"), (int, float))
+                        and isinstance(x.get("quote_age_at_poll_seconds"), (int, float))
+                        and x.get("route_status") is not None
+                        for x in stops) / len(stops), 2)
+                    if stops else None),
                 "verified_stop_fills": None,
                 "classified_high": sum(x.get("stop_overshoot_severity") == "HIGH" for x in stops),
                 "classified_severe": sum(x.get("stop_overshoot_severity") == "SEVERE" for x in stops),
