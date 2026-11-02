@@ -931,6 +931,31 @@ class AuthorizedWriteOffTests(unittest.TestCase):
         self.assertEqual(restored["closed"][0], {"key": "prior:pool", "pnl_eur": 2})
 
 
+
+class StopExitAuditRegressionTests(unittest.TestCase):
+    def test_stop_exit_is_explicitly_unverified_and_overshoot_measured(self):
+        state = brain.new_state()
+        state["cash"] = 90.0
+        state["positions"]["mint:pool"] = {
+            "key": "mint:pool", "symbol": "TEST", "units": 10.0,
+            "entry_price": 1.0, "cost": 10.0,
+        }
+        state["history"]["mint:pool"] = [sample(100000, 1000, price=1.0)]
+        report = brain.step(state, [sample(70000, 1060, price=.7)], 1060)
+        self.assertEqual(report["counts"].get("paper_exit"), 1)
+        row = state["closed"][-1]
+        self.assertEqual(row["exit_reason"], "stop_15pct")
+        self.assertAlmostEqual(row["stop_overshoot_pct"], 15.0)
+        self.assertEqual(row["quote_gap_seconds"], 60)
+        self.assertEqual(row["route_status"], "UNVERIFIED")
+        self.assertEqual(row["execution_type"], "PAPER_INDICATIVE_UNVERIFIED")
+        self.assertFalse(row["execution_verified"])
+        self.assertIsNone(row["realizable_proceeds_eur"])
+        self.assertEqual(row["exit_liquidity_usd"], 15000)
+        self.assertAlmostEqual(state["cash"], 96.93)
+        self.assertEqual(state["positions"], {})
+        self.assertIsNone(brain.learning_summary(state)["stop_overshoot_audit"]["verified_stop_fills"])
+
 if __name__ == "__main__":
     unittest.main()
 
