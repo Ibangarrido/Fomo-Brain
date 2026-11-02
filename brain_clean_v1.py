@@ -330,8 +330,11 @@ def step(state, samples, now=None):
             counts["isolated_quote_missing"] += 1
             continue
         ts = quote.get("ts")
-        if not isinstance(ts, (int, float)) or ts < audit.get("last_observed_ts", float("-inf")):
-            audit["quote_status"] = "OUT_OF_ORDER_OR_UNTIMED"
+        if (not isinstance(ts, (int, float)) or isinstance(ts, bool)
+                or not float("-inf") < ts < float("inf")
+                or ts > now + 60 or ts < now - MAX_AGE_SECONDS
+                or ts < audit.get("last_observed_ts", float("-inf"))):
+            audit["quote_status"] = "STALE_FUTURE_OUT_OF_ORDER_OR_UNTIMED"
             counts["isolated_quote_stale"] += 1
             continue
         fingerprint = [quote["price"], quote["liquidity"], quote.get("volume1h")]
