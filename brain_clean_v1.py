@@ -672,6 +672,19 @@ def select_pairs(raw, positions):
     return list(selected.values())
 
 
+def median_quote_gap(stops):
+    """Median of nonnegative finite gaps; missing or corrupt legacy data stays unknown."""
+    from math import isfinite
+    gaps = sorted(float(x["quote_gap_seconds"]) for x in stops
+                  if isinstance(x.get("quote_gap_seconds"), (int, float))
+                  and not isinstance(x.get("quote_gap_seconds"), bool)
+                  and isfinite(x["quote_gap_seconds"]) and x["quote_gap_seconds"] >= 0)
+    if not gaps:
+        return None
+    mid = len(gaps) // 2
+    return gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2
+
+
 def learning_summary(state):
     """Descriptive evidence from retained validated rows, never an auto-tuner."""
     groups = {}
@@ -717,13 +730,7 @@ def learning_summary(state):
                 "classification_missing_legacy": sum(
                     x.get("stop_overshoot_severity") not in ("NONE", "HIGH", "SEVERE")
                     for x in stops),
-                "median_quote_gap_seconds": (
-                    sorted(x["quote_gap_seconds"] for x in stops
-                           if isinstance(x.get("quote_gap_seconds"), (int, float)))[
-                        sum(isinstance(x.get("quote_gap_seconds"), (int, float))
-                            for x in stops) // 2]
-                    if any(isinstance(x.get("quote_gap_seconds"), (int, float))
-                           for x in stops) else None),
+                "median_quote_gap_seconds": median_quote_gap(stops),
                 "unverified_stop_exits": sum(
                     x.get("execution_verified") is not True for x in stops),
                 "note": "Observed PAPER prices, not guaranteed executable stop fills; legacy rows may lack quote history",
