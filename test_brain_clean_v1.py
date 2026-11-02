@@ -11,6 +11,31 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_authorized_isolation_preserves_cash_and_is_idempotent(self):
+        state = brain.new_state()
+        state["cash"] = 33.9529
+        for symbol in ("MARVIN", "REGRET", "paws"):
+            key = symbol.lower() + ":pool"
+            state["positions"][key] = {"key": key, "symbol": symbol,
+                                       "cost": 10, "units": 100}
+        before_closed = list(state["closed"])
+        self.assertEqual(brain.isolate_authorized_paper_positions(state), 3)
+        self.assertEqual(state["positions"], {})
+        self.assertEqual(state["cash"], 33.9529)
+        self.assertEqual(state["closed"], before_closed)
+        self.assertEqual(brain.isolate_authorized_paper_positions(state), 3)
+        self.assertEqual(len(state["isolated_positions"]), 3)
+        self.assertTrue(all(p["realizable_value_eur"] is None
+                            for p in state["isolated_positions"].values()))
+
+    def test_isolation_skips_ambiguous_ticker(self):
+        state = brain.new_state()
+        for suffix in ("one", "two"):
+            state["positions"][suffix + ":pool"] = {
+                "key": suffix + ":pool", "symbol": "MARVIN", "cost": 10}
+        self.assertEqual(brain.isolate_authorized_paper_positions(state), 0)
+        self.assertEqual(len(state["positions"]), 2)
+
     def test_user_muskx_veto_across_pools_and_symbols(self):
         for pool in ("one", "two"):
             state = brain.new_state()
