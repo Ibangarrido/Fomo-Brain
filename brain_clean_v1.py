@@ -337,6 +337,20 @@ def step(state, samples, now=None):
             audit["route_status"] = "UNVERIFIED"
             counts["position_unpriced_hold"] += 1
             continue
+        # SHADOW only: a new retrieval timestamp does not prove the provider
+        # published a new market snapshot. Track unchanged quote fields.
+        if s["ts"] > audit.get("last_observed_ts", float("-inf")):
+            fingerprint = [s["price"], s["liquidity"], s.get("volume1h")]
+            if audit.get("last_snapshot_values") == fingerprint:
+                audit["consecutive_identical_snapshots"] = (
+                    audit.get("consecutive_identical_snapshots", 0) + 1)
+                counts["shadow_unchanged_snapshot_observed"] += 1
+            else:
+                audit["last_snapshot_values"] = fingerprint
+                audit["last_snapshot_changed_ts"] = s["ts"]
+                audit["consecutive_identical_snapshots"] = 0
+            audit["snapshot_unchanged_seconds"] = round(
+                max(0, s["ts"] - audit["last_snapshot_changed_ts"]), 2)
         if s["liquidity"] < MIN_LIQ:
             # SHADOW only: observed pool liquidity is not an executable swap route.
             audit = pos.setdefault("shadow_exit_audit", {})
@@ -526,6 +540,10 @@ def step(state, samples, now=None):
                  "quote_status": p.get("shadow_exit_audit", {}).get("quote_status", "UNKNOWN"),
                  "first_liquidity_recovery_ts": p.get("shadow_exit_audit", {}).get("first_liquidity_recovery_ts"),
                  "route_status": "UNVERIFIED",
+                 "provider_freshness_verified": False,
+                 "snapshot_unchanged_seconds": p.get("shadow_exit_audit", {}).get("snapshot_unchanged_seconds"),
+                 "consecutive_identical_snapshots": p.get("shadow_exit_audit", {}).get("consecutive_identical_snapshots", 0),
+                 "last_snapshot_changed_ts": p.get("shadow_exit_audit", {}).get("last_snapshot_changed_ts"),
                  "seconds_to_first_low_liquidity":
                     round(p["shadow_exit_audit"]["first_low_liquidity_ts"] - p["entry_quote_ts"], 2)
                     if isinstance(p.get("entry_quote_ts"), (int, float)) and
