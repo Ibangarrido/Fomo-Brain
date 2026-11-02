@@ -352,6 +352,21 @@ def step(state, samples, now=None):
     # Existing positions: do not invent an exit when market quotes are missing.
     for key, pos in list(state["positions"].items()):
         s = quotes.get(key)
+        # A fetch timestamp alone is not proof of a fresh provider quote.
+        # Reject malformed, future or aged observations before PAPER exit logic.
+        if s is not None:
+            observed_ts = s.get("ts")
+            if (not isinstance(observed_ts, (int, float))
+                    or isinstance(observed_ts, bool)
+                    or not float("-inf") < observed_ts < float("inf")
+                    or observed_ts > now + 60
+                    or observed_ts < now - MAX_AGE_SECONDS):
+                pos.setdefault("shadow_exit_audit", {}).update({
+                    "quote_status": "INVALID_STALE_OR_FUTURE_TIMESTAMP",
+                    "route_status": "UNVERIFIED",
+                })
+                counts["position_invalid_timestamp_hold"] += 1
+                continue
         # SHADOW freshness must never regress on an out-of-order quote.
         # Missing data is a monitoring gap, not evidence of a new price.
         audit = pos.setdefault("shadow_exit_audit", {})
@@ -434,6 +449,11 @@ def step(state, samples, now=None):
                                     "exit_quote_ts": s["ts"],
                                     "quote_gap_seconds": quote_gap_seconds,
                                     "quote_jump_pct": quote_jump_pct,
+                                    "execution_type": "PAPER_INDICATIVE_UNVERIFIED",
+                                    "route_status": "UNVERIFIED",
+                                    "exit_liquidity_usd": s["liquidity"],
+                                    "stop_threshold_pct": -15.0,
+                                    "quote_age_at_poll_seconds": round(max(0, now - s["ts"]), 2),
                                     "exit_reason": "stop_15pct" if move <= -0.15 else "target_25pct"})
             del state["positions"][key]
             counts["paper_exit"] += 1
