@@ -933,6 +933,25 @@ class AuthorizedWriteOffTests(unittest.TestCase):
 
 
 class StopExitAuditRegressionTests(unittest.TestCase):
+    def test_stop_evidence_coverage_rejects_nonfinite_values(self):
+        valid = {"exit_reason": "stop_15pct", "quote_gap_seconds": 60,
+                 "quote_jump_pct": -20, "exit_liquidity_usd": 15000,
+                 "quote_age_at_poll_seconds": 0, "route_status": "UNVERIFIED"}
+        self.assertTrue(brain.complete_stop_evidence(valid))
+        for field, value in (("exit_liquidity_usd", float("nan")),
+                             ("quote_age_at_poll_seconds", float("inf")),
+                             ("exit_liquidity_usd", -1),
+                             ("quote_age_at_poll_seconds", True),
+                             ("route_status", "")):
+            bad = dict(valid)
+            bad[field] = value
+            self.assertFalse(brain.complete_stop_evidence(bad), field)
+        state = brain.new_state()
+        state["closed"] = [valid, {**valid, "exit_liquidity_usd": float("nan")}]
+        audit = brain.learning_summary(state)["stop_overshoot_audit"]
+        self.assertEqual(audit["complete_stop_evidence"], 1)
+        self.assertEqual(audit["stop_evidence_coverage_pct"], 50.0)
+
     def test_stop_diagnosis_separates_evidence_from_unknowns(self):
         observed = {"exit_reason": "stop_15pct", "quote_gap_seconds": 120,
                     "quote_jump_pct": -25, "exit_liquidity_usd": 2000,
