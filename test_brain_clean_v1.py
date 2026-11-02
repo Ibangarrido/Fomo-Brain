@@ -28,6 +28,45 @@ class CleanPaperTests(unittest.TestCase):
         self.assertTrue(all(p["realizable_value_eur"] is None
                             for p in state["isolated_positions"].values()))
 
+    def test_isolated_holding_keeps_exact_pool_and_quote_monitoring(self):
+        state = brain.new_state()
+        state["cash"] = 33.9529
+        key = "mint:originalpool"
+        state["positions"][key] = {"key": key, "symbol": "MARVIN",
+                                    "cost": 10, "units": 100}
+        brain.isolate_authorized_paper_positions(state)
+        self.assertIn("mint", brain.tracking_priority(state, now=10000))
+        pool_a = {"baseToken": {"address": "mint"}, "pairAddress": "originalpool",
+                  "liquidity": {"usd": 2000}}
+        pool_b = {"baseToken": {"address": "mint"}, "pairAddress": "newpool",
+                  "liquidity": {"usd": 15000}}
+        selected = brain.select_pairs([pool_a, pool_b],
+                                       {**state["isolated_positions"], **state["positions"]})
+        self.assertEqual({x["pairAddress"] for x in selected},
+                         {"originalpool", "newpool"})
+        q = sample(1900, 10000, key=key, price=0.00000194)
+        q["address"], q["pool"], q["symbol"] = "mint", "originalpool", "MARVIN"
+        q["liquidity"] = 2000
+        brain.step(state, [q], now=10000)
+        audit = state["isolated_positions"][key]["monitoring_audit"]
+        self.assertEqual(audit["quote_status"], "OBSERVED_INDICATIVE_NOT_EXECUTABLE")
+        self.assertEqual(audit["liquidity_usd"], 2000)
+        self.assertEqual(state["cash"], 33.9529)
+        self.assertEqual(state["closed"], [])
+        self.assertEqual(state["positions"], {})
+        self.assertIsNone(state["isolated_positions"][key]["realizable_value_eur"])
+
+    def test_isolated_missing_quote_remains_unknown_not_zero(self):
+        state = brain.new_state()
+        state["positions"]["mint:pool"] = {"key": "mint:pool", "symbol": "paws",
+                                              "cost": 10, "units": 100}
+        brain.isolate_authorized_paper_positions(state)
+        brain.step(state, [], now=10000)
+        self.assertEqual(state["isolated_positions"]["mint:pool"]
+                         ["monitoring_audit"]["quote_status"], "MISSING_OR_INVALID")
+        self.assertEqual(state["cash"], 100)
+        self.assertEqual(state["closed"], [])
+
     def test_isolation_skips_ambiguous_ticker(self):
         state = brain.new_state()
         for suffix in ("one", "two"):
