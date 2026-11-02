@@ -244,6 +244,34 @@ def step(state, samples, now=None):
     counts = Counter()
     decisions = []
     quotes = {s["key"]: s for s in samples}
+    # Isolated holdings remain tracked by exact pool, without executable valuation.
+    for key, pos in state.get("isolated_positions", {}).items():
+        audit = pos.setdefault("monitoring_audit", {})
+        quote = quotes.get(key)
+        if quote is None or not quote.get("price") or not quote.get("liquidity"):
+            audit["quote_status"] = "MISSING_OR_INVALID"
+            counts["isolated_quote_missing"] += 1
+            continue
+        ts = quote.get("ts")
+        if (not isinstance(ts, (int, float)) or isinstance(ts, bool)
+                or not float("-inf") < ts < float("inf")
+                or ts > now + 60 or ts < now - MAX_AGE_SECONDS
+                or ts < audit.get("last_observed_ts", float("-inf"))):
+            audit["quote_status"] = "STALE_FUTURE_OUT_OF_ORDER_OR_UNTIMED"
+            counts["isolated_quote_stale"] += 1
+            continue
+        fingerprint = [quote["price"], quote["liquidity"], quote.get("volume1h")]
+        if fingerprint != audit.get("last_snapshot_values"):
+            audit["last_snapshot_values"] = fingerprint
+            audit["last_snapshot_changed_ts"] = ts
+        audit.update({
+            "quote_status": "OBSERVED_INDICATIVE_NOT_EXECUTABLE",
+            "last_observed_ts": ts, "price_usd": quote["price"],
+            "liquidity_usd": quote["liquidity"],
+            "volume1h_usd": quote.get("volume1h"),
+            "snapshot_unchanged_seconds": round(max(0, ts - audit["last_snapshot_changed_ts"]), 2),
+        })
+        counts["isolated_quote_observed"] += 1
     # Existing positions: do not invent an exit when market quotes are missing.
     for key, pos in list(state["positions"].items()):
         s = quotes.get(key)
