@@ -14,8 +14,10 @@ class CleanPaperTests(unittest.TestCase):
     def test_isolated_quote_rejects_stale_and_future_observations(self):
         state = brain.new_state()
         state["isolated_positions"] = {"mint:pool": {"key": "mint:pool", "symbol": "MARVIN"}}
-        sample = {"key": "mint:pool", "price": 0.00001, "liquidity": 1000,
-                  "volume1h": 0, "ts": 1000}
+        sample = {"key": "mint:pool", "address": "mint", "pool": "pool",
+                  "symbol": "MARVIN", "price": 0.00001, "cap": 50000,
+                  "liquidity": 1000, "volume1h": 0, "buys5m": 0,
+                  "sells5m": 0, "age_seconds": 3600, "ts": 1000}
         brain.step(state, [sample], now=1000 + brain.MAX_AGE_SECONDS + 1)
         audit = state["isolated_positions"]["mint:pool"]["monitoring_audit"]
         self.assertEqual(audit["quote_status"], "STALE_FUTURE_OUT_OF_ORDER_OR_UNTIMED")
