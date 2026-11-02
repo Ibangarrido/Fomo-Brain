@@ -56,6 +56,19 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(state["positions"], {})
         self.assertIsNone(state["isolated_positions"][key]["realizable_value_eur"])
 
+    def test_isolated_assets_prevent_false_total_equity(self):
+        state = brain.new_state()
+        state["isolated_positions"] = {"mint:pool": {
+            "symbol": "MARVIN", "realizable_value_eur": None}}
+        report = {"equity_eur": 32.5327, "equity_note": "indicative"}
+        brain.mask_unrealizable_total_equity(report, state)
+        self.assertIsNone(report["equity_eur"])
+        self.assertEqual(report["active_book_indicative_eur"], 32.5327)
+        self.assertIn("TOTAL_UNKNOWN", report["equity_note"])
+        control_report = {"equity_eur": 100.0}
+        brain.mask_unrealizable_total_equity(control_report, brain.new_state())
+        self.assertEqual(control_report["equity_eur"], 100.0)
+
     def test_isolated_missing_quote_remains_unknown_not_zero(self):
         state = brain.new_state()
         state["positions"]["mint:pool"] = {"key": "mint:pool", "symbol": "paws",
