@@ -949,6 +949,12 @@ class StopExitAuditRegressionTests(unittest.TestCase):
         self.assertTrue(row["stop_breached"])
         self.assertTrue(row["stop_overshoot_alert"])
         self.assertEqual(row["stop_overshoot_severity"], "HIGH")
+        audit = brain.learning_summary(state)["stop_overshoot_audit"]
+        self.assertEqual(audit["classified_high"], 1)
+        self.assertEqual(audit["classified_severe"], 0)
+        self.assertEqual(audit["classification_missing_legacy"], 0)
+        self.assertEqual(audit["unverified_stop_exits"], 1)
+        self.assertEqual(audit["median_quote_gap_seconds"], 60)
         self.assertEqual(row["quote_gap_seconds"], 60)
         self.assertEqual(row["route_status"], "UNVERIFIED")
         self.assertEqual(row["execution_type"], "PAPER_INDICATIVE_UNVERIFIED")
