@@ -712,6 +712,20 @@ def stop_loss_diagnosis(row):
     return flags
 
 
+def complete_stop_evidence(row):
+    """Only finite, nonnegative numeric fields count as auditable evidence."""
+    flags = stop_loss_diagnosis(row)
+    if flags is None or "QUOTE_INTERVAL_UNKNOWN" in flags or "PRICE_GAP_UNKNOWN" in flags:
+        return False
+    for field in ("exit_liquidity_usd", "quote_age_at_poll_seconds"):
+        value = row.get(field)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        if not math.isfinite(value) or value < 0:
+            return False
+    return isinstance(row.get("route_status"), str) and bool(row["route_status"].strip())
+
+
 def learning_summary(state):
     """Descriptive evidence from retained validated rows, never an auto-tuner."""
     groups = {}
@@ -751,21 +765,9 @@ def learning_summary(state):
                 "excessive_stops_with_prior_quote_audit": len(audited),
                 "excessive_stops_missing_prior_quote_audit": len(excessive) - len(audited),
                 "excessive_stops_realized_pnl_eur": round(sum(x.get("pnl_eur", 0) for x in excessive), 4),
-                "complete_stop_evidence": sum(
-                    "QUOTE_INTERVAL_UNKNOWN" not in stop_loss_diagnosis(x)
-                    and "PRICE_GAP_UNKNOWN" not in stop_loss_diagnosis(x)
-                    and isinstance(x.get("exit_liquidity_usd"), (int, float))
-                    and isinstance(x.get("quote_age_at_poll_seconds"), (int, float))
-                    and x.get("route_status") is not None
-                    for x in stops),
+                "complete_stop_evidence": sum(complete_stop_evidence(x) for x in stops),
                 "stop_evidence_coverage_pct": (
-                    round(100 * sum(
-                        "QUOTE_INTERVAL_UNKNOWN" not in stop_loss_diagnosis(x)
-                        and "PRICE_GAP_UNKNOWN" not in stop_loss_diagnosis(x)
-                        and isinstance(x.get("exit_liquidity_usd"), (int, float))
-                        and isinstance(x.get("quote_age_at_poll_seconds"), (int, float))
-                        and x.get("route_status") is not None
-                        for x in stops) / len(stops), 2)
+                    round(100 * sum(complete_stop_evidence(x) for x in stops) / len(stops), 2)
                     if stops else None),
                 "verified_stop_fills": None,
                 "classified_high": sum(x.get("stop_overshoot_severity") == "HIGH" for x in stops),
