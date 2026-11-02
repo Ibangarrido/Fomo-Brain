@@ -987,6 +987,12 @@ class StopExitAuditRegressionTests(unittest.TestCase):
         self.assertEqual(audit["classification_missing_legacy"], 0)
         self.assertEqual(audit["unverified_stop_exits"], 1)
         self.assertEqual(audit["median_quote_gap_seconds"], 60)
+        self.assertEqual(audit["complete_stop_evidence"], 1)
+        self.assertEqual(audit["stop_evidence_coverage_pct"], 100.0)
+        state["closed"].append({"exit_reason": "stop_15pct", "observed_move_pct": -29})
+        legacy = brain.learning_summary(state)["stop_overshoot_audit"]
+        self.assertEqual(legacy["complete_stop_evidence"], 1)
+        self.assertEqual(legacy["stop_evidence_coverage_pct"], 50.0)
         self.assertEqual(row["quote_gap_seconds"], 60)
         self.assertEqual(row["route_status"], "UNVERIFIED")
         self.assertEqual(row["execution_type"], "PAPER_INDICATIVE_UNVERIFIED")
