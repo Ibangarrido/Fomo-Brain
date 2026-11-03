@@ -44,5 +44,27 @@ class ArtifactAuditTests(unittest.TestCase):
         self.assertEqual(result["audit"]["positions"]["REGRET"]["missing"],
                          ["quote_timestamp", "liquidity_usd", "route_status", "retention_reason"])
 
+    def test_retained_quote_is_not_presented_as_fresh_or_executable(self):
+        from clean_v1_artifact_audit import audit_isolated_ledger
+        state = {"isolated_positions": {"mint:pool": {
+            "symbol": "paws", "isolation_reason": "NO_VERIFIED_EXIT",
+            "monitoring_audit": {"last_observed_ts": 1700000000,
+                                 "quote_status": "MISSING_OR_INVALID",
+                                 "price_usd": 0.01, "liquidity_usd": 2500}}}}
+        row = audit_isolated_ledger(state)["records"]["paws"]
+        self.assertEqual(row["freshness"], "STALE_OR_UNVERIFIED")
+        self.assertFalse(row["price_is_executable"])
+        self.assertIsNone(row["realizable_value_eur"])
+        self.assertGreater(row["quote_age_seconds"], 120)
+
+    def test_extreme_timestamp_does_not_crash_audit(self):
+        from clean_v1_artifact_audit import audit_isolated_ledger
+        state = {"isolated_positions": {"mint:pool": {
+            "symbol": "MARVIN",
+            "monitoring_audit": {"last_observed_ts": 10**99}}}}
+        row = audit_isolated_ledger(state)["records"]["MARVIN"]
+        self.assertIsNone(row["quote_timestamp"])
+        self.assertEqual(row["freshness"], "STALE_OR_UNVERIFIED")
+
 if __name__ == "__main__":
     unittest.main()
