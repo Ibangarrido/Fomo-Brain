@@ -4,8 +4,10 @@ on:
     paths:
       - brain_clean_v1.py
       - test_brain_clean_v1.py
+      - clean_v1_artifact_audit.py
+      - test_clean_v1_artifact_audit.py
       - gmgn_shadow_observer.py
-      - test_gmgn_shadow_observer.py
+      - test_gmgn_shadow_observer.py test_clean_v1_artifact_audit.py
       - clean_v1_restore.py
       - test_clean_v1_restore.py
       - .github/workflows/brain_clean_v1_tests.yml
