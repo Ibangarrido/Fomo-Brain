@@ -4,8 +4,10 @@ on:
     paths:
       - brain_clean_v1.py
       - test_brain_clean_v1.py
+      - surgz_whale_paper.py
+      - test_surgz_whale_paper.py
       - solana_float_watch.py
-      - test_solana_float_watch.py
+      - test_solana_float_watch.py test_surgz_whale_paper.py
       - clean_v1_artifact_audit.py
       - test_clean_v1_artifact_audit.py
       - gmgn_shadow_observer.py
