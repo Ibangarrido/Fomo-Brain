@@ -914,6 +914,8 @@ def main():
         "status": p.get("isolation_status"), "route_status": "UNVERIFIED",
         "realizable_value_eur": None, "monitoring": p.get("monitoring_audit", {})}
         for k, p in state.get("isolated_positions", {}).items()]
+    from clean_v1_artifact_audit import audit_isolated_ledger
+    report["isolated_coverage_audit"] = audit_isolated_ledger(state)
     report["polls_completed"] = polls_completed
     report["monitoring_note"] = "Bounded monitoring; GitHub scheduling gaps and stop overshoot remain possible"
     report["aggregate_counts"] = dict(aggregate)
