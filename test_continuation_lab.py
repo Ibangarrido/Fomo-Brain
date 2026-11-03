@@ -30,6 +30,28 @@ class ContinuationTests(unittest.TestCase):
         token=brain.analizar_par(p)
         old=dict(token,received_at=(datetime.now(timezone.utc)-timedelta(seconds=60)).isoformat(),price=1.34)
         return p,token,old
+    def test_fresh_v2_bootstraps_once_without_touching_legacy_wallets(self):
+        lab.bootstrap()
+        legacy = self.read(lab.ARMS['control'][0])
+        self.assertFalse(os.path.exists(lab.FRESH_V2_FILE))
+        self.assertFalse(os.path.exists(lab.FRESH_V2_MARKER))
+        self.assertTrue(lab.bootstrap_fresh_v2())
+        self.assertFalse(lab.bootstrap_fresh_v2())
+        fresh = self.read(lab.FRESH_V2_FILE)
+        self.assertEqual(fresh['cash'], 100.0)
+        self.assertEqual(fresh['positions'], [])
+        self.assertEqual(fresh['continuation_experiment'],
+                         {'version': 'continuation-r1', 'arm': 'fresh_v2'})
+        self.assertEqual(self.read(lab.ARMS['control'][0]), legacy)
+
+    def test_fresh_v2_partial_restore_refuses_reset(self):
+        with open(lab.FRESH_V2_FILE, 'w') as handle:
+            json.dump({'cash': 87, 'positions': [{'symbol': 'TEST'}]}, handle)
+        with self.assertRaisesRegex(ValueError, 'partial restore'):
+            lab.bootstrap_fresh_v2()
+        self.assertEqual(self.read(lab.FRESH_V2_FILE)['cash'], 87)
+        self.assertFalse(os.path.exists(lab.FRESH_V2_MARKER))
+
     def test_late_entry_guard_rejects_over_150_percent_without_changing_policy(self):
         p, token, _ = self.candidate()
         self.assertIsNotNone(token)
@@ -176,7 +198,8 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(len(calls),3)
         calls.clear()
         with contextlib.redirect_stdout(io.StringIO()):lab.run([],simulator)
-        self.assertEqual(len(calls),6)
+        self.assertEqual(len(calls),7)  # Three legacy, two pattern, shallow and isolated Fresh V2.
+        self.assertIn((lab.FRESH_V2_FILE, lab.guard), calls)
         self.assertIn((lab.PATTERN_ARMS['pattern_breakout'][0],lab.breakout_guard),calls)
         self.assertIn((lab.PATTERN_ARMS['pattern_pullback'][0],lab.gradual_guard),calls)
     def test_prefetch_uses_injected_running_engine_before_wallet_decisions(self):
