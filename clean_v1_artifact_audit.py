@@ -3,6 +3,7 @@
 No ledger mutation, pricing, or trading. Missing fields are reported, never inferred.
 """
 import math
+from datetime import datetime, timezone
 
 WATCH = ("MARVIN", "REGRET", "paws")
 FIELDS = ("quote_timestamp", "liquidity_usd", "route_status", "retention_reason")
@@ -41,7 +42,6 @@ def audit_state(records):
 
 def audit_isolated_ledger(state):
     """Normalize exact-symbol isolated holdings without asserting exits or prices."""
-    from datetime import datetime, timezone
     records = {}
     for pos in state.get("isolated_positions", {}).values():
         symbol = str(pos.get("symbol", "")).strip()
@@ -59,11 +59,19 @@ def audit_isolated_ledger(state):
         monitoring = pos.get("monitoring_audit") or {}
         ts = monitoring.get("last_observed_ts")
         quote_ts = (datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-                    if _number(ts) and ts > 0 else None)
+                    if _number(ts) and 0 < ts < 253402300800 else None)
+        quote_status = monitoring.get("quote_status", "NOT_OBSERVED")
+        is_current = quote_status == "OBSERVED_INDICATIVE_NOT_EXECUTABLE"
+        # Retained snapshots remain historical even if the last polling cycle failed.
+        quote_age = None
+        if quote_ts:
+            quote_age = max(0, (datetime.now(timezone.utc) - datetime.fromtimestamp(ts, timezone.utc)).total_seconds())
         liquidity = monitoring.get("liquidity_usd")
         records[symbol] = {
             "status": pos.get("isolation_status", "UNKNOWN"),
-            "quote_status": monitoring.get("quote_status", "NOT_OBSERVED"),
+            "quote_status": quote_status,
+            "quote_age_seconds": round(quote_age, 1) if quote_age is not None else None,
+            "freshness": "CURRENT_POLL_INDICATIVE" if is_current and quote_age is not None and quote_age <= 120 else "STALE_OR_UNVERIFIED",
             "quote_timestamp": quote_ts,
             "quote_timestamp_missing_reason": None if quote_ts else "NO_VALID_OBSERVATION",
             "liquidity_usd": liquidity if _number(liquidity) else None,
@@ -73,6 +81,7 @@ def audit_isolated_ledger(state):
             "retention_reason_missing_reason": None if pos.get("isolation_reason") else "NOT_RECORDED",
             "execution_verified": False, "realizable_value_eur": None,
             "indicative_price_usd": monitoring.get("price_usd"),
+            "price_is_executable": False,
         }
     return {"audit": audit_state(records), "records": records,
             "note": "Coverage means documented or explicitly unknown; not verified exit liquidity"}
