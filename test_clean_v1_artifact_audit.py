@@ -30,5 +30,19 @@ class ArtifactAuditTests(unittest.TestCase):
         self.assertEqual(result["coverage_pct"], 100)
         self.assertEqual(result["positions"]["paws"]["realizable_value_eur"], 2.5)
 
+    def test_ledger_normalization_keeps_unverified_exit_unknown(self):
+        from clean_v1_artifact_audit import audit_isolated_ledger
+        state = {"isolated_positions": {
+            "mint:pool": {"symbol": "MARVIN", "isolation_status": "UNPRICED_NOT_SOLD",
+                          "isolation_reason": "user_authorized_unverifiable_exit",
+                          "monitoring_audit": {"quote_status": "MISSING_OR_INVALID"}}}}
+        result = audit_isolated_ledger(state)
+        self.assertEqual(result["audit"]["coverage_pct"], 33.33)
+        self.assertIsNone(result["records"]["MARVIN"]["quote_timestamp"])
+        self.assertEqual(result["records"]["MARVIN"]["route_status"], "UNVERIFIED")
+        self.assertIsNone(result["audit"]["positions"]["MARVIN"]["realizable_value_eur"])
+        self.assertEqual(result["audit"]["positions"]["REGRET"]["missing"],
+                         ["quote_timestamp", "liquidity_usd", "route_status", "retention_reason"])
+
 if __name__ == "__main__":
     unittest.main()
