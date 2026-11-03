@@ -7,7 +7,7 @@ on:
       - clean_v1_artifact_audit.py
       - test_clean_v1_artifact_audit.py
       - gmgn_shadow_observer.py
-      - test_gmgn_shadow_observer.py test_clean_v1_artifact_audit.py
+      - test_gmgn_shadow_observer.py
       - clean_v1_restore.py
       - test_clean_v1_restore.py
       - .github/workflows/brain_clean_v1_tests.yml
@@ -22,4 +22,4 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_restore.py test_gmgn_shadow_observer.py
+      - run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_restore.py test_gmgn_shadow_observer.py test_clean_v1_artifact_audit.py
