@@ -1,5 +1,6 @@
 name: Clean V1 PR23 PAPER shadow validation
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, reopened, synchronize]
     paths:
@@ -21,18 +22,18 @@ concurrency:
 
 jobs:
   shadow:
-    if: github.event.pull_request.number == 23 && github.event.pull_request.head.repo.full_name == 'Ibangarrido/Fomo-Brain'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.number == 23 && github.event.pull_request.head.repo.full_name == 'Ibangarrido/Fomo-Brain') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/brain-clean-v1')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout exact PR head, not main or merge commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Verify checkout SHA
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
       - uses: actions/setup-python@v5
         with:
@@ -62,12 +63,12 @@ jobs:
       - name: Run PR code on copied PAPER ledger only
         env:
           PYTHONUNBUFFERED: '1'
-          GITHUB_SHA: ${{ github.event.pull_request.head.sha }}
-          CLEAN_SHADOW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          CLEAN_SHADOW_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: python brain_clean_v1.py
       - name: Verify branch provenance and compare balances
         env:
-          CLEAN_SHADOW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CLEAN_SHADOW_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: python clean_v1_shadow.py finalize
       - name: Upload isolated shadow audit (NEVER production artifact name)
         if: always()
