@@ -1,0 +1,17 @@
+name: PAPER2 isolated CI
+on:
+  push:
+    branches: [brain-clean-v1]
+    paths:
+      - '.github/workflows/paper2_ci.yml'
+      - 'brain_clean_v1_paper2_run.py'
+      - 'test_brain_clean_v1_paper2.py'
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest -v test_brain_clean_v1_paper2.py
