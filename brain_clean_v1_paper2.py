@@ -5,6 +5,7 @@ The baseline is a committed immutable seed, not a replacement for existing state
 """
 import copy
 import json
+import math
 from pathlib import Path
 import brain_clean_v1 as brain
 
@@ -36,6 +37,11 @@ def load_existing(path=STATE_FILE):
     state = json.loads(path.read_text(encoding="utf-8"))
     if state.get("portfolio_id") != PORTFOLIO_ID or state.get("version") != 1:
         raise ValueError("Wrong PAPER2 ledger: refusing cross-portfolio import")
+    cash = state.get("cash")
+    if isinstance(cash, bool) or not isinstance(cash, (int, float)) or not math.isfinite(cash) or cash < 0:
+        raise ValueError("Invalid PAPER2 cash: refusing corrupted ledger")
+    if not isinstance(state.get("positions"), dict) or not isinstance(state.get("closed"), list):
+        raise ValueError("Invalid PAPER2 positions/history: refusing corrupted ledger")
     return state
 
 def observe(state, samples, now=None):
