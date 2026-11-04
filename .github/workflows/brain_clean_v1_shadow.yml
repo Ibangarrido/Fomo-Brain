@@ -1,5 +1,13 @@
 name: Clean V1 PR23 PAPER shadow validation
 on:
+  push:
+    branches: [brain-clean-v1]
+    paths:
+      - '.github/workflows/brain_clean_v1_shadow.yml'
+      - 'clean_v1_shadow.py'
+      - 'test_clean_v1_shadow.py'
+      - 'clean_v1_artifact_audit.py'
+      - 'test_clean_v1_artifact_audit.py'
   workflow_dispatch:
   pull_request:
     types: [opened, reopened, synchronize]
@@ -24,7 +32,7 @@ concurrency:
 
 jobs:
   shadow:
-    if: (github.event_name == 'pull_request' && github.event.pull_request.number == 23 && github.event.pull_request.head.repo.full_name == 'Ibangarrido/Fomo-Brain') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/brain-clean-v1')
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/brain-clean-v1') || (github.event_name == 'pull_request' && github.event.pull_request.number == 23 && github.event.pull_request.head.repo.full_name == 'Ibangarrido/Fomo-Brain') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/brain-clean-v1')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
