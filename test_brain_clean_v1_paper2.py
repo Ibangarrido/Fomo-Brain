@@ -79,6 +79,18 @@ class SecondPaperLedgerTests(unittest.TestCase):
         workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_bootstrap.yml").read_text(encoding="utf-8")
         self.assertIn("concurrency:\n  group: brain-clean-v1-paper2-bootstrap\n  cancel-in-progress: false", workflow)
 
+    def test_ci_covers_paper2_ledger_runner_and_bootstrap_changes(self):
+        workflow = (Path(__file__).parent / ".github/workflows/paper2_ci.yml").read_text(encoding="utf-8")
+        for changed_path in (
+            ".github/workflows/paper2_ci.yml",
+            ".github/workflows/brain_clean_v1_paper2_bootstrap.yml",
+            "brain_clean_v1_paper2.py",
+            "brain_clean_v1_paper2_run.py",
+            "test_brain_clean_v1_paper2.py",
+        ):
+            with self.subTest(path=changed_path):
+                self.assertIn(f"- '{changed_path}'", workflow)
+
     def test_runner_rejects_duplicate_and_missing_run_ids(self):
         from brain_clean_v1_paper2_run import verify_run_identity
         verify_run_identity("123", "124")
