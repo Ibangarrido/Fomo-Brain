@@ -63,6 +63,18 @@ class SecondPaperLedgerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 paper2.load_existing(path)
 
+    def test_bootstrap_rejects_expired_and_ambiguous_artifact_history(self):
+        paper2.assert_never_bootstrapped({"total_count": 0, "artifacts": []})
+        for listing in (
+            {"total_count": 1, "artifacts": [{"expired": True}]},
+            {"total_count": 1, "artifacts": []},
+            {"artifacts": []},
+            {"total_count": "0", "artifacts": []},
+            {"total_count": 0, "artifacts": [{"expired": False}]},
+        ):
+            with self.subTest(listing=listing), self.assertRaises((ValueError, FileExistsError)):
+                paper2.assert_never_bootstrapped(listing)
+
     def test_observe_rejects_control_state(self):
         with self.assertRaises(ValueError):
             paper2.observe(brain.new_state(), [])
