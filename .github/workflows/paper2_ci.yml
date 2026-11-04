@@ -4,6 +4,8 @@ on:
     branches: [brain-clean-v1]
     paths:
       - '.github/workflows/paper2_ci.yml'
+      - '.github/workflows/brain_clean_v1_paper2_bootstrap.yml'
+      - 'brain_clean_v1_paper2.py'
       - 'brain_clean_v1_paper2_run.py'
       - 'test_brain_clean_v1_paper2.py'
 jobs:
