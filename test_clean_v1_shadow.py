@@ -71,6 +71,37 @@ class ShadowLedgerSafetyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "provenance mismatch"):
                     shadow.finalize()
 
+    def test_finalize_includes_isolated_audit_without_realizable_value(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            prior = self.valid()["last_run"]
+            state = self.valid()
+            state["last_run"] = {"id": "shadow", "sha": "test-head"}
+            state["isolated_positions"] = {
+                "mint:pool": {"symbol": "MARVIN", "isolation_status": "UNPRICED_NOT_SOLD",
+                              "isolation_reason": "user_authorized_unverifiable_exit"}}
+            (base / "state.json").write_text(json.dumps(state))
+            (base / "baseline.json").write_text(json.dumps(
+                {"previous_run": prior, "cash_eur": 92.7364,
+                 "closed_trades": 2, "open_positions": 0}))
+            (base / "report.json").write_text(json.dumps(
+                {"run": {"sha": "test-head"}, "previous_run": prior}))
+            def reader(path):
+                name = "report.json" if str(path) == "brain_clean_v1_report.json" else Path(path).name
+                return json.loads((base / name).read_text())
+            with patch.object(shadow, "STATE", base / "state.json"), \
+                 patch.object(shadow, "BASELINE", base / "baseline.json"), \
+                 patch.object(shadow, "COMPARISON", base / "comparison.json"), \
+                 patch.object(shadow, "read_json", side_effect=reader), \
+                 patch.dict(os.environ, {"CLEAN_SHADOW_HEAD_SHA": "test-head"}):
+                shadow.finalize()
+            comparison = json.loads((base / "comparison.json").read_text())
+            self.assertEqual(comparison["shadow_cash_eur"], 92.7364)
+            audit = comparison["isolated_position_audit"]
+            self.assertEqual(audit["audit"]["coverage_pct"], 33.33)
+            self.assertIsNone(audit["audit"]["positions"]["MARVIN"]["realizable_value_eur"])
+            self.assertEqual(audit["records"]["MARVIN"]["route_status"], "UNVERIFIED")
+
 
 if __name__ == "__main__":
     unittest.main()
