@@ -18,6 +18,16 @@ def seed():
     state["experiment"] = "independent PAPER 100 EUR; original CONTROL unchanged"
     return state
 
+def initialize_once(path=STATE_FILE):
+    """Explicit one-time local PAPER bootstrap; never overwrite an existing ledger."""
+    target = Path(path)
+    state = seed()
+    # Exclusive creation is atomic: existing state is never reset.
+    with target.open("x", encoding="utf-8") as handle:
+        json.dump(state, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    return state
+
+
 def load_existing(path=STATE_FILE):
     """Fail closed: no silent reset of portfolio 2 after its first run."""
     path = Path(path)
