@@ -8,6 +8,7 @@ import math
 import os
 import sys
 from pathlib import Path
+from clean_v1_artifact_audit import audit_isolated_ledger
 
 STATE = Path("brain_clean_v1_state.json")
 BASELINE = Path("brain_clean_v1_shadow_baseline.json")
@@ -54,7 +55,9 @@ def finalize():
         raise ValueError("Shadow provenance mismatch: wrong code revision")
     if report.get("previous_run", {}).get("id") != baseline["previous_run"]["id"]:
         raise ValueError("Shadow restored the wrong baseline")
+    isolated_audit = audit_isolated_ledger(state)
     result = {"source": "PR shadow clone of main PAPER ledger, NOT main state",
+              "isolated_position_audit": isolated_audit,
               "branch_head_sha": expected, "baseline": baseline,
               "shadow_cash_eur": state["cash"], "shadow_open_positions": len(state["positions"]),
               "shadow_closed_trades": len(state["closed"]), "shadow_report": report}
@@ -62,7 +65,7 @@ def finalize():
     print("CLEAN_SHADOW_COMPARISON " + json.dumps({
         "baseline_cash_eur": baseline["cash_eur"], "shadow_cash_eur": state["cash"],
         "baseline_closed": baseline["closed_trades"], "shadow_closed": len(state["closed"]),
-        "sha": expected}, sort_keys=True))
+        "sha": expected, "isolated_audit_coverage_pct": isolated_audit["audit"]["coverage_pct"]}, sort_keys=True))
 
 
 if __name__ == "__main__":
