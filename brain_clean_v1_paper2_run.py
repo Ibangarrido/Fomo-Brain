@@ -6,12 +6,19 @@ import brain_clean_v1_paper2 as paper2
 
 REPORT_FILE = "brain_clean_v1_paper2_report.json"
 
+def verify_run_identity(source_run, current_run):
+    """Never replay an already persisted PAPER2 run or accept absent run IDs."""
+    if not source_run or not current_run:
+        raise RuntimeError("Missing PAPER2 source/current run ID")
+    if str(source_run) == str(current_run):
+        raise RuntimeError("PAPER2 replay detected: source and current run are identical")
+
+
 def run():
     state = paper2.load_existing()
     previous = state.get("last_run")
     expected = os.environ.get("PAPER2_SOURCE_RUN")
-    if not expected:
-        raise RuntimeError("Missing PAPER2 artifact provenance")
+    verify_run_identity(expected, os.environ.get("GITHUB_RUN_ID"))
     if previous:
         if str(previous.get("id")) != expected:
             raise RuntimeError("PAPER2 restored run provenance mismatch")
