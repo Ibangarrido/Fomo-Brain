@@ -1,0 +1,47 @@
+name: Brain PAPER2 - one-time isolated bootstrap
+on:
+  push:
+    branches: [brain-clean-v1]
+    paths:
+      - '.github/workflows/brain_clean_v1_paper2_bootstrap.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  paper2_bootstrap:
+    if: github.ref == 'refs/heads/brain-clean-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: PAPER2 isolated regression
+        run: python -m unittest -v test_brain_clean_v1_paper2.py
+      - name: Verify no previous PAPER2 artifact before first bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url = "https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"] + "/actions/artifacts?name=brain-clean-v1-paper2-state&per_page=100"
+          req = urllib.request.Request(url, headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"})
+          with urllib.request.urlopen(req, timeout=15) as response:
+              data=json.load(response)
+          if any(not a.get("expired",True) for a in data.get("artifacts",[])):
+              raise SystemExit("PAPER2 artifact already exists: refusing rebootstrap")
+          PY
+      - name: Initialize independent PAPER2 100 EUR exactly once
+        run: python -c "import brain_clean_v1_paper2 as p; p.initialize_once()"
+      - name: Upload independent PAPER2 state
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-clean-v1-paper2-state
+          path: brain_clean_v1_paper2_state.json
+          if-no-files-found: error
+          retention-days: 90
