@@ -19,6 +19,19 @@ def seed():
     state["experiment"] = "independent PAPER 100 EUR; original CONTROL unchanged"
     return state
 
+def assert_never_bootstrapped(artifact_listing):
+    """Fail closed even when the previous PAPER2 artifact has expired."""
+    if not isinstance(artifact_listing, dict):
+        raise ValueError("Invalid PAPER2 artifact response")
+    count = artifact_listing.get("total_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError("Unknown PAPER2 artifact history: refusing bootstrap")
+    if count:
+        raise FileExistsError("PAPER2 artifact history exists, including expired: never reset")
+    if artifact_listing.get("artifacts") != []:
+        raise ValueError("Inconsistent PAPER2 artifact response: refusing bootstrap")
+
+
 def initialize_once(path=STATE_FILE):
     """Explicit one-time local PAPER bootstrap; never overwrite an existing ledger."""
     target = Path(path)
