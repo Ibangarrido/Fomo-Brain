@@ -75,6 +75,10 @@ class SecondPaperLedgerTests(unittest.TestCase):
             with self.subTest(listing=listing), self.assertRaises((ValueError, FileExistsError)):
                 paper2.assert_never_bootstrapped(listing)
 
+    def test_bootstrap_workflow_serializes_competing_runs(self):
+        workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_bootstrap.yml").read_text(encoding="utf-8")
+        self.assertIn("concurrency:\n  group: brain-clean-v1-paper2-bootstrap\n  cancel-in-progress: false", workflow)
+
     def test_runner_rejects_duplicate_and_missing_run_ids(self):
         from brain_clean_v1_paper2_run import verify_run_identity
         verify_run_identity("123", "124")
