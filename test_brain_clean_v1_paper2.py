@@ -20,6 +20,21 @@ class SecondPaperLedgerTests(unittest.TestCase):
         self.assertEqual(original, frozen)
         self.assertEqual(paper2.baseline_report()["status"], "READY_NOT_RUNNING")
 
+    def test_initialize_once_preserves_existing_cash_and_trades(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "paper2.json"
+            first = paper2.initialize_once(path)
+            self.assertEqual(first["cash"], 100.0)
+            first["cash"] = 83.5
+            first["closed"] = [{"key": "example", "pnl_eur": -1.5}]
+            import json
+            path.write_text(json.dumps(first), encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                paper2.initialize_once(path)
+            recovered = paper2.load_existing(path)
+            self.assertEqual(recovered["cash"], 83.5)
+            self.assertEqual(len(recovered["closed"]), 1)
+
     def test_missing_ledger_fails_closed_instead_of_reset(self):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(FileNotFoundError):
