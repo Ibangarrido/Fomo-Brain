@@ -47,6 +47,22 @@ class SecondPaperLedgerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 paper2.load_existing(path)
 
+    def test_corrupt_restored_cash_or_positions_fails_closed(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "paper2.json"
+            for cash in (float("nan"), -1, "100", True):
+                state = paper2.seed()
+                state["cash"] = cash
+                path.write_text(json.dumps(state), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    paper2.load_existing(path)
+            state = paper2.seed()
+            state["positions"] = []
+            path.write_text(json.dumps(state), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                paper2.load_existing(path)
+
     def test_observe_rejects_control_state(self):
         with self.assertRaises(ValueError):
             paper2.observe(brain.new_state(), [])
