@@ -75,6 +75,13 @@ class SecondPaperLedgerTests(unittest.TestCase):
             with self.subTest(listing=listing), self.assertRaises((ValueError, FileExistsError)):
                 paper2.assert_never_bootstrapped(listing)
 
+    def test_runner_rejects_duplicate_and_missing_run_ids(self):
+        from brain_clean_v1_paper2_run import verify_run_identity
+        verify_run_identity("123", "124")
+        for source, current in (("123", "123"), ("", "124"), ("123", ""), (None, "124")):
+            with self.subTest(source=source, current=current), self.assertRaises(RuntimeError):
+                verify_run_identity(source, current)
+
     def test_observe_rejects_control_state(self):
         with self.assertRaises(ValueError):
             paper2.observe(brain.new_state(), [])
