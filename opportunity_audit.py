@@ -892,6 +892,9 @@ def observe(pairs, sources, now=None, discovery_rejections=()):
           "checkpoint_coverage": checkpoint_coverage,
           "market_freshness_verified": False,
           "no_trading_return": True}))
+    # Feedback is read-only: no entry filters, wallet balances or quote guards change.
+    from learning_feedback import evaluate
+    print("LEARNING FEEDBACK " + json.dumps(evaluate(state, now), allow_nan=False))
     print("MERCADO PULSO 5M " + json.dumps(market_pulse, allow_nan=False))
     # Surface a bounded, auditable leaderboard in Actions logs. These are
     # sampled price observations, never exact candle highs or executable P&L.
