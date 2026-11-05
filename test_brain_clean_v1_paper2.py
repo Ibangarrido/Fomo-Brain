@@ -79,6 +79,13 @@ class SecondPaperLedgerTests(unittest.TestCase):
         workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_bootstrap.yml").read_text(encoding="utf-8")
         self.assertIn("concurrency:\n  group: brain-clean-v1-paper2-bootstrap\n  cancel-in-progress: false", workflow)
 
+    def test_bootstrap_requires_explicit_dispatch(self):
+        workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_bootstrap.yml").read_text(encoding="utf-8")
+        header = workflow.split("permissions:", 1)[0]
+        self.assertIn("  workflow_dispatch:", header)
+        self.assertNotIn("\\n  push:", header)
+        self.assertNotIn("\\n  schedule:", header)
+
     def test_ci_covers_paper2_ledger_runner_and_bootstrap_changes(self):
         workflow = (Path(__file__).parent / ".github/workflows/paper2_ci.yml").read_text(encoding="utf-8")
         for changed_path in (
