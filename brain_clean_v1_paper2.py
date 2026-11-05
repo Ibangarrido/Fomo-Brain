@@ -55,6 +55,10 @@ def load_existing(path=STATE_FILE):
         raise ValueError("Invalid PAPER2 cash: refusing corrupted ledger")
     if not isinstance(state.get("positions"), dict) or not isinstance(state.get("closed"), list):
         raise ValueError("Invalid PAPER2 positions/history: refusing corrupted ledger")
+    if any(not isinstance(pos, dict) for pos in state["positions"].values()):
+        raise ValueError("Invalid PAPER2 position record: refusing corrupted ledger")
+    if any(not isinstance(trade, dict) for trade in state["closed"]):
+        raise ValueError("Invalid PAPER2 closed trade: refusing corrupted ledger")
     return state
 
 def observe(state, samples, now=None):
