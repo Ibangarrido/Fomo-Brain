@@ -115,6 +115,12 @@ class SecondPaperLedgerTests(unittest.TestCase):
             with self.subTest(path=changed_path):
                 self.assertIn(f"- '{changed_path}'", workflow)
 
+    def test_paper2_ci_supports_manual_regression_without_bootstrap(self):
+        workflow = (Path(__file__).parent / ".github/workflows/paper2_ci.yml").read_text(encoding="utf-8")
+        self.assertIn("on:\n  workflow_dispatch:\n  push:", workflow)
+        self.assertIn("python -m unittest -v test_brain_clean_v1_paper2.py", workflow)
+        self.assertNotIn("initialize_once()", workflow)
+
     def test_runner_rejects_duplicate_and_missing_run_ids(self):
         from brain_clean_v1_paper2_run import verify_run_identity
         verify_run_identity("123", "124")
