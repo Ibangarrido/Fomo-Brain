@@ -695,6 +695,7 @@ class CleanPaperTests(unittest.TestCase):
             self.assertEqual(report["counts"].get("position_invalid_timestamp_hold"), 1)
             self.assertEqual(state["cash"], 90.0)
             self.assertEqual(len(state["closed"]), 0)
+        self.assertEqual(state["history"].get("mint:pool", []), [])
         report = brain.step(state, [sample(60000, 1000, price=0.65)], now=1000)
         self.assertEqual(report["counts"].get("paper_exit"), 1)
         closed = state["closed"][0]
@@ -1000,6 +1001,8 @@ class StopExitAuditRegressionTests(unittest.TestCase):
         self.assertTrue(row["stop_breached"])
         self.assertTrue(row["stop_overshoot_alert"])
         self.assertEqual(row["stop_overshoot_severity"], "HIGH")
+        self.assertEqual(row["route_status"], "UNVERIFIED")
+        self.assertIsNone(row["realizable_proceeds_eur"])
         audit = brain.learning_summary(state)["stop_overshoot_audit"]
         self.assertEqual(audit["classified_high"], 1)
         self.assertEqual(audit["classified_severe"], 0)
