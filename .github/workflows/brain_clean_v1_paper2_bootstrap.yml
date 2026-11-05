@@ -1,9 +1,6 @@
 name: Brain PAPER2 - one-time isolated bootstrap
 on:
-  push:
-    branches: [brain-clean-v1]
-    paths:
-      - '.github/workflows/brain_clean_v1_paper2_bootstrap.yml'
+  # Bootstrap is a deliberate one-time action, never triggered by a code push.
   workflow_dispatch:
 permissions:
   contents: read
