@@ -685,6 +685,16 @@ class CleanPaperTests(unittest.TestCase):
         self.assertEqual(state, before)
         self.assertFalse(summary["automatic_rule_changes"])
 
+    def test_invalid_timestamp_never_enters_research_history(self):
+        state = brain.new_state()
+        for ts in (2000, 1000 - brain.MAX_AGE_SECONDS - 1):
+            report = brain.step(state, [sample(60000, ts, price=0.5)], now=1000)
+            self.assertEqual(report["counts"].get("research_invalid_timestamp_ignored"), 1)
+            self.assertFalse(state["history"].get("mint:pool"))
+        brain.step(state, [sample(60000, 1000, price=1.0)], now=1000)
+        self.assertEqual(len(state["history"]["mint:pool"]), 1)
+        self.assertEqual(state["history"]["mint:pool"][0]["ts"], 1000)
+
     def test_active_stop_rejects_future_and_aged_quotes_without_cash_mutation(self):
         state = brain.new_state()
         state["cash"] = 90.0
