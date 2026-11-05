@@ -1,5 +1,6 @@
 name: PAPER2 isolated CI
 on:
+  workflow_dispatch:
   push:
     branches: [brain-clean-v1]
     paths:
