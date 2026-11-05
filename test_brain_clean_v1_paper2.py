@@ -85,6 +85,9 @@ class SecondPaperLedgerTests(unittest.TestCase):
         self.assertIn("  workflow_dispatch:", header)
         self.assertNotIn("\n  push:", header)
         self.assertNotIn("\n  schedule:", header)
+        # Check event keys by line, not only exact two-space indentation.
+        import re
+        self.assertEqual(re.findall(r"(?m)^\s{2,}(\w[\w-]*):\s*$", header), ["workflow_dispatch"])
 
     def test_ci_covers_paper2_ledger_runner_and_bootstrap_changes(self):
         workflow = (Path(__file__).parent / ".github/workflows/paper2_ci.yml").read_text(encoding="utf-8")
