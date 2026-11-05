@@ -63,6 +63,19 @@ class SecondPaperLedgerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 paper2.load_existing(path)
 
+    def test_restored_ledger_rejects_malformed_trade_records(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "paper2.json"
+            for field, invalid in (("positions", {"mint:pool": None}),
+                                   ("closed", [None]),
+                                   ("closed", ["not-a-trade"])):
+                state = paper2.seed()
+                state[field] = invalid
+                path.write_text(json.dumps(state), encoding="utf-8")
+                with self.subTest(field=field, invalid=invalid), self.assertRaises(ValueError):
+                    paper2.load_existing(path)
+
     def test_bootstrap_rejects_expired_and_ambiguous_artifact_history(self):
         paper2.assert_never_bootstrapped({"total_count": 0, "artifacts": []})
         for listing in (
