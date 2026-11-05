@@ -447,8 +447,8 @@ def step(state, samples, now=None):
                                     "stop_overshoot_pct": round(max(0, -move - .15) * 100, 2),
                                     "stop_breached": move <= -0.15,
                                     "stop_overshoot_alert": move < -0.20,
-                                    "stop_overshoot_severity": ("SEVERE" if move < -0.30 else
-                                                                "HIGH" if move < -0.20 else
+                                    "stop_overshoot_severity": ("SEVERE" if round(move * 100, 2) < -30.0 else
+                                                                "HIGH" if round(move * 100, 2) < -20.0 else
                                                                 "NONE"),
                                     "previous_quote_price": previous_price,
                                     "previous_quote_ts": previous_ts,
@@ -468,6 +468,14 @@ def step(state, samples, now=None):
     state.setdefault("watchlist", {})
     state.setdefault("outcomes", [])
     for s in samples:
+        # Reject invalid provider timestamps before research/history processing.
+        # A rejected quote must never block a later valid PAPER observation.
+        ts = s.get("ts")
+        if (not isinstance(ts, (int, float)) or isinstance(ts, bool)
+                or not float("-inf") < ts < float("inf")
+                or ts > now + 60 or ts < now - MAX_AGE_SECONDS):
+            counts["research_invalid_timestamp_ignored"] += 1
+            continue
         key = s["key"]
         hist = state["history"].setdefault(key, [])
         # Outcomes must use independently admitted, chronological observations.
