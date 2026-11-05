@@ -39,6 +39,14 @@ class ShadowLedgerSafetyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             shadow.validate(state)
 
+    def test_shadow_ci_tracks_and_tests_paper2_changes(self):
+        workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_shadow.yml").read_text(encoding="utf-8")
+        for event in ("push:", "pull_request:"):
+            self.assertIn(event, workflow)
+        for changed_path in ("brain_clean_v1_paper2.py", "test_brain_clean_v1_paper2.py", "brain_clean_v1_paper2_run.py"):
+            self.assertGreaterEqual(workflow.count("- '" + changed_path + "'"), 2)
+        self.assertIn("python -m unittest -v test_brain_clean_v1.py test_brain_clean_v1_paper2.py", workflow)
+
     def test_shadow_job_timeout_covers_runtime_budget(self):
         # A shadow run must have enough time to finish, finalize and upload.
         import re
