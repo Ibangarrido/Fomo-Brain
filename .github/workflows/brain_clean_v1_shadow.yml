@@ -6,6 +6,9 @@ on:
       - '.github/workflows/brain_clean_v1_shadow.yml'
       - 'clean_v1_shadow.py'
       - 'test_clean_v1_shadow.py'
+      - 'brain_clean_v1_paper2.py'
+      - 'test_brain_clean_v1_paper2.py'
+      - 'brain_clean_v1_paper2_run.py'
       - 'clean_v1_artifact_audit.py'
       - 'test_clean_v1_artifact_audit.py'
   workflow_dispatch:
@@ -18,6 +21,9 @@ on:
       - 'clean_v1_restore.py'
       - 'test_clean_v1_restore.py'
       - 'test_clean_v1_shadow.py'
+      - 'brain_clean_v1_paper2.py'
+      - 'test_brain_clean_v1_paper2.py'
+      - 'brain_clean_v1_paper2_run.py'
       - 'clean_v1_artifact_audit.py'
       - 'test_clean_v1_artifact_audit.py'
       - '.github/workflows/brain_clean_v1_shadow.yml'
@@ -49,7 +55,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Offline regression tests
-        run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_shadow.py test_clean_v1_restore.py test_clean_v1_artifact_audit.py
+        run: python -m unittest -v test_brain_clean_v1.py test_brain_clean_v1_paper2.py test_clean_v1_shadow.py test_clean_v1_restore.py test_clean_v1_artifact_audit.py
       - name: Select latest production PAPER ledger for ephemeral shadow
         id: restore
         env:
