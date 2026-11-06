@@ -11,6 +11,28 @@ def sample(cap, ts, key="mint:pool", price=None):
 
 
 class CleanPaperTests(unittest.TestCase):
+    def test_exact_obsolete_slingoor_isolation_preserves_ledger_and_is_idempotent(self):
+        key = next(iter(brain.PAPER_ISOLATE_EXACT_KEYS))
+        state = brain.new_state()
+        state["cash"] = 9.6189
+        state["positions"][key] = {"key": key, "symbol": "SLINGOOR",
+                                   "cost": 10.0, "entry_price": 0.0001336}
+        original_closed = list(state["closed"])
+        original_cash = state["cash"]
+        brain.isolate_authorized_paper_positions(state)
+        self.assertNotIn(key, state["positions"])
+        self.assertIn(key, state["isolated_positions"])
+        isolated = state["isolated_positions"][key]
+        self.assertEqual(isolated["isolation_status"], "UNPRICED_NOT_SOLD")
+        self.assertEqual(isolated["route_status"], "UNVERIFIED")
+        self.assertIsNone(isolated["realizable_value_eur"])
+        self.assertEqual(state["cash"], original_cash)
+        self.assertEqual(state["closed"], original_closed)
+        first_isolated_at = isolated["isolated_at"]
+        brain.isolate_authorized_paper_positions(state)
+        self.assertEqual(state["isolated_positions"][key]["isolated_at"], first_isolated_at)
+        self.assertEqual(len(state["isolated_positions"]), 1)
+
     def test_isolated_quote_rejects_stale_and_future_observations(self):
         state = brain.new_state()
         state["isolated_positions"] = {"mint:pool": {"key": "mint:pool", "symbol": "MARVIN"}}
