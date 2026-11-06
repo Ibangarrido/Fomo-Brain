@@ -481,6 +481,16 @@ class CleanPaperTests(unittest.TestCase):
                   zip([60000, 42000, 45000, 50000], [1000, 1100, 1200, 2000])]
         self.assertFalse(brain.staircase(series)[0])
 
+    def test_pr_ci_covers_shadow_and_artifact_audit_changes(self):
+        from pathlib import Path
+        workflow = Path(".github/workflows/brain_clean_v1_ci.yml").read_text(encoding="utf-8")
+        pr_section = workflow.split("  pull_request:", 1)[1].split("  push:", 1)[0]
+        for changed_path in ("clean_v1_shadow.py", "test_clean_v1_shadow.py",
+                             "clean_v1_artifact_audit.py",
+                             "test_clean_v1_artifact_audit.py",
+                             ".github/workflows/brain_clean_v1_ci.yml"):
+            self.assertIn("'" + changed_path + "'", pr_section)
+
     def test_case_study_audit_reports_are_wired_without_changing_gates(self):
         import inspect
         source = inspect.getsource(brain.main)
