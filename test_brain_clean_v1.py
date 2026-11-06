@@ -481,6 +481,18 @@ class CleanPaperTests(unittest.TestCase):
                   zip([60000, 42000, 45000, 50000], [1000, 1100, 1200, 2000])]
         self.assertFalse(brain.staircase(series)[0])
 
+    def test_case_study_audit_reports_are_wired_without_changing_gates(self):
+        import inspect
+        source = inspect.getsource(brain.main)
+        self.assertIn('"NOT_REQUESTED"', source)
+        self.assertIn('"REQUESTED_NO_PAIR"', source)
+        self.assertIn('"ELIGIBLE_FOR_PATTERN"', source)
+        self.assertIn('"REJECTED_"', source)
+        self.assertIn('"case_study_audit"', source)
+        self.assertIn('print("CASE_STUDY_AUDIT"', source)
+        self.assertEqual(brain.MIN_LIQ, 10000.0)
+        self.assertEqual(brain.MIN_VOL_1H, 5000.0)
+
     def test_coin_case_study_is_tracked_without_relaxing_risk_gates(self):
         coin = "GdY4Z6pYUcr3HFrABV5FEZay3J4GnjN1Uzsw6Dvxpump"
         bell = "4SiuAiB3xbE1Se9qxPfmGDZY812SxaeLRg4gwgNLpump"
