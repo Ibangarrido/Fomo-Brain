@@ -897,11 +897,22 @@ def main():
         coverage["watch_pool_quotes_missing"] = sum(k not in received_keys for k in pending_keys)
         discovery_sources.update(p.get("_clean_source", "unknown") for p in raw)
         observed_contracts = {s["address"] for s in samples}
+        requested_contracts = set(coverage.get("requested_contracts", []))
         for contract in CASE_STUDY_ADDRESSES:
-            if contract not in observed_contracts:
-                print("CASE_STUDY_NOT_QUOTED", contract, flush=True)
+            if contract not in requested_contracts:
+                status = "NOT_REQUESTED"
+            elif contract not in observed_contracts:
+                status = "REQUESTED_NO_PAIR"
             else:
-                print("CASE_STUDY_OBSERVED", contract, flush=True)
+                contract_samples = [q for q in samples if q["address"] == contract]
+                reasons = [gate(q) for q in contract_samples]
+                status = ("ELIGIBLE_FOR_PATTERN" if None in reasons else
+                          "REJECTED_" + ",".join(sorted(set(reasons))))
+            print("CASE_STUDY_AUDIT", contract, status, flush=True)
+            case_audit = state.setdefault("case_study_audit", {})
+            case_audit[contract] = {"status": status, "at": utcnow(),
+                                    "run_id": os.environ.get("GITHUB_RUN_ID")}
+
         report = step(state, samples, now)
         polls_completed += 1
         aggregate.update(report["counts"])
@@ -930,6 +941,7 @@ def main():
     report["aggregate_counts"] = dict(aggregate)
     report["selection_counts"] = dict(selection_counts)
     report["tracking_coverage"] = state.get("tracking_coverage", {})
+    report["case_study_audit"] = state.get("case_study_audit", {})
     report["learning_summary"] = learning_summary(state)
     report["unique_contracts_last_poll"] = len({s["address"] for s in samples})
     report["discovery_sources_all_polls"] = dict(discovery_sources)
