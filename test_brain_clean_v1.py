@@ -481,6 +481,19 @@ class CleanPaperTests(unittest.TestCase):
                   zip([60000, 42000, 45000, 50000], [1000, 1100, 1200, 2000])]
         self.assertFalse(brain.staircase(series)[0])
 
+    def test_coin_case_study_is_tracked_without_relaxing_risk_gates(self):
+        coin = "GdY4Z6pYUcr3HFrABV5FEZay3J4GnjN1Uzsw6Dvxpump"
+        bell = "4SiuAiB3xbE1Se9qxPfmGDZY812SxaeLRg4gwgNLpump"
+        self.assertIn(coin, brain.CASE_STUDY_ADDRESSES)
+        state = brain.new_state()
+        requested = brain.tracking_priority(state, now=10000)
+        self.assertIn(coin, requested)
+        self.assertIn(bell, requested)
+        self.assertLessEqual(len(requested), 8)
+        self.assertEqual(brain.MIN_LIQ, 10000.0)
+        self.assertEqual(brain.MIN_VOL_1H, 5000.0)
+        self.assertEqual(brain.MAX_ENTRY, 10.0)
+
     def test_bell_case_study_uses_exact_contract(self):
         self.assertIn("4SiuAiB3xbE1Se9qxPfmGDZY812SxaeLRg4gwgNLpump",
                       brain.CASE_STUDY_ADDRESSES)
