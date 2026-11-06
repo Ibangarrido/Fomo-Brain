@@ -1,0 +1,88 @@
+name: PAPER2 isolated continuation (manual, fail-closed)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: brain-clean-v1-paper2-state
+  cancel-in-progress: false
+jobs:
+  paper2:
+    if: github.ref == 'refs/heads/brain-clean-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: PAPER2 offline regression
+        run: python -m unittest -v test_brain_clean_v1_paper2.py
+      - name: Select existing PAPER2 artifact, never initialize or reset
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url = "https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"] + "/actions/artifacts?name=brain-clean-v1-paper2-state&per_page=100"
+          request = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+          with urllib.request.urlopen(request, timeout=20) as response:
+              data = json.load(response)
+          if not isinstance(data.get("total_count"), int) or data["total_count"] < 1:
+              raise RuntimeError("No PAPER2 artifact: refusing silent bootstrap")
+          items = data.get("artifacts")
+          if not isinstance(items, list) or not items:
+              raise RuntimeError("PAPER2 artifact history unavailable")
+          items = [a for a in items if a.get("name") == "brain-clean-v1-paper2-state" and not a.get("expired")]
+          if not items:
+              raise RuntimeError("All PAPER2 artifacts expired: refusing reset")
+          items.sort(key=lambda a: (a["created_at"], a["id"]), reverse=True)
+          selected = items[0]
+          if selected.get("workflow_run", {}).get("head_branch") != "brain-clean-v1":
+              raise RuntimeError("PAPER2 artifact belongs to another branch")
+          source_run = selected.get("workflow_run", {}).get("id")
+          if not isinstance(source_run, int) or source_run <= 0:
+              raise RuntimeError("Missing source run identity")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"artifact_id={selected['id']}\nsource_run={source_run}\n")
+          PY
+      - name: Restore exact PAPER2 state artifact
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.source.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: .
+      - name: Validate restored PAPER2 ledger
+        env:
+          PAPER2_SOURCE_RUN: ${{ steps.source.outputs.source_run }}
+        run: |
+          python - <<'PY'
+          import os
+          import brain_clean_v1_paper2 as p
+          state = p.load_existing()
+          previous = state.get("last_run")
+          if previous and str(previous.get("id")) != os.environ["PAPER2_SOURCE_RUN"]:
+              raise RuntimeError("PAPER2 provenance mismatch")
+          print("PAPER2_RESTORED", state["portfolio_id"], "closed", len(state["closed"]))
+          PY
+      - name: Execute existing PAPER2 only
+        env:
+          PAPER2_SOURCE_RUN: ${{ steps.source.outputs.source_run }}
+          PAPER2_BOOTSTRAP_RUN: ${{ steps.source.outputs.source_run }}
+          PYTHONUNBUFFERED: '1'
+        run: python brain_clean_v1_paper2_run.py
+      - name: Persist PAPER2 state and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-clean-v1-paper2-state
+          path: |
+            brain_clean_v1_paper2_state.json
+            brain_clean_v1_paper2_report.json
+          if-no-files-found: error
+          retention-days: 90
