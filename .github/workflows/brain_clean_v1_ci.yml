@@ -9,6 +9,11 @@ on:
       - 'brain_clean_v1_paper2_seed.json'
       - 'clean_v1_restore.py'
       - 'test_clean_v1_restore.py'
+      - 'clean_v1_shadow.py'
+      - 'test_clean_v1_shadow.py'
+      - 'clean_v1_artifact_audit.py'
+      - 'test_clean_v1_artifact_audit.py'
+      - '.github/workflows/brain_clean_v1_ci.yml'
       - '.github/workflows/brain_clean_v1*.yml'
   push:
     branches: [main, brain-clean-v1]
