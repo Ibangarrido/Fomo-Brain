@@ -30,6 +30,7 @@ on:
       - 'clean_v1_artifact_audit.py'
       - 'test_clean_v1_artifact_audit.py'
       - '.github/workflows/brain_clean_v1_ci.yml'
+      - '.github/workflows/brain_clean_v1*.yml'
 permissions:
   contents: read
 jobs:
