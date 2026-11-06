@@ -32,7 +32,8 @@ POLL_SECONDS = 30
 FETCH_BUDGET_SECONDS = 45
 SIGNAL_MAX_WINDOW_SECONDS = 8 * 60
 # Explicit user-provided case studies: track by contract, never infer from ticker.
-CASE_STUDY_ADDRESSES = ("4SiuAiB3xbE1Se9qxPfmGDZY812SxaeLRg4gwgNLpump",)
+CASE_STUDY_ADDRESSES = ("4SiuAiB3xbE1Se9qxPfmGDZY812SxaeLRg4gwgNLpump",
+                        "GdY4Z6pYUcr3HFrABV5FEZay3J4GnjN1Uzsw6Dvxpump")
 
 
 def utcnow():
@@ -645,7 +646,7 @@ def tracking_priority(state, now=None):
     watch_slots = min(2, len(rotating), max(0, 8 - len(held)))
     chosen_watches = rotating[:watch_slots]
     state["watch_cursor"] = (cursor + watch_slots) % len(watches) if watches else 0
-    cases = [a for a in CASE_STUDY_ADDRESSES if a not in held and a not in chosen_watches][:1]
+    cases = [a for a in CASE_STUDY_ADDRESSES if a not in held and a not in chosen_watches][:2]
     signal_slots = max(0, 8 - len(held) - watch_slots - len(cases))
     signals = list(dict.fromkeys(x["address"] for x in recent
                                 if x["address"] not in held + chosen_watches + cases))[:signal_slots]
