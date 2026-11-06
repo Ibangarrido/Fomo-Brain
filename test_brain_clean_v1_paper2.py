@@ -121,6 +121,21 @@ class SecondPaperLedgerTests(unittest.TestCase):
         self.assertIn("python -m unittest -v test_brain_clean_v1_paper2.py", workflow)
         self.assertNotIn("initialize_once()", workflow)
 
+    def test_continuation_restores_only_existing_artifact_and_persists(self):
+        workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_continue.yml").read_text(encoding="utf-8")
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertNotIn("\\n  schedule:", workflow)
+        self.assertNotIn("\\n  push:", workflow)
+        self.assertIn("brain-clean-v1-paper2-state", workflow)
+        self.assertIn("actions/download-artifact@v4", workflow)
+        self.assertIn("python brain_clean_v1_paper2_run.py", workflow)
+        self.assertIn("PAPER2_SOURCE_RUN:", workflow)
+        self.assertIn("if-no-files-found: error", workflow)
+        self.assertNotIn("initialize_once(", workflow)
+        self.assertNotIn("brain_clean_v1_state.json", workflow)
+        self.assertIn("concurrency:", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+
     def test_runner_rejects_duplicate_and_missing_run_ids(self):
         from brain_clean_v1_paper2_run import verify_run_identity
         verify_run_identity("123", "124")
