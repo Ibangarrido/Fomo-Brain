@@ -7,7 +7,7 @@ permissions:
   actions: read
 # Serialize bootstrap attempts: concurrent dispatches must not both observe zero artifacts.
 concurrency:
-  group: brain-clean-v1-paper2-bootstrap
+  group: brain-clean-v1-paper2-state
   cancel-in-progress: false
 jobs:
   paper2_bootstrap:
