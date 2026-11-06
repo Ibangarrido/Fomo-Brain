@@ -821,12 +821,22 @@ def apply_user_paper_write_offs(state):
 
 
 PAPER_ISOLATE_SYMBOLS = frozenset(("MARVIN", "REGRET", "PAWS"))
+PAPER_ISOLATE_EXACT_KEYS = frozenset(("4MnM6aAuayLRhejDSuiaEm2QGyR4ye4Sxhdywt37pump:Ayyz7tMmpo8yE4hBzevaUWttmM29G3A7wnWi1tRNtz5j",))
 
 
 def isolate_authorized_paper_positions(state):
     """Separate unique authorized PAPER holdings without sale, cash or P&L."""
     positions = state.setdefault("positions", {})
     isolated = state.setdefault("isolated_positions", {})
+    for key in PAPER_ISOLATE_EXACT_KEYS:
+        pos = positions.get(key)
+        if pos is None or key in isolated:
+            continue
+        isolated[key] = {**pos, "isolation_reason": "user_authorized_obsolete_unpriced_position",
+                         "isolation_status": "UNPRICED_NOT_SOLD",
+                         "realizable_value_eur": None, "route_status": "UNVERIFIED",
+                         "isolated_at": utcnow()}
+        del positions[key]
     for symbol in PAPER_ISOLATE_SYMBOLS:
         matches = [(key, pos) for key, pos in positions.items()
                    if str(pos.get("symbol", "")).strip().upper() == symbol]
