@@ -97,7 +97,7 @@ class SecondPaperLedgerTests(unittest.TestCase):
         for name in ("brain_clean_v1_paper2_bootstrap.yml", "brain_clean_v1_paper2_continue.yml"):
             with self.subTest(workflow=name):
                 content = (root / name).read_text(encoding="utf-8")
-                self.assertIn("concurrency:\\n  group: brain-clean-v1-paper2-state\\n  cancel-in-progress: false", content)
+                self.assertIn("concurrency:\n  group: brain-clean-v1-paper2-state\n  cancel-in-progress: false", content)
 
     def test_bootstrap_requires_explicit_dispatch(self):
         workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_bootstrap.yml").read_text(encoding="utf-8")
