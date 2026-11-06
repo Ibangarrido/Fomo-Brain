@@ -491,6 +491,13 @@ class CleanPaperTests(unittest.TestCase):
                              ".github/workflows/brain_clean_v1_ci.yml"):
             self.assertIn("'" + changed_path + "'", pr_section)
 
+    def test_push_ci_covers_paper_workflow_changes(self):
+        from pathlib import Path
+        workflow = Path(".github/workflows/brain_clean_v1_ci.yml").read_text(encoding="utf-8")
+        push_section = workflow.split("  push:", 1)[1].split("permissions:", 1)[0]
+        self.assertIn("branches: [main, brain-clean-v1]", push_section)
+        self.assertIn("'.github/workflows/brain_clean_v1*.yml'", push_section)
+
     def test_case_study_audit_reports_are_wired_without_changing_gates(self):
         import inspect
         source = inspect.getsource(brain.main)
