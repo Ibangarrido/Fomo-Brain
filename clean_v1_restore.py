@@ -4,6 +4,7 @@ GitHub run creation timestamps are not reliable artifact freshness indicators.
 Fail closed rather than silently replaying an older ledger.
 """
 import json
+import math
 import os
 import sys
 import urllib.request
@@ -34,7 +35,8 @@ def verify_ledger(state, report, run_id):
         raise RuntimeError("Restored report provenance does not match selected run")
     if not isinstance(state.get("positions"), dict) or not isinstance(state.get("closed"), list):
         raise RuntimeError("Incomplete PAPER ledger")
-    if not isinstance(state.get("cash"), (float, int)) or isinstance(state["cash"], bool):
+    if (not isinstance(state.get("cash"), (float, int)) or isinstance(state["cash"], bool)
+            or not math.isfinite(state["cash"]) or state["cash"] < 0):
         raise RuntimeError("Invalid PAPER cash")
 
 
@@ -59,7 +61,7 @@ def select():
     source_run = str(artifact["workflow_run"]["id"])
     run = api_json("/actions/runs/" + source_run, repository, token)
     path = str(run.get("path") or "").split("@")[0]
-    if (run.get("status") != "completed"
+    if (run.get("status") != "completed" or run.get("conclusion") != "success"
             or not (path == WORKFLOW or path.endswith("/" + WORKFLOW))
             or run.get("head_branch") != "main"):
         raise RuntimeError("Selected artifact is not from a completed main Clean V1 run")
