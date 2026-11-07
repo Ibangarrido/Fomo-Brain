@@ -91,6 +91,7 @@ jobs:
         env:
           PAPER2_SOURCE_RUN: ${{ steps.source.outputs.source_run }}
           PAPER2_BOOTSTRAP_RUN: ${{ steps.source.outputs.source_run }}
+          PAPER2_SOURCE_WORKFLOW: ${{ steps.source.outputs.source_workflow }}
           PYTHONUNBUFFERED: '1'
         run: python brain_clean_v1_paper2_run.py
       - name: Persist PAPER2 state and report
