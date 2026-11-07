@@ -44,7 +44,7 @@ jobs:
               raise RuntimeError("All PAPER2 artifacts expired: refusing reset")
           items.sort(key=lambda a: (a["created_at"], a["id"]), reverse=True)
           selected = items[0]
-          if selected.get("workflow_run", {}).get("head_branch") not in ("brain-clean-v1", "main"):
+          if selected.get("workflow_run", {}).get("head_branch") != "brain-clean-v1":
               raise RuntimeError("PAPER2 artifact belongs to another branch")
           source_run = selected.get("workflow_run", {}).get("id")
           if not isinstance(source_run, int) or source_run <= 0:
@@ -55,7 +55,7 @@ jobs:
               source = json.load(response)
           allowed_workflows = ("brain_clean_v1_paper2_bootstrap.yml", "brain_clean_v1_paper2_continue.yml")
           if (source.get("status") != "completed" or source.get("conclusion") != "success"
-                  or source.get("head_branch") not in ("brain-clean-v1", "main")
+                  or source.get("head_branch") != "brain-clean-v1"
                   or str(source.get("path", "")).split("@")[0].split("/")[-1] not in allowed_workflows
                   or str(source.get("id")) != str(source_run)
                   or source.get("head_sha") != selected.get("workflow_run", {}).get("head_sha")):
