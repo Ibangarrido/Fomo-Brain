@@ -66,6 +66,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           artifact-ids: ${{ steps.source.outputs.artifact_id }}
+          run-id: ${{ steps.source.outputs.source_run }}
+          merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           path: .
