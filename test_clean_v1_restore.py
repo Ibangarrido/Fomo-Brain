@@ -51,6 +51,14 @@ class RestoreTests(unittest.TestCase):
             with self.subTest(cash=cash), self.assertRaises(RuntimeError):
                 restore.verify_ledger({**state, "cash": cash}, report, "147")
 
+    def test_shadow_push_ci_covers_restore_changes(self):
+        from pathlib import Path
+        workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_shadow.yml").read_text()
+        push_paths = workflow.split("  push:", 1)[1].split("  workflow_dispatch:", 1)[0]
+        for path in ("clean_v1_restore.py", "test_clean_v1_restore.py"):
+            with self.subTest(path=path):
+                self.assertIn(f"- '{path}'", push_paths)
+
     def test_source_workflow_requires_successful_completion(self):
         from pathlib import Path
         source = (Path(__file__).parent / "clean_v1_restore.py").read_text()
