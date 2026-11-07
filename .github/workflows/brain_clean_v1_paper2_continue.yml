@@ -48,6 +48,17 @@ jobs:
           source_run = selected.get("workflow_run", {}).get("id")
           if not isinstance(source_run, int) or source_run <= 0:
               raise RuntimeError("Missing source run identity")
+          source_url = "https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"] + f"/actions/runs/{source_run}"
+          source_request = urllib.request.Request(source_url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+          with urllib.request.urlopen(source_request, timeout=20) as response:
+              source = json.load(response)
+          allowed_workflows = ("brain_clean_v1_paper2_bootstrap.yml", "brain_clean_v1_paper2_continue.yml")
+          if (source.get("status") != "completed" or source.get("conclusion") != "success"
+                  or source.get("head_branch") != "brain-clean-v1"
+                  or str(source.get("path", "")).split("@")[0].split("/")[-1] not in allowed_workflows
+                  or str(source.get("id")) != str(source_run)
+                  or source.get("head_sha") != selected.get("workflow_run", {}).get("head_sha")):
+              raise RuntimeError("PAPER2 artifact source run is not a successful authorized workflow")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"artifact_id={selected['id']}\nsource_run={source_run}\n")
           PY
