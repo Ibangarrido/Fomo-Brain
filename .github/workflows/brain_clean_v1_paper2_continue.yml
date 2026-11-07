@@ -60,7 +60,7 @@ jobs:
                   or source.get("head_sha") != selected.get("workflow_run", {}).get("head_sha")):
               raise RuntimeError("PAPER2 artifact source run is not a successful authorized workflow")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"artifact_id={selected['id']}\nsource_run={source_run}\n")
+              out.write(f"artifact_id={selected['id']}\nsource_run={source_run}\nsource_workflow={str(source.get('path', '')).split('@')[0].split('/')[-1]}\n")
           PY
       - name: Restore exact PAPER2 state artifact
         uses: actions/download-artifact@v4
@@ -74,6 +74,7 @@ jobs:
       - name: Validate restored PAPER2 ledger
         env:
           PAPER2_SOURCE_RUN: ${{ steps.source.outputs.source_run }}
+          PAPER2_SOURCE_WORKFLOW: ${{ steps.source.outputs.source_workflow }}
         run: |
           python - <<'PY'
           import os
@@ -82,6 +83,8 @@ jobs:
           previous = state.get("last_run")
           if previous and str(previous.get("id")) != os.environ["PAPER2_SOURCE_RUN"]:
               raise RuntimeError("PAPER2 provenance mismatch")
+          if not previous and os.environ["PAPER2_SOURCE_WORKFLOW"] != "brain_clean_v1_paper2_bootstrap.yml":
+              raise RuntimeError("Missing last_run in non-bootstrap PAPER2 state")
           print("PAPER2_RESTORED", state["portfolio_id"], "closed", len(state["closed"]))
           PY
       - name: Execute existing PAPER2 only
