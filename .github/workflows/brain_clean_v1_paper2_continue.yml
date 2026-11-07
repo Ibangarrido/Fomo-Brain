@@ -1,3 +1,4 @@
+# Continuation 1 verified: run 42412316508, artifact 13590267152.
 name: PAPER2 isolated continuation (manual, fail-closed)
 on:
   workflow_dispatch:
