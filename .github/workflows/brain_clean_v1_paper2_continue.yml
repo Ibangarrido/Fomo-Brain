@@ -1,6 +1,9 @@
 name: PAPER2 isolated continuation (manual, fail-closed)
 on:
   workflow_dispatch:
+  push:
+    branches: [brain-clean-v1]
+    paths: ['.github/workflows/brain_clean_v1_paper2_continue.yml']
 permissions:
   contents: read
   actions: read
