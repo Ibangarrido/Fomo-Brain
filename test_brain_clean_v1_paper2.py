@@ -169,6 +169,13 @@ class SecondPaperLedgerTests(unittest.TestCase):
         self.assertIn("PAPER2_SOURCE_WORKFLOW: ${{ steps.source.outputs.source_workflow }}", workflow)
         self.assertIn('if not previous and os.environ["PAPER2_SOURCE_WORKFLOW"] != "brain_clean_v1_paper2_bootstrap.yml":', workflow)
 
+    def test_runner_also_enforces_bootstrap_origin(self):
+        source = (Path(__file__).parent / "brain_clean_v1_paper2_run.py").read_text(encoding="utf-8")
+        workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_continue.yml").read_text(encoding="utf-8")
+        self.assertIn('os.environ.get("PAPER2_SOURCE_WORKFLOW") != "brain_clean_v1_paper2_bootstrap.yml"', source)
+        execute = workflow.split("      - name: Execute existing PAPER2 only", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("PAPER2_SOURCE_WORKFLOW: ${{ steps.source.outputs.source_workflow }}", execute)
+
     def test_runner_rejects_duplicate_and_missing_run_ids(self):
         from brain_clean_v1_paper2_run import verify_run_identity
         verify_run_identity("123", "124")
