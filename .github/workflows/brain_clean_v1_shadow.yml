@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/brain_clean_v1_shadow.yml'
       - 'clean_v1_shadow.py'
+      - 'clean_v1_restore.py'
+      - 'test_clean_v1_restore.py'
       - 'test_clean_v1_shadow.py'
       - 'brain_clean_v1_paper2.py'
       - 'test_brain_clean_v1_paper2.py'
