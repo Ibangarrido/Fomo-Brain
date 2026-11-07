@@ -114,6 +114,7 @@ class SecondPaperLedgerTests(unittest.TestCase):
         for changed_path in (
             ".github/workflows/paper2_ci.yml",
             ".github/workflows/brain_clean_v1_paper2_bootstrap.yml",
+            ".github/workflows/brain_clean_v1_paper2_continue.yml",
             "brain_clean_v1.py",
             "brain_clean_v1_paper2.py",
             "brain_clean_v1_paper2_run.py",
