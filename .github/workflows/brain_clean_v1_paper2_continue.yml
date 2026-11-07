@@ -95,8 +95,23 @@ jobs:
           PAPER2_BOOTSTRAP_RUN: ${{ steps.source.outputs.source_run }}
           PAPER2_SOURCE_WORKFLOW: ${{ steps.source.outputs.source_workflow }}
           PYTHONUNBUFFERED: '1'
-          GITHUB_SHA: 03f35d3df9290dec0531e92f61c076cd18a4a9dd
-        run: python brain_clean_v1_paper2_run.py
+          PAPER2_ENGINE_SHA: 03f35d3df9290dec0531e92f61c076cd18a4a9dd
+        run: |
+          test "$(git rev-parse HEAD)" = "$PAPER2_ENGINE_SHA"
+          python - <<'PY'
+          import json, os
+          launcher_sha = os.environ["GITHUB_SHA"]
+          os.environ["GITHUB_SHA"] = os.environ["PAPER2_ENGINE_SHA"]
+          import brain_clean_v1_paper2_run as runner
+          runner.run()
+          with open(runner.REPORT_FILE, encoding="utf-8") as f:
+              report = json.load(f)
+          report["launcher_sha"] = launcher_sha
+          report["restored_from_run"] = os.environ["PAPER2_SOURCE_RUN"]
+          with open(runner.REPORT_FILE, "w", encoding="utf-8") as f:
+              json.dump(report, f, ensure_ascii=False, sort_keys=True, indent=2)
+          print("PAPER2_PROVENANCE", launcher_sha, os.environ["PAPER2_ENGINE_SHA"], os.environ["PAPER2_SOURCE_RUN"])
+          PY
       - name: Persist PAPER2 state and report
         uses: actions/upload-artifact@v4
         with:
