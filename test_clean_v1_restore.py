@@ -43,6 +43,19 @@ class RestoreTests(unittest.TestCase):
                 self.assertIn("github-token: ${{ github.token }}",
                               download_step)
 
+    def test_reject_nonfinite_and_negative_cash(self):
+        state = {"version": 1, "cash": 10.0, "positions": {}, "closed": [],
+                 "last_run": {"id": "147"}}
+        report = {"run": {"id": "147"}}
+        for cash in (float("nan"), float("inf"), -1.0, True):
+            with self.subTest(cash=cash), self.assertRaises(RuntimeError):
+                restore.verify_ledger({**state, "cash": cash}, report, "147")
+
+    def test_source_workflow_requires_successful_completion(self):
+        from pathlib import Path
+        source = (Path(__file__).parent / "clean_v1_restore.py").read_text()
+        self.assertIn('run.get("conclusion") != "success"', source)
+
     def test_fail_closed_if_source_run_does_not_match_ledger(self):
         state = {"version": 1, "cash": 60.14, "positions": {}, "closed": [],
                  "last_run": {"id": "147"}}
