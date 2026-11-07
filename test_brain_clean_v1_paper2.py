@@ -144,6 +144,14 @@ class SecondPaperLedgerTests(unittest.TestCase):
         self.assertIn("concurrency:", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
 
+    def test_continuation_download_is_pinned_to_source_run(self):
+        workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_continue.yml").read_text(encoding="utf-8")
+        download = workflow.split("uses: actions/download-artifact@v4", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("artifact-ids: ${{ steps.source.outputs.artifact_id }}", download)
+        self.assertIn("run-id: ${{ steps.source.outputs.source_run }}", download)
+        self.assertIn("merge-multiple: true", download)
+        self.assertIn("github-token: ${{ github.token }}", download)
+
     def test_continuation_checks_source_run_success_and_identity(self):
         workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_continue.yml").read_text(encoding="utf-8")
         for required in ("source.get(\"status\") != \"completed\"",
