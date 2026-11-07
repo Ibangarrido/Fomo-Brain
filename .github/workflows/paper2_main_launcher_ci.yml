@@ -16,7 +16,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate launcher syntax and Actions expressions
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/brain_clean_v1_paper2_continue.yml
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes= .github/workflows/brain_clean_v1_paper2_continue.yml
       - uses: actions/checkout@v4
         with:
           ref: 03f35d3df9290dec0531e92f61c076cd18a4a9dd
