@@ -143,6 +143,17 @@ class SecondPaperLedgerTests(unittest.TestCase):
         self.assertIn("concurrency:", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
 
+    def test_continuation_checks_source_run_success_and_identity(self):
+        workflow = (Path(__file__).parent / ".github/workflows/brain_clean_v1_paper2_continue.yml").read_text(encoding="utf-8")
+        for required in ("source.get(\"status\") != \"completed\"",
+                         "source.get(\"conclusion\") != \"success\"",
+                         "source.get(\"head_branch\") != \"brain-clean-v1\"",
+                         "source.get(\"head_sha\") != selected.get(\"workflow_run\", {}).get(\"head_sha\")",
+                         "brain_clean_v1_paper2_bootstrap.yml",
+                         "brain_clean_v1_paper2_continue.yml"):
+            with self.subTest(required=required):
+                self.assertIn(required, workflow)
+
     def test_runner_rejects_duplicate_and_missing_run_ids(self):
         from brain_clean_v1_paper2_run import verify_run_identity
         verify_run_identity("123", "124")
