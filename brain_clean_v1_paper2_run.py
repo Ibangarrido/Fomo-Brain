@@ -22,7 +22,8 @@ def run():
     if previous:
         if str(previous.get("id")) != expected:
             raise RuntimeError("PAPER2 restored run provenance mismatch")
-    elif expected != os.environ.get("PAPER2_BOOTSTRAP_RUN"):
+    elif (expected != os.environ.get("PAPER2_BOOTSTRAP_RUN")
+          or os.environ.get("PAPER2_SOURCE_WORKFLOW") != "brain_clean_v1_paper2_bootstrap.yml"):
         raise RuntimeError("Unverified PAPER2 bootstrap provenance")
     brain.STATE_FILE = paper2.STATE_FILE
     brain.REPORT_FILE = REPORT_FILE
