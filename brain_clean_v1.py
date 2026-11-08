@@ -735,6 +735,28 @@ def complete_stop_evidence(row):
     return isinstance(row.get("route_status"), str) and bool(row["route_status"].strip())
 
 
+
+def research_memory_audit(state):
+    """Read-only coverage of retained market memory; not proof of learning or fills."""
+    histories = state.get("history", {})
+    watches = state.get("watchlist", {})
+    outcomes = state.get("outcomes", [])
+    return {
+        "scope": "retained_state_only; no direct FOMO feed; no automatic strategy tuning",
+        "history_pools": len(histories),
+        "history_observations": sum(len(rows) for rows in histories.values()),
+        "history_observation_cap_per_pool": MAX_SNAPSHOTS,
+        "pending_research_watches": len(watches),
+        "validated_research_outcomes": sum(
+            row.get("audit_version") == 2 for row in outcomes),
+        "unvalidated_legacy_outcomes": sum(
+            row.get("audit_version") != 2 for row in outcomes),
+        "fomo_direct_feed_verified": False,
+        "auto_tuning_enabled": False,
+        "realizable_exit_prices_verified": False,
+    }
+
+
 def learning_summary(state):
     """Descriptive evidence from retained validated rows, never an auto-tuner."""
     groups = {}
@@ -953,6 +975,7 @@ def main():
     report["tracking_coverage"] = state.get("tracking_coverage", {})
     report["case_study_audit"] = state.get("case_study_audit", {})
     report["learning_summary"] = learning_summary(state)
+    report["research_memory_audit"] = research_memory_audit(state)
     report["unique_contracts_last_poll"] = len({s["address"] for s in samples})
     report["discovery_sources_all_polls"] = dict(discovery_sources)
     report["discovery_sources_last_poll"] = dict(Counter(p.get("_clean_source", "unknown") for p in raw))
