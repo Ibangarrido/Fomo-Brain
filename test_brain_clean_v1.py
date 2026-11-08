@@ -1102,3 +1102,23 @@ class StopExitAuditRegressionTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class ResearchMemoryAuditTests(unittest.TestCase):
+    def test_memory_coverage_is_read_only_and_separates_legacy(self):
+        import copy
+        state = brain.new_state()
+        state["cash"] = 81.25
+        state["history"]["mint:pool"] = [sample(50000, 1000), sample(55000, 1030)]
+        state["watchlist"]["mint:pool"] = {"reason": "waiting"}
+        state["outcomes"] = [{"audit_version": 2}, {"audit_version": 1}]
+        before = copy.deepcopy(state)
+        result = brain.research_memory_audit(state)
+        self.assertEqual(result["history_pools"], 1)
+        self.assertEqual(result["history_observations"], 2)
+        self.assertEqual(result["pending_research_watches"], 1)
+        self.assertEqual(result["validated_research_outcomes"], 1)
+        self.assertEqual(result["unvalidated_legacy_outcomes"], 1)
+        self.assertFalse(result["fomo_direct_feed_verified"])
+        self.assertFalse(result["auto_tuning_enabled"])
+        self.assertEqual(state, before)
