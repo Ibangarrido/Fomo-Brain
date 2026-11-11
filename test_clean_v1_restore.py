@@ -9,6 +9,26 @@ def artifact(ident, uploaded, run_id, branch="main"):
 
 
 class RestoreTests(unittest.TestCase):
+    def test_artifact_pagination_collects_all_pages(self):
+        first = [artifact(i, "2026-11-01T09:00:00Z", i) for i in range(100)]
+        newest = artifact(101, "2026-11-01T10:00:00Z", 101)
+        with patch.object(restore, "api_json", side_effect=[
+            {"total_count": 101, "artifacts": first},
+            {"total_count": 101, "artifacts": [newest]},
+        ]) as api:
+            rows = restore.list_artifacts("owner/repo", "token")
+        self.assertEqual(len(rows), 101)
+        self.assertEqual(restore.newest_artifact(rows, 999)["id"], 101)
+        self.assertIn("page=2", api.call_args_list[1].args[0])
+
+    def test_artifact_pagination_fails_closed_on_missing_page(self):
+        with patch.object(restore, "api_json", side_effect=[
+            {"total_count": 101, "artifacts": [artifact(1, "2026-11-01T09:00:00Z", 1)]},
+            {"total_count": 101, "artifacts": []},
+        ]):
+            with self.assertRaisesRegex(RuntimeError, "pagination stopped early"):
+                restore.list_artifacts("owner/repo", "token")
+
     def test_upload_time_wins_over_misordered_run_ids(self):
         # Observed: #148 selected #145 although #147 had uploaded later.
         rows = [artifact(145, "2026-11-01T09:00:32Z", 41290468094),
