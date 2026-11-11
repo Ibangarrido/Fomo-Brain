@@ -52,12 +52,33 @@ def api_json(path, repository, token):
         return json.load(response)
 
 
+def list_artifacts(repository, token):
+    """Read every artifact page; never silently select from an incomplete list."""
+    collected = []
+    page = 1
+    while True:
+        payload = api_json(
+            "/actions/artifacts?name=" + NAME + "&per_page=100&page=" + str(page),
+            repository, token,
+        )
+        rows = payload.get("artifacts")
+        total = payload.get("total_count")
+        if not isinstance(rows, list) or not isinstance(total, int) or total < 0:
+            raise RuntimeError("Incomplete artifact API response; refusing ledger reset")
+        collected.extend(rows)
+        if len(collected) >= total:
+            return collected
+        if not rows:
+            raise RuntimeError("Artifact pagination stopped early; refusing ledger reset")
+        page += 1
+
+
 def select():
     repository = os.environ["GITHUB_REPOSITORY"]
     token = os.environ["GITHUB_TOKEN"]
     run_id = os.environ["GITHUB_RUN_ID"]
-    payload = api_json("/actions/artifacts?name=" + NAME + "&per_page=100", repository, token)
-    artifact = newest_artifact(payload.get("artifacts", []), run_id)
+    artifacts = list_artifacts(repository, token)
+    artifact = newest_artifact(artifacts, run_id)
     source_run = str(artifact["workflow_run"]["id"])
     run = api_json("/actions/runs/" + source_run, repository, token)
     path = str(run.get("path") or "").split("@")[0]
