@@ -189,6 +189,27 @@ class CleanPaperTests(unittest.TestCase):
         }, clear=True):
             self.assertEqual(brain.execution_sha(), "merge-commit")
 
+    def test_remaining_cash_can_fund_bounded_paper_entry(self):
+        state = brain.new_state()
+        state["cash"] = 9.6189
+        for cap, ts in [(60000, 1000), (42000, 1060), (51000, 1120),
+                        (45000, 1180), (50000, 1240)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("paper_entry"), 1)
+        self.assertAlmostEqual(state["cash"], 0.0, places=6)
+        self.assertAlmostEqual(next(iter(state["positions"].values()))["cost"], 9.6189)
+        self.assertLessEqual(len(state["positions"]), brain.MAX_POSITIONS)
+
+    def test_dust_cash_cannot_fund_paper_entry(self):
+        state = brain.new_state()
+        state["cash"] = 0.99
+        for cap, ts in [(60000, 1000), (42000, 1060), (51000, 1120),
+                        (45000, 1180), (50000, 1240)]:
+            report = brain.step(state, [sample(cap, ts)], ts)
+        self.assertEqual(report["counts"].get("insufficient_cash"), 1)
+        self.assertEqual(state["cash"], 0.99)
+        self.assertEqual(state["positions"], {})
+
     def test_shadow_three_step_recovery_does_not_change_paper_entry(self):
         state = brain.new_state()
         # A higher intermediate quote, then a dip and final bounce:
