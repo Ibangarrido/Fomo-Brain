@@ -569,7 +569,10 @@ def step(state, samples, now=None):
             reason = "same_symbol_exposure_open"
         if not reason and len(state["positions"]) >= MAX_POSITIONS:
             reason = "max_3_positions"
-        if not reason and state["cash"] < MAX_ENTRY:
+        # MAX_ENTRY is a ceiling, not a required fixed ticket. Never use
+        # more than available PAPER cash; refuse dust below 1 EUR.
+        entry_cost = min(MAX_ENTRY, state["cash"])
+        if not reason and entry_cost < 1.0:
             reason = "insufficient_cash"
         if reason:
             counts[reason] += 1
@@ -581,7 +584,7 @@ def step(state, samples, now=None):
                                             "audit_version": 2, "peak_price": s["price"],
                                             "low_price": s["price"]}
             continue
-        cost = MAX_ENTRY
+        cost = entry_cost
         units = cost * 0.99 / s["price"]
         state["cash"] -= cost
         state["positions"][key] = {"key": key, "symbol": s["symbol"],
