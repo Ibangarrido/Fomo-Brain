@@ -3,6 +3,8 @@ on:
   push:
     branches: [brain-clean-v1]
     paths:
+      - 'brain_clean_v1.py'
+      - 'test_brain_clean_v1.py'
       - '.github/workflows/brain_clean_v1_shadow.yml'
       - 'clean_v1_shadow.py'
       - 'clean_v1_restore.py'
