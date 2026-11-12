@@ -31,15 +31,26 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, urllib.request
-          url = "https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"] + "/actions/artifacts?name=brain-clean-v1-paper2-state&per_page=100"
-          request = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
-          with urllib.request.urlopen(request, timeout=20) as response:
-              data = json.load(response)
-          if not isinstance(data.get("total_count"), int) or data["total_count"] < 1:
+          base = "https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"] + "/actions/artifacts?name=brain-clean-v1-paper2-state&per_page=100"
+          items = []
+          page = 1
+          while True:
+              if page > 100:
+                  raise RuntimeError("PAPER2 artifact pagination safety limit exceeded")
+              request = urllib.request.Request(base + f"&page={page}", headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  data = json.load(response)
+              if not isinstance(data.get("total_count"), int):
+                  raise RuntimeError("PAPER2 artifact count unavailable")
+              batch = data.get("artifacts")
+              if not isinstance(batch, list):
+                  raise RuntimeError("PAPER2 artifact history unavailable")
+              items.extend(batch)
+              if len(batch) < 100:
+                  break
+              page += 1
+          if not items:
               raise RuntimeError("No PAPER2 artifact: refusing silent bootstrap")
-          items = data.get("artifacts")
-          if not isinstance(items, list) or not items:
-              raise RuntimeError("PAPER2 artifact history unavailable")
           items = [a for a in items if a.get("name") == "brain-clean-v1-paper2-state" and not a.get("expired")]
           if not items:
               raise RuntimeError("All PAPER2 artifacts expired: refusing reset")
