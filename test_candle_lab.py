@@ -281,3 +281,39 @@ class CandleLabTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CupHandleResearchTests(unittest.TestCase):
+    def rows(self, volume=200):
+        closes = [100,99,98,97,96,94,92,90,88,86,84,82,80,82,84,86,88,90,92,94,96,97,98,99,100,98,97,96,97,98,103]
+        return [[600+i*60, c-.1, c+.2, c-.2, c, volume if i==30 else 100]
+                for i,c in enumerate(closes)]
+
+    def evaluate(self, rows):
+        return lab.evaluate_rows(payload(rows), 2465)["cup_handle_research"]
+
+    def test_volume_and_control_have_same_shape(self):
+        self.assertEqual(self.evaluate(self.rows())["status"], "BREAKOUT_WITH_VOLUME")
+        self.assertEqual(self.evaluate(self.rows(100))["status"], "BREAKOUT_CONTROL")
+
+    def test_future_bar_does_not_change_signal(self):
+        rows = self.rows()
+        self.assertEqual(self.evaluate(rows), self.evaluate(rows + [[2460,103,200,100,199,9999]]))
+
+    def test_short_gapped_empty_and_deep_handle_cannot_signal(self):
+        from cup_handle_research import detect
+        self.assertEqual(detect(self.rows()[-20:])["status"], "INSUFFICIENT_DATA")
+        rows = self.rows(); rows[5][0] += 60
+        self.assertEqual(detect(rows)["status"], "INSUFFICIENT_DATA")
+        rows = self.rows(); rows[5][5] = 0
+        self.assertEqual(detect(rows)["status"], "INSUFFICIENT_DATA")
+        rows = self.rows(); rows[27][3] = 75
+        self.assertEqual(detect(rows)["status"], "NO_PATTERN")
+
+    def test_no_breakout_and_no_cup(self):
+        rows = self.rows(); rows[-1] = [2400,98,100,97,99,300]
+        self.assertEqual(self.evaluate(rows)["status"], "NO_PATTERN")
+        rows = self.rows()
+        for r in rows[:25]: r[3] = 99
+        from cup_handle_research import detect
+        self.assertEqual(detect(rows)["status"], "NO_PATTERN")

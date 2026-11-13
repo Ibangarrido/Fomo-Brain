@@ -19,6 +19,7 @@ on:
       - "test_protection_lab.py"
       - "ratio_lab.py"
       - "test_ratio_lab.py"
+      - "cup_handle_research.py"
       - "candle_lab.py"
       - "test_candle_lab.py"
       - "fomo_brain.py"
