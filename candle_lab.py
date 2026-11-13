@@ -125,7 +125,7 @@ def evaluate_rows(payload, now):
         if ts in rows and rows[ts] != bar:
             return {"status": "SIN DATOS", "reason": "velas duplicadas contradictorias"}
         rows[ts] = bar
-    closed_history = sorted(rows.values(), key=lambda r: r[0])[-20:]
+    closed_history = sorted(rows.values(), key=lambda r: r[0])[-60:]
     bars = closed_history[-5:]
     if len(bars) < 5:
         return {"status": "SIN DATOS", "reason": "faltan cinco velas cerradas"}
@@ -133,6 +133,8 @@ def evaluate_rows(payload, now):
         return {"status": "SIN DATOS", "reason": "ultima vela cerrada antigua"}
     if any(b[0] - a[0] != 60 for a, b in zip(bars, bars[1:])):
         return {"status": "SIN DATOS", "reason": "huecos entre velas 1m"}
+    from cup_handle_research import detect
+    cup_handle = detect(closed_history)
     a, b = bars[-2:]
     recent = (a[5] + b[5]) / 2
     previous = sum(r[5] for r in bars[:3]) / 3
@@ -148,7 +150,8 @@ def evaluate_rows(payload, now):
             "last_closed_at": datetime.fromtimestamp(b[0] + 60, timezone.utc).isoformat(),
             "recent_volume_mean_usd": recent, "previous_volume_mean_usd": previous,
             "upper_wick_fraction": wick, "policy": "candle-r1",
-            "pattern_research": pattern_research(bars)}
+            "pattern_research": pattern_research(bars),
+            "cup_handle_research": cup_handle}
 
 
 def context(token, fetcher=request_json, now=None):
@@ -179,7 +182,7 @@ def context(token, fetcher=request_json, now=None):
                 del POOL_CACHE[next(iter(POOL_CACHE))]
         else:
             validate_pool(identity[1], token, network)
-        params = urllib.parse.urlencode({"aggregate": 1, "limit": 24, "currency": "usd",
+        params = urllib.parse.urlencode({"aggregate": 1, "limit": 64, "currency": "usd",
                                          "token": token["address"]})
         result = evaluate_rows(fetcher(pool_url + "/ohlcv/minute?" + params), now)
         result.update(source="GeckoTerminal", chain=token["chain"],
