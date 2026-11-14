@@ -1,0 +1,38 @@
+name: PAPER2 main launcher validation
+on:
+  push:
+    branches: [paper2-main-launcher]
+  pull_request:
+    paths:
+      - '.github/workflows/brain_clean_v1_paper2_continue.yml'
+      - '.github/workflows/paper2_main_launcher_ci.yml'
+      - 'test_paper2_main_launcher.py'
+permissions:
+  contents: read
+jobs:
+  launcher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore selector behavioral regression
+        run: |
+          python -m pip install PyYAML==6.0.3
+          python -m unittest -v test_paper2_main_launcher.py
+      - name: Validate launcher syntax and Actions expressions
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes= .github/workflows/brain_clean_v1_paper2_continue.yml
+      - uses: actions/checkout@v4
+        with:
+          ref: 03f35d3df9290dec0531e92f61c076cd18a4a9dd
+          path: engine
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Regression of exact pinned PAPER engine
+        working-directory: engine
+        run: python -m unittest -v test_brain_clean_v1.py test_clean_v1_restore.py test_brain_clean_v1_paper2.py
