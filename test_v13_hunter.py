@@ -2,7 +2,7 @@
 import unittest
 from datetime import datetime, timezone, timedelta
 from v13_hunter import observe, report, trend_observation, continuation_observation, mature_continuation_observation, dormant_wakeup_observation
-from v13_runner import WATCH, SUPPORTED_CHAINS, unique_alert_tokens
+from v13_runner import WATCH, SUPPORTED_CHAINS, unique_alert_tokens, ranked_discovery_alerts
 
 NOW = datetime(2026, 10, 18, 16, 0, tzinfo=timezone.utc)
 
@@ -34,6 +34,21 @@ class HunterTests(unittest.TestCase):
         self.assertEqual(sum(bool(r["discovery_alert"]) for r in rows), 4)
         self.assertEqual(unique_alert_tokens(rows), 3)
         self.assertEqual(unique_alert_tokens([]), 0)
+
+    def test_complete_alert_audit_not_truncated_at_thirty(self):
+        rows = [
+            {"discovery_alert": True, "market_gates_pass": i == 34,
+             "trades_5m": i, "address": f"token-{i}"}
+            for i in range(35)
+        ]
+        rows.append({"discovery_alert": False, "market_gates_pass": True,
+                     "trades_5m": 999, "address": "excluded"})
+        ranked = ranked_discovery_alerts(rows)
+        self.assertEqual(len(ranked), 35)
+        self.assertEqual(len(ranked[:30]), 30)
+        self.assertEqual(ranked[0]["address"], "token-34")
+        self.assertNotIn("excluded", {row["address"] for row in ranked})
+        self.assertEqual(ranked_discovery_alerts([]), [])
 
     def test_valid_market_not_auto_trade(self):
         r = observe(pair(), NOW)
