@@ -5,6 +5,7 @@ import os
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
+from test_fomo_v8 import pair
 import test_m4_lab
 import m4_lab as lab
 import fomo_brain as brain
@@ -63,6 +64,32 @@ class IsolationTests(unittest.TestCase):
         state['positions'].append(dict(state['positions'][0], address='other'))
         state = self.run_isolated(state)
         self.assertTrue(any('ENTRADAS PAUSADAS' in n for n in state['last_run_notes']))
+
+    def test_clean_m4_paper_epoch_starts_without_legacy_positions(self):
+        # A fresh isolated test portfolio, never overwrite historical ledgers.
+        state = copy.deepcopy(self.seed)
+        state["cash"] = 100
+        state["reserve"] = 0
+        state["positions"] = []
+        state["closed"] = []
+        state["seen"] = []
+        state.pop("unknown_isolation_epoch", None)
+        path = "fomo_paper_v10.json"
+        lab.write(path, state)
+        candidate = brain.analizar_par(pair(address="m4_clean_candidate", pool="m4_clean_pool"))
+        with patch.dict(os.environ, BRAIN_UNKNOWN_ISOLATION="1"), \\
+             patch.object(brain, "cotizar_posicion", side_effect=ValueError("No quote")), \\
+             contextlib.redirect_stdout(io.StringIO()):
+            brain.simular_cartera([candidate], path)
+        updated = self.read(path)
+        self.assertEqual(updated["cash"], 100)
+        self.assertEqual(updated["reserve"], 0)
+        self.assertEqual(updated["positions"], [])
+        self.assertEqual(updated["closed"], [])
+        self.assertFalse(any("cartera sin valoracion completa" in n
+                             for n in updated["last_run_notes"]))
+        self.assertFalse(any("maximo 3 posiciones" in n
+                             for n in updated["last_run_notes"]))
 
     def test_capital_loss_and_existing_halt_still_apply(self):
         state = copy.deepcopy(self.seed)
