@@ -220,6 +220,27 @@ class HunterTests(unittest.TestCase):
                          {"x", "telegram", "other"})
         self.assertEqual(public_social_links({"info": {}}), [])
 
+    def test_contrarian_research_is_observational_and_handles_missing_values(self):
+        from v13_runner import contrarian_exhaustion_research
+        rows = [
+            {"chain": "solana", "address": "a", "pair": "p", "change_1h_pct": 175,
+             "change_5m_pct": -8, "buy_ratio_5m": 0.32},
+            {"chain": "solana", "address": "b", "pair": "p", "change_1h_pct": 180,
+             "change_5m_pct": None, "buy_ratio_5m": None},
+            {"chain": "solana", "address": "c", "pair": "p", "change_1h_pct": 160,
+             "change_5m_pct": 12, "buy_ratio_5m": 0.75},
+            {"chain": "solana", "address": "d", "pair": "p", "change_1h_pct": 100,
+             "change_5m_pct": -12, "buy_ratio_5m": 0.2},
+        ]
+        results = contrarian_exhaustion_research(rows)
+        self.assertEqual([r["research_status"] for r in results],
+                         ["POSSIBLE_EXHAUSTION_UNCONFIRMED",
+                          "EXHAUSTION_UNVERIFIED",
+                          "EUPHORIA_WITHOUT_EXHAUSTION_CONFIRMATION"])
+        self.assertTrue(all(r["trading_signal"] is False for r in results))
+        self.assertTrue(all(r["wallet_attribution"] is None for r in results))
+        self.assertEqual(contrarian_exhaustion_research([]), [])
+
     def test_unknown_market_values_never_pass(self):
         r = observe(pair(txns={"m5": {}}, priceChange={}), NOW)
         self.assertFalse(r["market_gates_pass"])
