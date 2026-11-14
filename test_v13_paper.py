@@ -66,6 +66,33 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(s["cash_eur"], 100)
         self.assertEqual(report["events"], [])
 
+    def test_entry_funnel_records_missing_confirmation_without_trading(self):
+        s, report = advance(initial_state(), [row()], [], NOW)
+        funnel = report["entry_funnel"]
+        self.assertEqual(funnel["observed_pools"], 1)
+        self.assertEqual(funnel["market_gate_passes"], 1)
+        self.assertEqual(funnel["candidates_evaluated"], 1)
+        self.assertEqual(funnel["effective_blocker_counts"],
+                         {"AWAITING_SECOND_QUALIFIED_SAME_POOL_OBSERVATION": 1})
+        self.assertEqual(s["positions"], [])
+        self.assertEqual(s["cash_eur"], 100)
+
+    def test_entry_funnel_counts_failed_confirmation_without_inventing_pnl(self):
+        current = row(.00018)
+        previous = row(.0002, minutes=5)
+        s, report = advance(initial_state(), [current], [previous], NOW)
+        self.assertEqual(report["entry_funnel"]["effective_blocker_counts"],
+                         {"CONFIRMATION_CHANGE_OUTSIDE_1_12PCT": 1})
+        self.assertEqual(report["modeled_equity_eur"], 100)
+        self.assertEqual(report["events"], [])
+
+    def test_entry_funnel_empty_when_no_candidate_passes(self):
+        bad = dict(row(), market_gates_pass=False, mature_watch=False)
+        s, report = advance(initial_state(), [bad], [], NOW)
+        self.assertEqual(report["entry_funnel"]["candidates_evaluated"], 0)
+        self.assertEqual(report["entry_funnel"]["effective_blocker_counts"], {})
+        self.assertEqual(s["cash_eur"], 100)
+
     def test_confirmed_entry_costs_and_no_duplicate_token(self):
         # Previous snapshot uses an older creation time to remain age-qualified.
         prior = row(.00019, minutes=5)
