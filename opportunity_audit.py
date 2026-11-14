@@ -230,11 +230,36 @@ def watch_targets(now=None):
     automatic = [r for r in active if not is_manual(r["chain"], r["address"])]
     rejected = [r for r in automatic if r.get("admission_pool") == "rejected_reserve"]
     ordinary = [r for r in automatic if r.get("admission_pool") != "rejected_reserve"]
-    # Same ten automatic requests; reserve five for each cohort when both exist.
-    selected = rotate(rejected, 5 if ordinary else 10)
-    selected += rotate(ordinary, 10 - len(selected))
-    if len(selected) < 10:
-        selected += [t for t in rotate(rejected, 10) if t not in selected][:10-len(selected)]
+    # Research-only: allocate the existing ten requests to the nearest
+    # eligible checkpoint deadline across both pools before fair rotation.
+    # No extra provider calls, entry-rule changes, or wallet actions.
+    urgent_rows = []
+    for row in automatic:
+        deadline = checkpoint_deadline(row)
+        if deadline is not None:
+            urgent_rows.append((deadline, row["chain"], row["address"]))
+    urgent_rows.sort()
+    selected = [(chain, address) for _, chain, address in urgent_rows[:10]]
+    remaining = 10 - len(selected)
+    if remaining:
+        rejected_rotation = rotate(rejected, len(rejected))
+        ordinary_rotation = rotate(ordinary, len(ordinary))
+        selected_set = set(selected)
+        while remaining and (rejected_rotation or ordinary_rotation):
+            for pool in (rejected_rotation, ordinary_rotation):
+                while pool and pool[0] in selected_set:
+                    pool.pop(0)
+                if pool and remaining:
+                    target = pool.pop(0)
+                    selected.append(target)
+                    selected_set.add(target)
+                    remaining -= 1
+    print("WATCH URGENT ALLOCATION " + json.dumps({
+        "eligible_urgent": len(urgent_rows),
+        "selected_urgent": min(10, len(urgent_rows)),
+        "urgent_unselected": max(0, len(urgent_rows) - 10),
+        "scope": "research-only priority, unchanged ten-request limit",
+    }))
     due_targets = {(r["chain"], r["address"]) for r in automatic
                    if checkpoint_deadline(r) is not None}
     if due_targets:
