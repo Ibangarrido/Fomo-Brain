@@ -1,0 +1,21 @@
+[
+  {
+    "id": "BTCUSDT:1h:1794880800000:24:small-v1",
+    "mode": "PAPER_ONLY",
+    "symbol": "BTCUSDT",
+    "model": "NeoQuasar/Kronos-small",
+    "seed": 42,
+    "sample_count": 1,
+    "created_at_ms": 1794883909420,
+    "input_cutoff_ms": 1794880800000,
+    "target_ms": 1794967200000,
+    "input_sha256": "497bd368bc7fd336b8d9ea6f0798a5a9610945f9760108d59c05b837983f9789",
+    "entry_price": 64531.16,
+    "predicted_close": 64340.0234375,
+    "predicted_return": -0.0029619266490793494,
+    "signal": "CASH",
+    "cost_bps": 40,
+    "virtual_notional_eur": 10,
+    "note": "Independent overlapping observations; not a funded portfolio or calibrated probability"
+  }
+]
