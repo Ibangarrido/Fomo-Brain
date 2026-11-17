@@ -1,5 +1,6 @@
 """Isolated forward-only Kronos experiment. No wallet or order APIs."""
 import hashlib
+from historical_analogs import analyze
 import json
 import math
 import os
@@ -86,6 +87,7 @@ def main():
             'entry_price':entry, 'predicted_close':predicted, 'predicted_return':predicted_return,
             'signal':'LONG' if predicted_return > COST_BPS / 10000 else 'CASH',
             'cost_bps':COST_BPS, 'virtual_notional_eur':10,
+            'historical_analogs':analyze(rows, cost_bps=COST_BPS),
             'note':'Independent overlapping observations; not a funded portfolio or calibrated probability'})
         (output / f'input-{cutoff}.json').write_text(json.dumps(rows))
     temp = path.with_suffix('.tmp')

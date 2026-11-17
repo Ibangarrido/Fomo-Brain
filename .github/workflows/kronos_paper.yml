@@ -6,6 +6,8 @@ on:
     paths:
       - 'kronos_paper.py'
       - 'test_kronos_paper.py'
+      - 'historical_analogs.py'
+      - 'test_historical_analogs.py'
       - '.github/workflows/kronos_paper.yml'
   schedule:
     - cron: '17 6 * * *'
@@ -13,6 +15,8 @@ on:
     paths:
       - 'kronos_paper.py'
       - 'test_kronos_paper.py'
+      - 'historical_analogs.py'
+      - 'test_historical_analogs.py'
       - '.github/workflows/kronos_paper.yml'
 permissions:
   contents: read
@@ -66,7 +70,7 @@ jobs:
           git clone https://github.com/shiyu-coder/Kronos.git /tmp/kronos
           git -C /tmp/kronos checkout 67b630e67f6a18c9e9be918d9b4337c960db1e9a
       - name: Test evaluation invariants
-        run: python -m unittest -v test_kronos_paper.py
+        run: python -m unittest -v test_kronos_paper.py test_historical_analogs.py
       - name: Publish forward forecast and settle matured observations
         env:
           PYTHONPATH: /tmp/kronos
