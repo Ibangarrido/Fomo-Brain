@@ -1,0 +1,21 @@
+name: Continuation Fresh V2 PAPER regression
+on:
+  pull_request:
+    paths:
+      - 'continuation_lab.py'
+      - 'test_continuation_lab.py'
+      - '.github/workflows/continuation_fresh_v2_ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run continuation regression tests offline
+        run: python -m unittest -v test_continuation_lab.py
