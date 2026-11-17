@@ -1,0 +1,121 @@
+name: Clean V1 PR35 PAPER entry-audit shadow
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'brain_clean_v1.py'
+      - 'test_brain_clean_v1.py'
+      - '.github/workflows/brain_clean_v1_pr35_audit_shadow.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: brain-clean-v1-pr35-audit-shadow
+  cancel-in-progress: false
+
+jobs:
+  audit_shadow:
+    if: github.event.pull_request.number == 35 && github.event.pull_request.head.repo.full_name == 'Ibangarrido/Fomo-Brain'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact repair HEAD (not main or PR merge commit)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Confirm checked-out repair revision
+        env:
+          REPAIR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REPAIR_HEAD"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline regression for earlier-poll entry audit
+        run: python -m unittest -v test_brain_clean_v1.py
+      - name: Restore latest main PAPER ledger into ephemeral runner only
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: brain_clean_v1.yml
+          branch: main
+          name: brain-clean-v1-state
+          path: .
+          search_artifacts: true
+          workflow_conclusion: ''
+          if_no_artifact_found: fail
+      - name: Fail-closed ledger preflight (no silent reset)
+        run: |
+          python - <<'PY'
+          import json, math, pathlib
+          path = pathlib.Path("brain_clean_v1_state.json")
+          if not path.is_file():
+              raise SystemExit("No restored main PAPER ledger; refusing shadow")
+          state = json.loads(path.read_text(encoding="utf-8"))
+          cash = state.get("cash")
+          if state.get("version") != 1 or isinstance(cash, bool) or not isinstance(cash, (int, float)) or not math.isfinite(cash) or cash < 0:
+              raise SystemExit("Invalid restored ledger; refusing shadow")
+          if not isinstance(state.get("positions"), dict) or not isinstance(state.get("closed"), list) or not isinstance(state.get("history"), dict):
+              raise SystemExit("Incomplete restored ledger; refusing shadow")
+          prior = state.get("last_run")
+          if not isinstance(prior, dict) or not prior.get("id") or not prior.get("completed_at"):
+              raise SystemExit("Missing previous-run provenance; refusing shadow")
+          baseline = {"cash_eur": cash, "closed_trades": len(state["closed"]),
+                      "open_positions": len(state["positions"]), "previous_run_id": str(prior["id"])}
+          pathlib.Path("brain_clean_v1_audit_shadow_baseline.json").write_text(json.dumps(baseline, indent=2), encoding="utf-8")
+          print("PR35_SHADOW_BASELINE", json.dumps(baseline))
+          PY
+      - name: Execute repair code against isolated PAPER copy
+        env:
+          PYTHONUNBUFFERED: '1'
+          REPAIR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # GITHUB_SHA is a runner-provided default; step env cannot override it.
+          # Override only for this child process so ledger provenance records checked-out HEAD.
+          GITHUB_SHA="$REPAIR_HEAD" python brain_clean_v1.py
+      - name: Verify multi-poll entry audit and repair provenance
+        env:
+          REPAIR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          baseline = json.loads(pathlib.Path("brain_clean_v1_audit_shadow_baseline.json").read_text(encoding="utf-8"))
+          state = json.loads(pathlib.Path("brain_clean_v1_state.json").read_text(encoding="utf-8"))
+          report = json.loads(pathlib.Path("brain_clean_v1_report.json").read_text(encoding="utf-8"))
+          expected = os.environ["REPAIR_HEAD"]
+          if state.get("last_run", {}).get("sha") != expected or report.get("run", {}).get("sha") != expected:
+              raise SystemExit("Wrong code revision in PAPER shadow")
+          if str(report.get("previous_run", {}).get("id")) != baseline["previous_run_id"]:
+              raise SystemExit("Restored ledger provenance changed")
+          if len(state["closed"]) < baseline["closed_trades"]:
+              raise SystemExit("Historical PAPER closed trades lost")
+          if report.get("entries_scope") != "last_poll_only":
+              raise SystemExit("Missing explicit last-poll-only audit scope")
+          entries = report.get("run_entries")
+          expected_entries = report.get("aggregate_counts", {}).get("paper_entry", 0)
+          if not isinstance(entries, list) or not isinstance(expected_entries, int) or len(entries) != expected_entries:
+              raise SystemExit("PAPER entry audit mismatch: run_entries vs aggregate_counts.paper_entry")
+          if any(not isinstance(e, dict) or not isinstance(e.get("poll"), int) or e["poll"] < 1 for e in entries):
+              raise SystemExit("Invalid poll provenance for PAPER entry")
+          outcome = "validated_with_entries" if expected_entries > 0 else "inconclusive_no_entries"
+          result = {"result": outcome, "repair_head_sha": expected,
+                    "baseline": baseline, "entries_in_all_polls": len(entries),
+                    "aggregate_paper_entry": expected_entries, "shadow_cash_eur": state["cash"],
+                    "shadow_closed_trades": len(state["closed"]),
+                    "production_ledger_modified": False}
+          pathlib.Path("brain_clean_v1_audit_shadow_result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+          print("PR35_PAPER_AUDIT", json.dumps(result))
+          PY
+      - name: Upload separate shadow evidence (never production artifact name)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-clean-v1-pr35-audit-shadow
+          path: |
+            brain_clean_v1_audit_shadow_baseline.json
+            brain_clean_v1_audit_shadow_result.json
+            brain_clean_v1_report.json
+          if-no-files-found: warn
+          retention-days: 14
