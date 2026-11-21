@@ -29,3 +29,47 @@ def quarantine_exact_positions(state, keys, evidence):
         }
     # cash, closed, cost basis and trade IDs remain exactly unchanged
     return result
+
+def quarantine_persistent_low_liquidity(state, run_id, min_gap_seconds=3600):
+    """Require two distinct runs with independently observed low-liquidity quotes.
+
+    A bookkeeping quarantine is not proof of an unexecutable sale or zero value.
+    """
+    import math
+    if state.get("portfolio_id") != "clean-v1-paper-2":
+        raise ValueError("PAPER2 only")
+    if not run_id:
+        raise ValueError("Missing run identity")
+    observations = state.setdefault("stranded_observations", {})
+    quarantined = []
+    for key, pos in list(state["positions"].items()):
+        audit = pos.get("shadow_exit_audit", {})
+        ts, liq = audit.get("last_observed_ts"), audit.get("last_liquidity_usd")
+        if not isinstance(ts, (int, float)) or isinstance(ts, bool) or not math.isfinite(ts):
+            continue
+        if not isinstance(liq, (int, float)) or isinstance(liq, bool) or not math.isfinite(liq):
+            continue
+        if liq >= 10000 or liq < 0 or audit.get("quote_status") != "OBSERVED_LOW_LIQUIDITY":
+            observations.pop(key, None)
+            continue
+        previous = observations.get(key)
+        if not previous:
+            observations[key] = {"run_id": str(run_id), "ts": ts, "liquidity_usd": liq}
+            continue
+        if str(previous["run_id"]) == str(run_id):
+            continue
+        if ts < previous["ts"] + min_gap_seconds:
+            continue
+        proof = {key: {"exit_unexecutable": True,
+            "source": "PAPER2_TWO_RUN_LOW_LIQUIDITY_PROXY_NOT_ROUTE_PROOF",
+            "first_run": previous["run_id"], "second_run": str(run_id),
+            "first_ts": previous["ts"], "second_ts": ts,
+            "first_liquidity_usd": previous["liquidity_usd"],
+            "second_liquidity_usd": liq}}
+        changed = quarantine_exact_positions(state, [key], proof)
+        state.clear()
+        state.update(changed)
+        observations = state["stranded_observations"]
+        observations.pop(key, None)
+        quarantined.append(key)
+    return quarantined
