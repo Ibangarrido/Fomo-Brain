@@ -21,13 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 03f35d3df9290dec0531e92f61c076cd18a4a9dd
+          ref: 33f957ef8255a2ca7d85d6857334f95265aa7323
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: PAPER2 offline regression
-        run: python -m unittest -v test_brain_clean_v1_paper2.py
+        run: python -m unittest -v test_brain_clean_v1_paper2.py test_paper2_stranded_positions.py
       - name: Select existing PAPER2 artifact, never initialize or reset
         id: source
         env:
@@ -110,7 +110,7 @@ jobs:
           PAPER2_BOOTSTRAP_RUN: ${{ steps.source.outputs.source_run }}
           PAPER2_SOURCE_WORKFLOW: ${{ steps.source.outputs.source_workflow }}
           PYTHONUNBUFFERED: '1'
-          PAPER2_ENGINE_SHA: 03f35d3df9290dec0531e92f61c076cd18a4a9dd
+          PAPER2_ENGINE_SHA: 33f957ef8255a2ca7d85d6857334f95265aa7323
         run: |
           test "$(git rev-parse HEAD)" = "$PAPER2_ENGINE_SHA"
           python - <<'PY'
