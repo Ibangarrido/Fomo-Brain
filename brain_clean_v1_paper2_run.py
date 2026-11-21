@@ -28,7 +28,24 @@ def run():
     brain.STATE_FILE = paper2.STATE_FILE
     brain.REPORT_FILE = REPORT_FILE
     brain.load_state = lambda path=None: paper2.load_existing()
-    brain.main()
+    original_step = brain.step
+    from paper2_stranded_positions import quarantine_persistent_low_liquidity
+    def paper2_step(state, samples, now=None):
+        report = original_step(state, samples, now)
+        quarantined = quarantine_persistent_low_liquidity(
+            state, os.environ.get("GITHUB_RUN_ID"))
+        if quarantined:
+            report["paper2_quarantined_keys"] = quarantined
+            report["open_positions"] = len(state["positions"])
+            report["quarantine_note"] = (
+                "PAPER2 bookkeeping only: two low-liquidity runs; no sale, "
+                "no proceeds and no verified executable route")
+        return report
+    brain.step = paper2_step
+    try:
+        brain.main()
+    finally:
+        brain.step = original_step
     with open(REPORT_FILE, encoding="utf-8") as handle:
         report = json.load(handle)
     if report.get("run", {}).get("id") != os.environ.get("GITHUB_RUN_ID"):
