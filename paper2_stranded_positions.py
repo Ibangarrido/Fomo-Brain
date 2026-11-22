@@ -30,38 +30,42 @@ def quarantine_exact_positions(state, keys, evidence):
     # cash, closed, cost basis and trade IDs remain exactly unchanged
     return result
 
-def quarantine_persistent_low_liquidity(state, run_id, min_gap_seconds=3600):
-    """Require two distinct runs with independently observed low-liquidity quotes.
+def quarantine_persistent_low_liquidity(state, run_id, samples=None, now=None, min_gap_seconds=3600):
+    """Quarantine only after fresh low-liquidity observations in separate runs.
 
-    A bookkeeping quarantine is not proof of an unexecutable sale or zero value.
+    A low-liquidity quote is an administrative risk proxy, never an executed exit.
     """
     import math
     if state.get("portfolio_id") != "clean-v1-paper-2":
         raise ValueError("PAPER2 only")
-    if not run_id:
-        raise ValueError("Missing run identity")
+    if not run_id or not isinstance(now, (int, float)) or isinstance(now, bool) or not math.isfinite(now):
+        raise ValueError("Run ID and finite current time required")
+    from brain_clean_v1 import MIN_LIQ, MAX_AGE_SECONDS
+    quotes = {q["key"]: q for q in (samples or []) if isinstance(q, dict) and "key" in q}
     observations = state.setdefault("stranded_observations", {})
     quarantined = []
-    for key, pos in list(state["positions"].items()):
-        audit = pos.get("shadow_exit_audit", {})
-        ts, liq = audit.get("last_observed_ts"), audit.get("last_liquidity_usd")
-        if not isinstance(ts, (int, float)) or isinstance(ts, bool) or not math.isfinite(ts):
+    for key in list(state["positions"]):
+        q = quotes.get(key)
+        if q is None:
+            observations.pop(key, None)
             continue
-        if not isinstance(liq, (int, float)) or isinstance(liq, bool) or not math.isfinite(liq):
+        ts, liq, price = q.get("ts"), q.get("liquidity"), q.get("price")
+        valid = all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+                    for v in (ts, liq, price))
+        if not valid or ts > now + 60 or ts < now - MAX_AGE_SECONDS or price <= 0 or liq <= 0:
+            observations.pop(key, None)
             continue
-        if liq >= 10000 or liq < 0 or audit.get("quote_status") != "OBSERVED_LOW_LIQUIDITY":
+        if liq >= MIN_LIQ:
             observations.pop(key, None)
             continue
         previous = observations.get(key)
-        if not previous:
+        if previous is None:
             observations[key] = {"run_id": str(run_id), "ts": ts, "liquidity_usd": liq}
             continue
-        if str(previous["run_id"]) == str(run_id):
-            continue
-        if ts < previous["ts"] + min_gap_seconds:
+        if previous["run_id"] == str(run_id) or ts < previous["ts"] + min_gap_seconds:
             continue
         proof = {key: {"exit_unexecutable": True,
-            "source": "PAPER2_TWO_RUN_LOW_LIQUIDITY_PROXY_NOT_ROUTE_PROOF",
+            "source": "PAPER2_TWO_RUN_FRESH_LOW_LIQUIDITY_PROXY_NOT_ROUTE_PROOF",
             "first_run": previous["run_id"], "second_run": str(run_id),
             "first_ts": previous["ts"], "second_ts": ts,
             "first_liquidity_usd": previous["liquidity_usd"],
