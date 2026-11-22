@@ -10,29 +10,29 @@ class StrandedPositionsTest(unittest.TestCase):
         self.proof = {"mint:pool":{"exit_unexecutable":True,"source":"verified-route-evidence"}}
 
     def test_two_runs_required_for_low_liquidity_quarantine(self):
-        pos = self.state["positions"]["mint:pool"]
-        pos["shadow_exit_audit"] = {"last_observed_ts": 1000,
-            "last_liquidity_usd": 250, "quote_status": "OBSERVED_LOW_LIQUIDITY"}
-        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-1"),[])
-        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-1"),[])
-        self.assertIn("mint:pool",self.state["positions"])
-        pos["shadow_exit_audit"]["last_observed_ts"] = 5000
-        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-2"),["mint:pool"])
+        first = [{"key":"mint:pool","ts":1000,"price":0.01,"liquidity":250}]
+        second = [{"key":"mint:pool","ts":5000,"price":0.01,"liquidity":200}]
+        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-1",first,1000),[])
+        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-1",second,5000),[])
+        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-2",second,5000),["mint:pool"])
         self.assertEqual(self.state["cash"],72.28)
         self.assertEqual(len(self.state["closed"]),1)
         self.assertEqual(len(self.state["isolated_positions"]),1)
-        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-3"),[])
 
     def test_recovered_liquidity_resets_counter(self):
-        pos = self.state["positions"]["mint:pool"]
-        audit = pos["shadow_exit_audit"] = {"last_observed_ts":1000,
-            "last_liquidity_usd":100,"quote_status":"OBSERVED_LOW_LIQUIDITY"}
-        quarantine_persistent_low_liquidity(self.state,"run-1")
-        audit.update(last_observed_ts=5000,last_liquidity_usd=20000,
-            quote_status="OBSERVED_ABOVE_MIN_LIQ")
-        quarantine_persistent_low_liquidity(self.state,"run-2")
+        low = [{"key":"mint:pool","ts":1000,"price":0.01,"liquidity":100}]
+        recovered = [{"key":"mint:pool","ts":5000,"price":0.01,"liquidity":20000}]
+        quarantine_persistent_low_liquidity(self.state,"run-1",low,1000)
+        quarantine_persistent_low_liquidity(self.state,"run-2",recovered,5000)
         self.assertEqual(self.state["stranded_observations"],{})
         self.assertIn("mint:pool",self.state["positions"])
+
+    def test_stale_and_missing_liquidity_do_not_quarantine(self):
+        low = [{"key":"mint:pool","ts":1000,"price":0.01,"liquidity":100}]
+        quarantine_persistent_low_liquidity(self.state,"run-1",low,1000)
+        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-2",low,50000),[])
+        self.assertIn("mint:pool",self.state["positions"])
+        self.assertEqual(self.state["stranded_observations"],{})
 
     def test_preserves_cash_closed_cost_and_input(self):
         before = copy.deepcopy(self.state)
