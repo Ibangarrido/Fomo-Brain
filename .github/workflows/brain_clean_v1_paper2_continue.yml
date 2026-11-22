@@ -26,6 +26,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Overlay pinned PAPER2-only quarantine fix
+        env:
+          PATCH_SHA: 943297a84015ae3c752893781d144d7b0a789303
+        run: |
+          set -euo pipefail
+          for file in paper2_stranded_positions.py brain_clean_v1_paper2_run.py test_paper2_stranded_positions.py; do
+            curl --fail --location --silent --show-error --retry 3 \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${PATCH_SHA}/${file}" -o "${file}"
+            test -s "${file}"
+          done
+          python -m unittest -v test_paper2_stranded_positions.py
       - name: PAPER2 offline regression
         run: python -m unittest -v test_brain_clean_v1_paper2.py
       - name: Select existing PAPER2 artifact, never initialize or reset
