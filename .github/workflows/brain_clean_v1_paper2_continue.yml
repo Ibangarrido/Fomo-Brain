@@ -1,6 +1,12 @@
 name: PAPER2 automatic continuation from main
 on:
   workflow_dispatch:
+  # One-shot validation when this workflow file is changed on main.
+  # Does not change the 15-minute schedule or the PAPER2 ledger.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/brain_clean_v1_paper2_continue.yml'
   schedule:
     - cron: '8,23,38,53 * * * *'
   # Independent fallback when GitHub drops this workflow's schedule events.
