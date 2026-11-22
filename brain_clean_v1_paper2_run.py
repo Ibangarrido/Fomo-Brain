@@ -34,7 +34,8 @@ def run():
     def paper2_step(state, samples, now=None):
         report = original_step(state, samples, now)
         quarantined = quarantine_persistent_low_liquidity(
-            state, os.environ.get("GITHUB_RUN_ID"))
+            state, os.environ.get("GITHUB_RUN_ID"), samples,
+            now if now is not None else __import__("time").time())
         quarantined += quarantine_persistent_missing_quotes(
             state, samples, os.environ.get("GITHUB_RUN_ID"),
             now if now is not None else __import__("time").time())
