@@ -73,3 +73,45 @@ def quarantine_persistent_low_liquidity(state, run_id, min_gap_seconds=3600):
         observations.pop(key, None)
         quarantined.append(key)
     return quarantined
+
+
+def quarantine_persistent_missing_quotes(state, samples, run_id, now, min_gap_seconds=3600):
+    """Release PAPER2 slots only after two independent runs with absent quotes.
+
+    This is administrative isolation, not evidence of a sale or zero value.
+    """
+    import math
+    if state.get("portfolio_id") != "clean-v1-paper-2":
+        raise ValueError("PAPER2 only")
+    if not run_id or not isinstance(now, (int, float)) or isinstance(now, bool) or not math.isfinite(now):
+        raise ValueError("Valid run and observation time required")
+    quotes = {s["key"]: s for s in samples}
+    observations = state.setdefault("stranded_missing_quote_observations", {})
+    quarantined = []
+    for key in list(state["positions"]):
+        q = quotes.get(key)
+        missing = (q is None or not isinstance(q.get("price"), (int, float))
+                   or not isinstance(q.get("liquidity"), (int, float))
+                   or not math.isfinite(q["price"]) or not math.isfinite(q["liquidity"])
+                   or q["price"] <= 0 or q["liquidity"] <= 0)
+        if not missing:
+            observations.pop(key, None)
+            continue
+        previous = observations.get(key)
+        if previous is None:
+            observations[key] = {"run_id": str(run_id), "ts": now}
+            continue
+        if str(previous["run_id"]) == str(run_id) or now < previous["ts"] + min_gap_seconds:
+            continue
+        proof = {key: {"exit_unexecutable": True,
+            "source": "PAPER2_TWO_RUN_MISSING_QUOTES_ADMINISTRATIVE_ONLY",
+            "first_run": previous["run_id"], "second_run": str(run_id),
+            "first_ts": previous["ts"], "second_ts": now,
+            "note": "No valid quote; sale and recoverable value remain unverified"}}
+        changed = quarantine_exact_positions(state, [key], proof)
+        state.clear()
+        state.update(changed)
+        observations = state["stranded_missing_quote_observations"]
+        observations.pop(key, None)
+        quarantined.append(key)
+    return quarantined
