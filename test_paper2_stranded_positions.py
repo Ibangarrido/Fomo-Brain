@@ -1,6 +1,6 @@
 import unittest
 import copy
-from paper2_stranded_positions import quarantine_exact_positions, quarantine_persistent_low_liquidity
+from paper2_stranded_positions import quarantine_exact_positions, quarantine_persistent_low_liquidity, quarantine_persistent_missing_quotes
 
 class StrandedPositionsTest(unittest.TestCase):
     def setUp(self):
@@ -64,6 +64,31 @@ class StrandedPositionsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             quarantine_exact_positions(self.state,["mint:pool","unknown"],self.proof)
         self.assertEqual(self.state,before)
+
+
+    def test_missing_quotes_two_runs_isolate_without_sale_or_cash_change(self):
+        before = copy.deepcopy(self.state)
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-1", 1000), [])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-1", 5000), [])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-2", 5000), ["mint:pool"])
+        self.assertEqual(self.state["cash"], before["cash"])
+        self.assertEqual(self.state["closed"], before["closed"])
+        self.assertEqual(self.state["isolated_positions"]["mint:pool"]["cost"], 10)
+        self.assertIsNone(self.state["isolated_positions"]["mint:pool"]["realizable_value_eur"])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-3", 9000), [])
+
+    def test_missing_quotes_recovery_resets_observation(self):
+        quarantine_persistent_missing_quotes(self.state, [], "run-1", 1000)
+        good = [{"key": "mint:pool", "price": 1.0, "liquidity": 20000}]
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, good, "run-2", 5000), [])
+        self.assertEqual(self.state["stranded_missing_quote_observations"], {})
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-3", 9000), [])
+        self.assertIn("mint:pool", self.state["positions"])
+
+    def test_missing_quotes_not_enabled_for_other_portfolios(self):
+        self.state["portfolio_id"] = "paper1"
+        with self.assertRaises(ValueError):
+            quarantine_persistent_missing_quotes(self.state, [], "run-1", 1000)
 
 if __name__=="__main__":
     unittest.main()
