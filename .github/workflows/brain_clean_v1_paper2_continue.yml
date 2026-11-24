@@ -2,7 +2,7 @@ name: PAPER2 automatic continuation from main
 on:
   workflow_dispatch:
   # One-shot validation when this workflow file is changed on main.
-  # Does not change the 15-minute schedule or the PAPER2 ledger.
+  # Includes the explicitly authorized one-time PAPER2 epoch transition.
   push:
     branches: [main]
     paths:
@@ -45,7 +45,7 @@ jobs:
           python -m unittest -v test_paper2_stranded_positions.py
       - name: PAPER2 offline regression
         run: python -m unittest -v test_brain_clean_v1_paper2.py
-      - name: Select existing PAPER2 artifact, never initialize or reset
+      - name: Select existing PAPER2 artifact, never silently initialize
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,6 +120,50 @@ jobs:
           if not previous and os.environ["PAPER2_SOURCE_WORKFLOW"] != "brain_clean_v1_paper2_bootstrap.yml":
               raise RuntimeError("Missing last_run in non-bootstrap PAPER2 state")
           print("PAPER2_RESTORED", state["portfolio_id"], "closed", len(state["closed"]))
+          PY
+      - name: Authorized one-time PAPER2 epoch reset (2026-11-24)
+        env:
+          PAPER2_SOURCE_RUN: ${{ steps.source.outputs.source_run }}
+        run: |
+          python - <<'PY'
+          import copy, os
+          import brain_clean_v1_paper2 as p
+          import brain_clean_v1 as brain
+          marker = "authorized-2026-11-24"
+          def reset(old):
+              if old.get("paper2_epoch") == marker:
+                  if not isinstance(old.get("archived_previous_epoch"), dict):
+                      raise RuntimeError("Missing previous epoch archive")
+                  return old
+              if old.get("portfolio_id") != p.PORTFOLIO_ID:
+                  raise RuntimeError("Wrong portfolio")
+              fresh = p.seed()
+              if fresh["cash"] != 100 or fresh["positions"] or fresh["closed"]:
+                  raise RuntimeError("Unexpected seed")
+              fresh["paper2_epoch"] = marker
+              fresh["archived_previous_epoch"] = copy.deepcopy(old)
+              fresh["last_run"] = copy.deepcopy(old["last_run"])
+              return fresh
+          sample = p.seed()
+          sample["cash"] = 42
+          sample["positions"] = {"example": {"cost": 10}}
+          sample["closed"] = [{"id": "old"}]
+          sample["last_run"] = {"id": "test"}
+          test = reset(sample)
+          assert test["cash"] == 100 and not test["positions"] and not test["closed"]
+          assert test["archived_previous_epoch"] == sample
+          assert reset(test) == test and sample["cash"] == 42
+          old = p.load_existing()
+          if old.get("paper2_epoch") != marker:
+              if str(old["last_run"]["id"]) != os.environ["PAPER2_SOURCE_RUN"]:
+                  raise RuntimeError("Reset provenance mismatch")
+              fresh = reset(old)
+              brain.save_json(p.STATE_FILE, fresh)
+              assert p.load_existing() == fresh
+              print("PAPER2_EPOCH_RESET", marker, "cash", fresh["cash"], "archived_closed", len(old["closed"]), "archived_active", len(old["positions"]), "archived_isolated", len(old.get("isolated_positions", {})))
+          else:
+              reset(old)
+              print("PAPER2_EPOCH_ALREADY_RESET", marker)
           PY
       - name: Execute existing PAPER2 only
         env:
