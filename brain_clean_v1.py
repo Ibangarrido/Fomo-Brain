@@ -634,8 +634,15 @@ def step(state, samples, now=None):
 def tracking_priority(state, now=None):
     """Holdings first, then signals, with reserved rotating rejected-token slots."""
     now = time.time() if now is None else now
-    held = list(dict.fromkeys(k.split(":", 1)[0] for k in
-                              list(state["positions"]) + list(state.get("isolated_positions", {}))))
+    held = list(dict.fromkeys(k.split(":", 1)[0] for k in state["positions"]))
+    if state.get("portfolio_id") == "clean-v1-paper-2":
+        isolated = sorted({k.split(":", 1)[0] for k in state.get("isolated_positions", {})} - set(held))
+        cursor = state.get("isolated_tracking_cursor", 0)
+        if isolated and len(held) < 6:
+            held.append(isolated[cursor % len(isolated)])
+            state["isolated_tracking_cursor"] = (cursor + 1) % len(isolated)
+    else:
+        held = list(dict.fromkeys(held + [k.split(":", 1)[0] for k in state.get("isolated_positions", {})]))
     recent = sorted((v[-1] for v in state["history"].values() if v and gate(v[-1]) is None),
                     key=lambda s: s["ts"], reverse=True)
     watches = sorted({k.split(":", 1)[0] for k, w in state.get("watchlist", {}).items()
