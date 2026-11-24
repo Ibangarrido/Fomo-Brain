@@ -1099,6 +1099,26 @@ class StopExitAuditRegressionTests(unittest.TestCase):
         self.assertEqual(state["positions"], {})
         self.assertIsNone(brain.learning_summary(state)["stop_overshoot_audit"]["verified_stop_fills"])
 
+
+    def test_paper2_isolated_tracking_rotates_without_mutating_ledger(self):
+        from copy import deepcopy
+        state = brain.new_state()
+        state["portfolio_id"] = "clean-v1-paper-2"
+        state["positions"] = {"active:pool": {"cost": 10}}
+        state["isolated_positions"] = {f"dead{i}:pool": {"cost": 10} for i in range(4)}
+        before = deepcopy(state)
+        seen = set()
+        for _ in range(4):
+            selected = brain.tracking_priority(state, 1000)
+            self.assertEqual(selected[0], "active")
+            self.assertLessEqual(len(selected), 8)
+            isolated = {a for a in selected if a.startswith("dead")}
+            self.assertEqual(len(isolated), 1)
+            seen.update(isolated)
+        self.assertEqual(seen, {f"dead{i}" for i in range(4)})
+        for key in ("cash", "closed", "positions", "isolated_positions"):
+            self.assertEqual(state[key], before[key])
+
 if __name__ == "__main__":
     unittest.main()
 
