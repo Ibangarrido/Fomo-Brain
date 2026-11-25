@@ -121,49 +121,16 @@ jobs:
               raise RuntimeError("Missing last_run in non-bootstrap PAPER2 state")
           print("PAPER2_RESTORED", state["portfolio_id"], "closed", len(state["closed"]))
           PY
-      - name: Authorized one-time PAPER2 epoch reset (2026-11-24)
-        env:
-          PAPER2_SOURCE_RUN: ${{ steps.source.outputs.source_run }}
+      - name: Require existing PAPER2 epoch without reset
         run: |
           python - <<'PY'
-          import copy, os
           import brain_clean_v1_paper2 as p
-          import brain_clean_v1 as brain
-          marker = "authorized-2026-11-24"
-          def reset(old):
-              if old.get("paper2_epoch") == marker:
-                  if not isinstance(old.get("archived_previous_epoch"), dict):
-                      raise RuntimeError("Missing previous epoch archive")
-                  return old
-              if old.get("portfolio_id") != p.PORTFOLIO_ID:
-                  raise RuntimeError("Wrong portfolio")
-              fresh = p.seed()
-              if fresh["cash"] != 100 or fresh["positions"] or fresh["closed"]:
-                  raise RuntimeError("Unexpected seed")
-              fresh["paper2_epoch"] = marker
-              fresh["archived_previous_epoch"] = copy.deepcopy(old)
-              fresh["last_run"] = copy.deepcopy(old["last_run"])
-              return fresh
-          sample = p.seed()
-          sample["cash"] = 42
-          sample["positions"] = {"example": {"cost": 10}}
-          sample["closed"] = [{"id": "old"}]
-          sample["last_run"] = {"id": "test"}
-          test = reset(sample)
-          assert test["cash"] == 100 and not test["positions"] and not test["closed"]
-          assert test["archived_previous_epoch"] == sample
-          assert reset(test) == test and sample["cash"] == 42
-          old = p.load_existing()
-          if old.get("paper2_epoch") != marker:
-              if str(old["last_run"]["id"]) != os.environ["PAPER2_SOURCE_RUN"]:
-                  raise RuntimeError("Reset provenance mismatch")
-              fresh = reset(old)
-              brain.save_json(p.STATE_FILE, fresh)
-              assert p.load_existing() == fresh
-              print("PAPER2_EPOCH_RESET", marker, "cash", fresh["cash"], "archived_closed", len(old["closed"]), "archived_active", len(old["positions"]), "archived_isolated", len(old.get("isolated_positions", {})))
-          else:
-              reset(old)
-              print("PAPER2_EPOCH_ALREADY_RESET", marker)
+          state = p.load_existing()
+          if state.get("paper2_epoch") != "authorized-2026-11-24":
+              raise RuntimeError("Missing PAPER2 epoch: refusing reset")
+          if not isinstance(state.get("archived_previous_epoch"), dict):
+              raise RuntimeError("Missing previous epoch archive")
+          print("PAPER2_EPOCH_PRESERVED", state["paper2_epoch"])
           PY
       - name: Execute existing PAPER2 only
         env:
