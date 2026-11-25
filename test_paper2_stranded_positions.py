@@ -79,7 +79,7 @@ class StrandedPositionsTest(unittest.TestCase):
 
     def test_missing_quotes_recovery_resets_observation(self):
         quarantine_persistent_missing_quotes(self.state, [], "run-1", 1000)
-        good = [{"key": "mint:pool", "price": 1.0, "liquidity": 20000}]
+        good = [{"key": "mint:pool", "price": 1.0, "liquidity": 20000, "ts": 5000}]
         self.assertEqual(quarantine_persistent_missing_quotes(self.state, good, "run-2", 5000), [])
         self.assertEqual(self.state["stranded_missing_quote_observations"], {})
         self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-3", 9000), [])
@@ -89,6 +89,17 @@ class StrandedPositionsTest(unittest.TestCase):
         self.state["portfolio_id"] = "paper1"
         with self.assertRaises(ValueError):
             quarantine_persistent_missing_quotes(self.state, [], "run-1", 1000)
+
+    def test_stale_positive_quote_isolated_without_sale(self):
+        from brain_clean_v1 import MAX_AGE_SECONDS
+        now = MAX_AGE_SECONDS + 10000
+        q = [{"key":"mint:pool","price":0.01,"liquidity":2329.6,"ts":1}]
+        before = copy.deepcopy(self.state)
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state,q,"r1",now),[])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state,q,"r2",now+3600),["mint:pool"])
+        self.assertEqual(self.state["cash"],before["cash"])
+        self.assertEqual(self.state["closed"],before["closed"])
+        self.assertIsNone(self.state["isolated_positions"]["mint:pool"]["realizable_value_eur"])
 
 if __name__=="__main__":
     unittest.main()
