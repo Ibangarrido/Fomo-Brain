@@ -1,0 +1,29 @@
+name: Brain V2 Market shadow CI
+on:
+  pull_request:
+    paths:
+      - 'brain_v2_*.py'
+      - 'test_brain_v2_*.py'
+      - .github/workflows/brain_v2_market_ci.yml
+permissions:
+  contents: read
+jobs:
+  shadow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -v -p 'test_brain_v2_*.py'
+      - name: Public Solana source smoke observation
+        run: |
+          python - <<'PY'
+          import json
+          from brain_v2_market import observe
+          rows=observe(["Bv1a7cEj5aRnJQhMw4kRQqAFesMSd5LwcDnUzq52BMmr"])
+          print(json.dumps(rows))
+          assert rows[0]["source_status"] != "SOURCE_ERROR", "Public source unavailable"
+          PY
