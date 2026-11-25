@@ -94,10 +94,12 @@ def quarantine_persistent_missing_quotes(state, samples, run_id, now, min_gap_se
     quarantined = []
     for key in list(state["positions"]):
         q = quotes.get(key)
-        missing = (q is None or not isinstance(q.get("price"), (int, float))
-                   or not isinstance(q.get("liquidity"), (int, float))
-                   or not math.isfinite(q["price"]) or not math.isfinite(q["liquidity"])
-                   or q["price"] <= 0 or q["liquidity"] <= 0)
+        from brain_clean_v1 import MAX_AGE_SECONDS
+        def valid_number(v):
+            return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+        missing = (q is None or not all(valid_number(q.get(k)) for k in ("price", "liquidity", "ts"))
+                   or q["price"] <= 0 or q["liquidity"] <= 0
+                   or q["ts"] < now - MAX_AGE_SECONDS or q["ts"] > now + 60)
         if not missing:
             observations.pop(key, None)
             continue
