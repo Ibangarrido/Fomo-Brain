@@ -1,0 +1,33 @@
+name: Brain Solana Bridge CI
+on:
+  pull_request:
+    paths:
+      - 'brain_v2_*.py'
+      - 'test_brain_v2_*.py'
+      - .github/workflows/brain_v2_solana_bridge_ci.yml
+permissions:
+  contents: read
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -v -p 'test_brain_v2_*.py'
+      - name: Probe public sources
+        run: |
+          python - <<'PY'
+          import json
+          from brain_v2_solana_bridge import bridge
+          for mint in ["So11111111111111111111111111111111111111112","Bv1a7cEj5aRnJQhMw4kRQqAFesMSd5LwcDnUzq52BMmr"]:
+              result=bridge(mint)
+              print(json.dumps(result),flush=True)
+              if mint.startswith("So111"):
+                  control=result
+          assert control["sources"]["solana_rpc"]["status"]=="OK"
+          assert any(control["sources"][s]["status"]=="OK" for s in ("dexscreener","geckoterminal"))
+          PY
