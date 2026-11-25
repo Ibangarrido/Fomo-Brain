@@ -1,0 +1,38 @@
+import io
+import json
+import unittest
+from brain_v2_live import fetch,poll
+
+M="A"*32
+class LiveTests(unittest.TestCase):
+    def row(self,**kw):
+        return dict(dict(chainId="solana",baseToken={"address":M},priceUsd="1",liquidity={"usd":6000},pairAddress="p"),**kw)
+    def get(self,rows):
+        return fetch(M,opener=lambda *a,**k:io.BytesIO(json.dumps(rows).encode()),clock=lambda:123)
+    def test_provenance(self):
+        r=self.get([self.row()])[0]
+        self.assertIsNone(r["quote_timestamp"])
+        self.assertFalse(r["route_verified"])
+        self.assertEqual(r["received_at"],123)
+    def test_wrong_chain(self):
+        self.assertEqual(self.get([self.row(chainId="ethereum")]),[])
+    def test_wrong_mint(self):
+        self.assertEqual(self.get([self.row(baseToken={"address":"other"})]),[])
+    def test_invalid_price(self):
+        self.assertEqual(self.get([self.row(priceUsd="nan")]),[])
+    def test_bad_mint(self):
+        with self.assertRaises(ValueError): fetch("../")
+    def test_recovery(self):
+        calls=[]
+        def f(m):
+            calls.append(m)
+            if len(calls)==1: raise TimeoutError()
+            return [{}]
+        delays=[]
+        r=list(poll([M],fetcher=f,rounds=2,sleep=delays.append))
+        self.assertEqual([x[0]["status"] for x in r],["SOURCE_ERROR","OK"])
+        self.assertEqual(delays,[60])
+    def test_dedup(self):
+        self.assertEqual(len(next(poll([M,M],fetcher=lambda m:[]))),1)
+    def test_budget(self):
+        with self.assertRaises(ValueError): list(poll([M],interval=1))
