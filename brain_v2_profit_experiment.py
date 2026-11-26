@@ -33,3 +33,41 @@ def experiment(*, prices, radar_inputs, records, baseline, challenger, as_of, se
         shadow={h:review(records,as_of=as_of,horizon=h) for h in (300,900,3600,14400)},
         autotest=evaluate(baseline,challenger,as_of=as_of,selection_cutoff=selection_cutoff),
         orders=[],changes=[])
+
+
+def staircase_watch(samples, *, as_of):
+    """Chronological same-pool observation; repeated recovery/crash, not proof of fraud."""
+    import math
+    unknown=dict(status="UNKNOWN",cycles=0,orders=[])
+    if len(samples)<6 or not number(as_of):
+        return unknown
+    try:
+        identity=tuple(samples[0][k] for k in ("mint","pair","source"))
+        if not all(isinstance(x,str) and x for x in identity):
+            return unknown
+        times=[]; prices=[]
+        for s in samples:
+            if tuple(s[k] for k in ("mint","pair","source"))!=identity:
+                return unknown
+            t,p=s["received_at"],s["price_usd"]
+            if not number(t) or not number(p) or p<=0 or t<=0 or t>as_of:
+                return unknown
+            if times and not 0<t-times[-1]<=120:
+                return unknown
+            times.append(t); prices.append(p)
+        if as_of-times[-1]>60:
+            return unknown
+    except (KeyError,TypeError,ValueError):
+        return unknown
+    peak=prices[0]; trough=None; cycles=0; crashes=0
+    for p in prices[1:]:
+        if trough is not None:
+            trough=min(trough,p)
+            if p/trough>=1.5:
+                peak=p; trough=None; cycles+=1
+        else:
+            peak=max(peak,p)
+            if p/peak<=0.5:
+                crashes+=1; trough=p
+    return dict(status="REPEAT_CRASH_ALERT" if crashes>=2 and cycles>=1 else "WATCH" if crashes else "NO_REPEAT_FLAG",
+                cycles=cycles,crashes=crashes,orders=[],scope="OBSERVATION_ONLY")
