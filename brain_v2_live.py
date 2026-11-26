@@ -3,7 +3,7 @@ import json
 import math
 import re
 import time
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 BASE="https://api.dexscreener.com/token-pairs/v1/solana/"
@@ -12,7 +12,7 @@ def fetch(mint, *, opener=urlopen, clock=time.time, sleep=time.sleep):
         raise ValueError("invalid mint")
     for attempt in range(3):
         try:
-            with opener(BASE+mint,timeout=8) as response:
+            with opener(Request(BASE+mint, headers={"Accept":"application/json","User-Agent":"FomoBrain-Paper/2.0"}),timeout=10) as response:
                 raw=response.read(2_000_001)
             break
         except (HTTPError, URLError, TimeoutError, ConnectionError) as exc:
@@ -57,7 +57,7 @@ def poll(mints, *, fetcher=fetch, rounds=1, interval=30, sleep=time.sleep):
                 rows=fetcher(mint)
                 batch.append(dict(mint=mint,status="OK" if rows else "NO_DATA",observations=rows))
             except Exception as exc:
-                batch.append(dict(mint=mint,status="SOURCE_ERROR",error=type(exc).__name__,observations=[]))
+                batch.append(dict(mint=mint,status="SOURCE_ERROR",error=type(exc).__name__,http_status=exc.code if isinstance(exc,HTTPError) else None,observations=[]))
         yield batch
         if i+1<rounds:
             sleep(interval if all(r["status"]!="SOURCE_ERROR" for r in batch) else min(300,interval*2))
