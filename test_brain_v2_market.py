@@ -10,4 +10,10 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(observe(["A"*32],fetcher=lambda m:[])[0]["source_status"],"NO_DATA")
     def test_error(self):
         def fail(m): raise TimeoutError()
-        self.assertEqual(observe(["A"*32],fetcher=fail)[0]["source_status"],"SOURCE_ERROR")
+        row=observe(["A"*32],fetcher=fail)[0]
+        self.assertEqual(row["source_status"],"SOURCE_ERROR")
+        self.assertEqual(row["source_error"],"TimeoutError")
+        self.assertEqual(row["decision"],"HOLD")
+        self.assertEqual(row["observations"],[])
+        self.assertEqual(row["orders"],[])
+        self.assertEqual(row["risk"]["status"],"UNKNOWN_BLOCK")
