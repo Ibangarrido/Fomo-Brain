@@ -10,6 +10,7 @@ def observe(mints, *, fetcher=None):
     kwargs={} if fetcher is None else {"fetcher":fetcher}
     batch=next(poll(mints,**kwargs))
     return [dict(mint=r["mint"],source_status=r["status"],observations=r["observations"],
+                 source_error=r.get("error"),
                  decision="HOLD",reason="NO_VERIFIED_EXECUTION_EVIDENCE",
                  risk=assess(),orders=[]) for r in batch]
 
