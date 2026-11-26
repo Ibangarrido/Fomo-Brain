@@ -36,3 +36,32 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(len(next(poll([M,M],fetcher=lambda m:[]))),1)
     def test_budget(self):
         with self.assertRaises(ValueError): list(poll([M],interval=1))
+
+    def test_fetch_retry_recovers(self):
+        calls, delays = [], []
+        def opener(*args, **kwargs):
+            calls.append(1)
+            if len(calls) < 3:
+                raise TimeoutError()
+            return io.BytesIO(json.dumps([self.row()]).encode())
+        rows = fetch(M, opener=opener, sleep=delays.append)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(delays, [1, 2])
+        self.assertFalse(rows[0]["route_verified"])
+    def test_fetch_retry_exhausted(self):
+        calls, delays = [], []
+        def opener(*args, **kwargs):
+            calls.append(1)
+            raise TimeoutError()
+        with self.assertRaises(TimeoutError):
+            fetch(M, opener=opener, sleep=delays.append)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(delays, [1, 2])
+    def test_fetch_no_retry_forbidden(self):
+        from urllib.error import HTTPError
+        delays = []
+        def opener(*args, **kwargs):
+            raise HTTPError("https://example.invalid", 403, "Forbidden", None, None)
+        with self.assertRaises(HTTPError):
+            fetch(M, opener=opener, sleep=delays.append)
+        self.assertEqual(delays, [])
