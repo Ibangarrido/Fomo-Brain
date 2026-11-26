@@ -15,3 +15,23 @@ class ProfitExperimentTest(unittest.TestCase):
         self.assertEqual(r["autotest"]["decision"],"INSUFFICIENT_EVIDENCE")
         self.assertEqual(r["orders"],[])
         self.assertEqual(len(r["shadow"]),4)
+
+
+class StaircaseWatchTests(unittest.TestCase):
+    def case(self, prices, wrong_pool=False, future=False):
+        from brain_v2_profit_experiment import staircase_watch
+        rows=[dict(mint="m",pair="p",source="dexscreener",received_at=100+i*30,price_usd=p) for i,p in enumerate(prices)]
+        if wrong_pool: rows[-1]["pair"]="other"
+        return staircase_watch(rows,as_of=rows[-1]["received_at"]-(1 if future else 0))
+    def test_repeated_crash(self):
+        r=self.case([1,2,.2,.4,.8,.1])
+        self.assertEqual(r["status"],"REPEAT_CRASH_ALERT")
+        self.assertEqual(r["orders"],[])
+    def test_healthy(self):
+        self.assertEqual(self.case([1,1.2,1.1,1.4,1.3,1.6])["status"],"NO_REPEAT_FLAG")
+    def test_single_crash(self):
+        self.assertEqual(self.case([1,2,.2,.19,.18,.17])["status"],"WATCH")
+    def test_wrong_pool(self):
+        self.assertEqual(self.case([1,2,.2,.4,.8,.1],wrong_pool=True)["status"],"UNKNOWN")
+    def test_future(self):
+        self.assertEqual(self.case([1,2,.2,.4,.8,.1],future=True)["status"],"UNKNOWN")
