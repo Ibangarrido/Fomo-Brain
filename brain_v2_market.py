@@ -32,7 +32,7 @@ def observe(mints, *, fetcher=None, fallback=None):
     if fallback is None and fetcher is None:
         fallback=bridge
     result=[dict(mint=r["mint"],source_status=r["status"],observations=r["observations"],
-                 source_error=r.get("error"),
+                 source_error=r.get("error"),source_http_status=r.get("http_status"),
                  decision="HOLD",reason="NO_VERIFIED_EXECUTION_EVIDENCE",
                  risk=assess(),orders=[]) for r in batch]
     for row in result:
