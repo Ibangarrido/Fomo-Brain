@@ -4,13 +4,23 @@ import math
 import re
 import time
 from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
 
 BASE="https://api.dexscreener.com/token-pairs/v1/solana/"
-def fetch(mint, *, opener=urlopen, clock=time.time):
+def fetch(mint, *, opener=urlopen, clock=time.time, sleep=time.sleep):
     if not isinstance(mint,str) or not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}",mint):
         raise ValueError("invalid mint")
-    with opener(BASE+mint,timeout=8) as response:
-        raw=response.read(2_000_001)
+    for attempt in range(3):
+        try:
+            with opener(BASE+mint,timeout=8) as response:
+                raw=response.read(2_000_001)
+            break
+        except (HTTPError, URLError, TimeoutError, ConnectionError) as exc:
+            if isinstance(exc, HTTPError) and exc.code not in (408, 500, 502, 503, 504):
+                raise
+            if attempt == 2:
+                raise
+            sleep(2 ** attempt)
     if len(raw)>2_000_000:
         raise ValueError("oversized response")
     rows=json.loads(raw)
