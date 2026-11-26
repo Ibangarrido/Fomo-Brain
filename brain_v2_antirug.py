@@ -30,3 +30,24 @@ def assess(*, liquidity_usd=None, previous_liquidity_usd=None,
     if route_verified is not True:
         unknown.append("EXIT_ROUTE")
     return dict(status="RISK_BLOCK" if risks else "UNKNOWN_BLOCK" if unknown else "NO_FLAG_OBSERVED",risks=risks,unknown=unknown,orders=[])
+
+
+def liquidity_watch(previous, current, *, as_of, max_gap=120):
+    """Same-pool receipt-time comparison; USD decline is not proof of withdrawal."""
+    unknown=dict(status="UNKNOWN",orders=[],withdrawal_verified=False)
+    try:
+        for key in ("mint","pair","source"):
+            if not isinstance(previous[key],str) or not previous[key] or previous[key]!=current[key]:
+                return unknown
+        if previous["source"]!="dexscreener":
+            return unknown
+        a,b,t,u=(previous["liquidity_usd"],current["liquidity_usd"],previous["received_at"],current["received_at"])
+        if not all(type(x) in (int,float) and math.isfinite(x) for x in (a,b,t,u,as_of)):
+            return unknown
+        if not (a>0 and b>=0 and 0<t<u<=as_of and u-t<=max_gap and as_of-u<=60):
+            return unknown
+    except (KeyError,TypeError,ValueError):
+        return unknown
+    drop=100*(a-b)/a
+    return dict(status="LIQUIDITY_DROP_ALERT" if drop>=30 else "LIQUIDITY_WATCH" if drop>=15 else "NO_DROP_ALERT",
+                drop_pct=drop,orders=[],withdrawal_verified=False,scope="OBSERVATION_ONLY")
