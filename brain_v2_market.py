@@ -1,18 +1,34 @@
 """Market observation orchestration; no executable quotes or ledger mutation."""
 from brain_v2_live import poll
+from brain_v2_solana_bridge import bridge
 from brain_v2_doctor import diagnose
 from brain_v2_antirug import assess
 from brain_v2_replay import review
 from brain_v2_adaptive import evaluate
 from brain_v2_core import cycle
 
-def observe(mints, *, fetcher=None):
+def observe(mints, *, fetcher=None, fallback=None):
     kwargs={} if fetcher is None else {"fetcher":fetcher}
     batch=next(poll(mints,**kwargs))
-    return [dict(mint=r["mint"],source_status=r["status"],observations=r["observations"],
+    # Only default live calls use the public fallback; injected tests stay offline.
+    if fallback is None and fetcher is None:
+        fallback=bridge
+    result=[dict(mint=r["mint"],source_status=r["status"],observations=r["observations"],
                  source_error=r.get("error"),
                  decision="HOLD",reason="NO_VERIFIED_EXECUTION_EVIDENCE",
                  risk=assess(),orders=[]) for r in batch]
+    for row in result:
+        if fallback is None or row["source_status"] not in ("SOURCE_ERROR","NO_DATA"):
+            continue
+        try:
+            evidence=fallback(row["mint"])
+            if evidence.get("mint") != row["mint"]:
+                raise ValueError("fallback mint mismatch")
+            row["fallback_sources"]=evidence["sources"]
+        except Exception as exc:
+            row["fallback_error"]=type(exc).__name__
+        # Fallback evidence is informational; never promote to executable or OK.
+    return result
 
 def integrated(*, state, previous, now, candidates, journal, health_evidence,
                market_rows, replay_records=(), baseline=(), challenger=(), selection_cutoff=None):
