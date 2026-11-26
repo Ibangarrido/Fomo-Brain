@@ -44,3 +44,29 @@ def observe(journal, key, *, timestamp, price, observed_at, tolerance=60):
             row["outcomes"][slot] = result
             return slot
     return None
+
+
+def risk_memory(journal, *, chain, mint, as_of, ttl=86400):
+    """Read-only risk history from recorded decisions; alerts are not fraud findings."""
+    if not all(isinstance(x,str) and x.strip() for x in (chain,mint)) or not positive(as_of) or not positive(ttl):
+        raise ValueError("invalid risk query")
+    evidence={}
+    for key,item in journal.items():
+        row=item["decision"]
+        if (row["chain"],row["mint"])!=(chain,mint):
+            continue
+        t=row["timestamp"]
+        if not positive(t) or not 0<=as_of-t<=ttl:
+            continue
+        features=row["features"]
+        alert=features.get("risk_alert")
+        if alert not in ("REPEAT_CRASH_ALERT","LIQUIDITY_DROP_ALERT"):
+            continue
+        pool=features.get("pair")
+        if not isinstance(pool,str) or not pool:
+            continue
+        identity=(pool,t,alert)
+        evidence.setdefault(identity,dict(decision_id=key,timestamp=t,pair=pool,alert=alert))
+    rows=sorted(evidence.values(),key=lambda r:(r["timestamp"],r["pair"],r["alert"]))
+    return dict(status="RISK_REVIEW" if rows else "NO_RECENT_RECORDED_ALERT",
+                evidence=rows,scope="PAPER_OBSERVATION_ONLY",orders=[],fraud_verified=False)
