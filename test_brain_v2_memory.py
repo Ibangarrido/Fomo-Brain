@@ -29,3 +29,22 @@ class MemoryTests(unittest.TestCase):
     def test_snapshot(self):
         self.args["features"]["volume"]=0
         self.assertEqual(self.j[self.key]["decision"]["features"]["volume"],500)
+
+    def test_discard_review_cutoff(self):
+        from brain_v2_memory import discard_review
+        observe(self.j,self.key,timestamp=2800,price=5,observed_at=2900)
+        self.assertEqual(discard_review(self.j,as_of=2850)["counts"]["pending"],1)
+        r=discard_review(self.j,as_of=2900)
+        self.assertEqual(r["counts"]["matured"],1)
+        self.assertEqual(r["counts"]["rally_5x"],1)
+        self.assertEqual(r["orders"],[])
+    def test_legacy_replay_does_not_invent_receipt(self):
+        from brain_v2_memory import discard_review
+        observe(self.j,self.key,timestamp=2800,price=2,observed_at=2900)
+        del self.j[self.key]["outcome_received_at"]
+        observe(self.j,self.key,timestamp=2800,price=2,observed_at=3000)
+        self.assertEqual(discard_review(self.j,as_of=3100)["counts"]["pending"],1)
+    def test_receipt_immutable(self):
+        observe(self.j,self.key,timestamp=2800,price=2,observed_at=2900)
+        observe(self.j,self.key,timestamp=2800,price=2,observed_at=3000)
+        self.assertEqual(self.j[self.key]["outcome_received_at"]["1800"],2900)
