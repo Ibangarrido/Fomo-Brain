@@ -3,7 +3,7 @@ import hashlib
 import json
 import math
 
-HORIZONS = (300, 900, 3600, 14400)
+HORIZONS = (300, 900, 1800, 3600, 14400)
 
 def positive(x):
     return type(x) in (int, float) and math.isfinite(x) and x > 0
@@ -42,6 +42,7 @@ def observe(journal, key, *, timestamp, price, observed_at, tolerance=60):
             if slot in row["outcomes"] and row["outcomes"][slot] != result:
                 raise ValueError("conflicting outcome")
             row["outcomes"][slot] = result
+            row.setdefault("outcome_received_at", {}).setdefault(slot, observed_at)
             return slot
     return None
 
@@ -70,3 +71,34 @@ def risk_memory(journal, *, chain, mint, as_of, ttl=86400):
     rows=sorted(evidence.values(),key=lambda r:(r["timestamp"],r["pair"],r["alert"]))
     return dict(status="RISK_REVIEW" if rows else "NO_RECENT_RECORDED_ALERT",
                 evidence=rows,scope="PAPER_OBSERVATION_ONLY",orders=[],fraud_verified=False)
+
+
+def discard_review(journal, *, as_of, horizon=1800, decisions=("HOLD","BLOCK","REJECT","DISCARD")):
+    """Descriptive matured outcomes only; legacy unknown receipt times excluded."""
+    if not positive(as_of) or horizon not in HORIZONS:
+        raise ValueError("invalid review cutoff or horizon")
+    counts=dict(matured=0, pending=0, rally_2x=0, rally_5x=0, rally_10x=0, crash_50pct=0)
+    by_reason={}
+    slot=str(horizon)
+    for item in journal.values():
+        row=item["decision"]
+        if row["decision"] not in decisions or row["timestamp"]>as_of:
+            continue
+        outcome=item["outcomes"].get(slot)
+        receipt=item.get("outcome_received_at",{}).get(slot)
+        if not outcome or not positive(receipt) or not row["timestamp"]+horizon<=outcome["timestamp"]<=receipt<=as_of:
+            counts["pending"]+=1
+            continue
+        ret=outcome["gross_return_pct"]
+        if not math.isfinite(ret):
+            counts["pending"]+=1
+            continue
+        counts["matured"]+=1
+        group=by_reason.setdefault(row["reason"],dict(matured=0,rally_2x=0,crash_50pct=0))
+        group["matured"]+=1
+        for key,threshold in (("rally_2x",100),("rally_5x",400),("rally_10x",900)):
+            counts[key]+=int(ret>=threshold)
+        counts["crash_50pct"]+=int(ret<=-50)
+        group["rally_2x"]+=int(ret>=100)
+        group["crash_50pct"]+=int(ret<=-50)
+    return dict(counts=counts,by_reason=by_reason,horizon=horizon,scope="DESCRIPTIVE_PRICE_ONLY",orders=[])
