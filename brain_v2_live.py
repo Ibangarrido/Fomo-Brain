@@ -61,3 +61,26 @@ def poll(mints, *, fetcher=fetch, rounds=1, interval=30, sleep=time.sleep):
         yield batch
         if i+1<rounds:
             sleep(interval if all(r["status"]!="SOURCE_ERROR" for r in batch) else min(300,interval*2))
+
+
+def turbo_plan(targets, *, now, last_attempt, blocked_until=0, budget=10):
+    """Pure bounded scheduling plan; caller must persist attempts and enforce provider limits."""
+    if type(now) not in (int,float) or not math.isfinite(now) or type(blocked_until) not in (int,float) or not math.isfinite(blocked_until) or type(budget) is not int or not 1<=budget<=10:
+        raise ValueError("invalid scheduling budget")
+    if now<blocked_until:
+        return dict(status="BACKOFF",due=[],orders=[])
+    intervals={"position":15,"candidate":15,"market":30,"whale":30}
+    priority={"position":0,"candidate":1,"whale":2,"market":3}
+    unique={}
+    for target in targets:
+        kind,key=target.get("kind"),target.get("key")
+        if kind not in intervals or not isinstance(key,str) or not key:
+            raise ValueError("invalid target")
+        ident=(kind,key)
+        last=last_attempt.get(ident)
+        if last is not None and (type(last) not in (int,float) or not math.isfinite(last) or last>now):
+            raise ValueError("invalid attempt time")
+        if last is None or now-last>=intervals[kind]:
+            unique[ident]=(priority[kind],last if last is not None else -math.inf,kind,key)
+    due=[dict(kind=k,key=v,interval_seconds=intervals[k]) for _,__,k,v in sorted(unique.values())[:budget]]
+    return dict(status="DUE" if due else "IDLE",due=due,orders=[],scope="PAPER_OBSERVATION_ONLY")
