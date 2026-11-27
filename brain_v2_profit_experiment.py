@@ -71,3 +71,15 @@ def staircase_watch(samples, *, as_of):
                 crashes+=1; trough=p
     return dict(status="REPEAT_CRASH_ALERT" if crashes>=2 and cycles>=1 else "WATCH" if crashes else "NO_REPEAT_FLAG",
                 cycles=cycles,crashes=crashes,orders=[],scope="OBSERVATION_ONLY")
+
+
+def partial_profit_plan(entry, price, peak, quote_age, liquidity, route_verified, completed=()):
+    """Shadow-only candidates, fractions of original position; no execution."""
+    risk=profit_lock(entry,price,peak,quote_age,liquidity,route_verified)
+    if risk not in ("MONITOR","PAPER_EXIT_CANDIDATE"):
+        return dict(status=risk,candidates=[],orders=[])
+    levels=(50,100,200)
+    if not isinstance(completed,(tuple,list)) or tuple(completed)!=levels[:len(completed)]:
+        return dict(status="UNKNOWN_HISTORY",candidates=[],orders=[])
+    candidates=[dict(level_pct=l,fraction_original=0.25) for l in levels[len(completed):] if price/entry>=1+l/100]
+    return dict(status=risk,candidates=candidates,remaining_fraction=1-0.25*len(completed),orders=[],scope="PAPER_SHADOW_ONLY")
