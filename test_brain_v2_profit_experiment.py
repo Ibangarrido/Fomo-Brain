@@ -35,3 +35,22 @@ class StaircaseWatchTests(unittest.TestCase):
         self.assertEqual(self.case([1,2,.2,.4,.8,.1],wrong_pool=True)["status"],"UNKNOWN")
     def test_future(self):
         self.assertEqual(self.case([1,2,.2,.4,.8,.1],future=True)["status"],"UNKNOWN")
+
+
+class PartialProfitTests(unittest.TestCase):
+    def plan(self, price, peak, completed=(), route=True):
+        from brain_v2_profit_experiment import partial_profit_plan
+        return partial_profit_plan(10,price,peak,1,10000,route,completed)
+    def test_thresholds(self):
+        self.assertEqual([x["level_pct"] for x in self.plan(30,30)["candidates"]],[50,100,200])
+    def test_no_duplicate_completed(self):
+        r=self.plan(30,30,(50,100))
+        self.assertEqual([x["level_pct"] for x in r["candidates"]],[200])
+        self.assertEqual(r["remaining_fraction"],.5)
+        self.assertEqual(r["orders"],[])
+    def test_invalid_history(self):
+        self.assertEqual(self.plan(30,30,(100,))["status"],"UNKNOWN_HISTORY")
+    def test_unverified_route(self):
+        self.assertEqual(self.plan(30,30,route=False)["candidates"],[])
+    def test_retracement(self):
+        self.assertEqual(self.plan(13,15)["status"],"PAPER_EXIT_CANDIDATE")
