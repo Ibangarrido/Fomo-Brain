@@ -65,3 +65,23 @@ class LiveTests(unittest.TestCase):
         with self.assertRaises(HTTPError):
             fetch(M, opener=opener, sleep=delays.append)
         self.assertEqual(delays, [])
+
+
+class TurboTests(unittest.TestCase):
+    def plan(self, targets, **kwargs):
+        from brain_v2_live import turbo_plan
+        return turbo_plan(targets, **dict(dict(now=100,last_attempt={}),**kwargs))
+    def test_priority_budget_dedup(self):
+        targets=[dict(kind=k,key="a") for k in ("market","whale","candidate","position","position")]
+        r=self.plan(targets,budget=3)
+        self.assertEqual([x["kind"] for x in r["due"]],["position","candidate","whale"])
+        self.assertEqual(r["orders"],[])
+    def test_cadence(self):
+        targets=[dict(kind=k,key="a") for k in ("position","candidate","whale","market")]
+        r=self.plan(targets,last_attempt={(k,"a"):85 for k in ("position","candidate","whale","market")})
+        self.assertEqual([x["kind"] for x in r["due"]],["position","candidate"])
+    def test_backoff(self):
+        self.assertEqual(self.plan([dict(kind="position",key="a")],blocked_until=101)["due"],[])
+    def test_future_attempt(self):
+        with self.assertRaises(ValueError):
+            self.plan([dict(kind="position",key="a")],last_attempt={("position","a"):101})
