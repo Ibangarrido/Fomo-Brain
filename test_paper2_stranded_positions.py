@@ -86,7 +86,7 @@ class StrandedPositionsTest(unittest.TestCase):
         self.assertIn("mint:pool", self.state["positions"])
         self.assertEqual(self.state["stranded_missing_quote_observations"], {})
 
-        def test_missing_quotes_recovery_resets_observation(self):
+    def test_missing_quotes_recovery_resets_observation(self):
         quarantine_persistent_missing_quotes(self.state, [{"key":"other:pool","ts":1000,"price":1.0,"liquidity":20000}], "run-1", 1000)
         good = [{"key": "mint:pool", "ts":5000, "price": 1.0, "liquidity": 20000}]
         self.assertEqual(quarantine_persistent_missing_quotes(self.state, good, "run-2", 5000), [])
