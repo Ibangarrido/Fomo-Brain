@@ -26,3 +26,27 @@ class AntiRugTests(unittest.TestCase):
         self.assertEqual(self.case(top10_pct=float("nan"))["status"],"UNKNOWN_BLOCK")
     def test_no_orders(self):
         self.assertEqual(self.case()["orders"],[])
+
+
+class LiquidityWatchTests(unittest.TestCase):
+    def case(self, **kw):
+        from brain_v2_antirug import liquidity_watch
+        a=dict(mint="m",pair="p",source="dexscreener",liquidity_usd=10000,received_at=100)
+        b=dict(a,liquidity_usd=7000,received_at=130)
+        b.update(kw)
+        return liquidity_watch(a,b,as_of=140)
+    def test_drop(self):
+        r=self.case()
+        self.assertEqual(r["status"],"LIQUIDITY_DROP_ALERT")
+        self.assertFalse(r["withdrawal_verified"])
+        self.assertEqual(r["orders"],[])
+    def test_warning(self):
+        self.assertEqual(self.case(liquidity_usd=8000)["status"],"LIQUIDITY_WATCH")
+    def test_wrong_pool(self):
+        self.assertEqual(self.case(pair="other")["status"],"UNKNOWN")
+    def test_future(self):
+        self.assertEqual(self.case(received_at=150)["status"],"UNKNOWN")
+    def test_duplicate_time(self):
+        self.assertEqual(self.case(received_at=100)["status"],"UNKNOWN")
+    def test_invalid(self):
+        self.assertEqual(self.case(liquidity_usd=float("nan"))["status"],"UNKNOWN")

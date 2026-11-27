@@ -36,3 +36,52 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(len(next(poll([M,M],fetcher=lambda m:[]))),1)
     def test_budget(self):
         with self.assertRaises(ValueError): list(poll([M],interval=1))
+
+    def test_fetch_retry_recovers(self):
+        calls, delays = [], []
+        def opener(*args, **kwargs):
+            calls.append(1)
+            if len(calls) < 3:
+                raise TimeoutError()
+            return io.BytesIO(json.dumps([self.row()]).encode())
+        rows = fetch(M, opener=opener, sleep=delays.append)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(delays, [1, 2])
+        self.assertFalse(rows[0]["route_verified"])
+    def test_fetch_retry_exhausted(self):
+        calls, delays = [], []
+        def opener(*args, **kwargs):
+            calls.append(1)
+            raise TimeoutError()
+        with self.assertRaises(TimeoutError):
+            fetch(M, opener=opener, sleep=delays.append)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(delays, [1, 2])
+    def test_fetch_no_retry_forbidden(self):
+        from urllib.error import HTTPError
+        delays = []
+        def opener(*args, **kwargs):
+            raise HTTPError("https://example.invalid", 403, "Forbidden", None, None)
+        with self.assertRaises(HTTPError):
+            fetch(M, opener=opener, sleep=delays.append)
+        self.assertEqual(delays, [])
+
+
+class TurboTests(unittest.TestCase):
+    def plan(self, targets, **kwargs):
+        from brain_v2_live import turbo_plan
+        return turbo_plan(targets, **dict(dict(now=100,last_attempt={}),**kwargs))
+    def test_priority_budget_dedup(self):
+        targets=[dict(kind=k,key="a") for k in ("market","whale","candidate","position","position")]
+        r=self.plan(targets,budget=3)
+        self.assertEqual([x["kind"] for x in r["due"]],["position","candidate","whale"])
+        self.assertEqual(r["orders"],[])
+    def test_cadence(self):
+        targets=[dict(kind=k,key="a") for k in ("position","candidate","whale","market")]
+        r=self.plan(targets,last_attempt={(k,"a"):85 for k in ("position","candidate","whale","market")})
+        self.assertEqual([x["kind"] for x in r["due"]],["position","candidate"])
+    def test_backoff(self):
+        self.assertEqual(self.plan([dict(kind="position",key="a")],blocked_until=101)["due"],[])
+    def test_future_attempt(self):
+        with self.assertRaises(ValueError):
+            self.plan([dict(kind="position",key="a")],last_attempt={("position","a"):101})

@@ -3,14 +3,24 @@ import json
 import math
 import re
 import time
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 BASE="https://api.dexscreener.com/token-pairs/v1/solana/"
-def fetch(mint, *, opener=urlopen, clock=time.time):
+def fetch(mint, *, opener=urlopen, clock=time.time, sleep=time.sleep):
     if not isinstance(mint,str) or not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}",mint):
         raise ValueError("invalid mint")
-    with opener(BASE+mint,timeout=8) as response:
-        raw=response.read(2_000_001)
+    for attempt in range(3):
+        try:
+            with opener(Request(BASE+mint, headers={"Accept":"application/json","User-Agent":"FomoBrain-Paper/2.0"}),timeout=10) as response:
+                raw=response.read(2_000_001)
+            break
+        except (HTTPError, URLError, TimeoutError, ConnectionError) as exc:
+            if isinstance(exc, HTTPError) and exc.code not in (408, 500, 502, 503, 504):
+                raise
+            if attempt == 2:
+                raise
+            sleep(2 ** attempt)
     if len(raw)>2_000_000:
         raise ValueError("oversized response")
     rows=json.loads(raw)
@@ -47,7 +57,30 @@ def poll(mints, *, fetcher=fetch, rounds=1, interval=30, sleep=time.sleep):
                 rows=fetcher(mint)
                 batch.append(dict(mint=mint,status="OK" if rows else "NO_DATA",observations=rows))
             except Exception as exc:
-                batch.append(dict(mint=mint,status="SOURCE_ERROR",error=type(exc).__name__,observations=[]))
+                batch.append(dict(mint=mint,status="SOURCE_ERROR",error=type(exc).__name__,http_status=exc.code if isinstance(exc,HTTPError) else None,observations=[]))
         yield batch
         if i+1<rounds:
             sleep(interval if all(r["status"]!="SOURCE_ERROR" for r in batch) else min(300,interval*2))
+
+
+def turbo_plan(targets, *, now, last_attempt, blocked_until=0, budget=10):
+    """Pure bounded scheduling plan; caller must persist attempts and enforce provider limits."""
+    if type(now) not in (int,float) or not math.isfinite(now) or type(blocked_until) not in (int,float) or not math.isfinite(blocked_until) or type(budget) is not int or not 1<=budget<=10:
+        raise ValueError("invalid scheduling budget")
+    if now<blocked_until:
+        return dict(status="BACKOFF",due=[],orders=[])
+    intervals={"position":15,"candidate":15,"market":30,"whale":30}
+    priority={"position":0,"candidate":1,"whale":2,"market":3}
+    unique={}
+    for target in targets:
+        kind,key=target.get("kind"),target.get("key")
+        if kind not in intervals or not isinstance(key,str) or not key:
+            raise ValueError("invalid target")
+        ident=(kind,key)
+        last=last_attempt.get(ident)
+        if last is not None and (type(last) not in (int,float) or not math.isfinite(last) or last>now):
+            raise ValueError("invalid attempt time")
+        if last is None or now-last>=intervals[kind]:
+            unique[ident]=(priority[kind],last if last is not None else -math.inf,kind,key)
+    due=[dict(kind=k,key=v,interval_seconds=intervals[k]) for _,__,k,v in sorted(unique.values())[:budget]]
+    return dict(status="DUE" if due else "IDLE",due=due,orders=[],scope="PAPER_OBSERVATION_ONLY")
