@@ -89,15 +89,18 @@ def quarantine_persistent_missing_quotes(state, samples, run_id, now, min_gap_se
         raise ValueError("PAPER2 only")
     if not run_id or not isinstance(now, (int, float)) or isinstance(now, bool) or not math.isfinite(now):
         raise ValueError("Valid run and observation time required")
-    quotes = {s["key"]: s for s in samples}
+    from brain_clean_v1 import MAX_AGE_SECONDS
+    def fresh(s):
+        return all(type(s.get(k)) in (int,float) and math.isfinite(s[k]) for k in ("ts","price","liquidity")) and now-MAX_AGE_SECONDS <= s["ts"] <= now+60 and s["price"]>0 and s["liquidity"]>0
+    quotes = {s["key"]: s for s in samples if isinstance(s,dict) and "key" in s}
+    if not any(fresh(s) for s in quotes.values()):
+        state.setdefault("stranded_missing_quote_observations", {}).clear()
+        return []
     observations = state.setdefault("stranded_missing_quote_observations", {})
     quarantined = []
     for key in list(state["positions"]):
         q = quotes.get(key)
-        missing = (q is None or not isinstance(q.get("price"), (int, float))
-                   or not isinstance(q.get("liquidity"), (int, float))
-                   or not math.isfinite(q["price"]) or not math.isfinite(q["liquidity"])
-                   or q["price"] <= 0 or q["liquidity"] <= 0)
+        missing = q is None or not fresh(q)
         if not missing:
             observations.pop(key, None)
             continue
