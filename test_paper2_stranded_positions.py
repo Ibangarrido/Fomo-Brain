@@ -68,18 +68,27 @@ class StrandedPositionsTest(unittest.TestCase):
 
     def test_missing_quotes_two_runs_isolate_without_sale_or_cash_change(self):
         before = copy.deepcopy(self.state)
-        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-1", 1000), [])
-        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-1", 5000), [])
-        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-2", 5000), ["mint:pool"])
+        def healthy(t):
+            return [{"key":"other:pool","ts":t,"price":1.0,"liquidity":20000}]
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(1000), "run-1", 1000), [])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(5000), "run-1", 5000), [])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(5000), "run-2", 5000), ["mint:pool"])
         self.assertEqual(self.state["cash"], before["cash"])
         self.assertEqual(self.state["closed"], before["closed"])
         self.assertEqual(self.state["isolated_positions"]["mint:pool"]["cost"], 10)
         self.assertIsNone(self.state["isolated_positions"]["mint:pool"]["realizable_value_eur"])
-        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-3", 9000), [])
 
-    def test_missing_quotes_recovery_resets_observation(self):
-        quarantine_persistent_missing_quotes(self.state, [], "run-1", 1000)
-        good = [{"key": "mint:pool", "price": 1.0, "liquidity": 20000}]
+    def test_empty_or_stale_feed_never_quarantines(self):
+        healthy = [{"key":"other:pool","ts":1000,"price":1.0,"liquidity":20000}]
+        quarantine_persistent_missing_quotes(self.state, healthy, "run-1", 1000)
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-2", 5000), [])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy, "run-3", 50000), [])
+        self.assertIn("mint:pool", self.state["positions"])
+        self.assertEqual(self.state["stranded_missing_quote_observations"], {})
+
+        def test_missing_quotes_recovery_resets_observation(self):
+        quarantine_persistent_missing_quotes(self.state, [{"key":"other:pool","ts":1000,"price":1.0,"liquidity":20000}], "run-1", 1000)
+        good = [{"key": "mint:pool", "ts":5000, "price": 1.0, "liquidity": 20000}]
         self.assertEqual(quarantine_persistent_missing_quotes(self.state, good, "run-2", 5000), [])
         self.assertEqual(self.state["stranded_missing_quote_observations"], {})
         self.assertEqual(quarantine_persistent_missing_quotes(self.state, [], "run-3", 9000), [])
