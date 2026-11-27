@@ -41,8 +41,9 @@ def observe(journal, key, *, timestamp, price, observed_at, tolerance=60):
             slot = str(horizon)
             if slot in row["outcomes"] and row["outcomes"][slot] != result:
                 raise ValueError("conflicting outcome")
-            row["outcomes"][slot] = result
-            row.setdefault("outcome_received_at", {}).setdefault(slot, observed_at)
+            if slot not in row["outcomes"]:
+                row["outcomes"][slot] = result
+                row.setdefault("outcome_received_at", {})[slot] = observed_at
             return slot
     return None
 
@@ -82,7 +83,7 @@ def discard_review(journal, *, as_of, horizon=1800, decisions=("HOLD","BLOCK","R
     slot=str(horizon)
     for item in journal.values():
         row=item["decision"]
-        if row["decision"] not in decisions or row["timestamp"]>as_of:
+        if row["decision"].upper() not in decisions or row["timestamp"]>as_of:
             continue
         outcome=item["outcomes"].get(slot)
         receipt=item.get("outcome_received_at",{}).get(slot)
