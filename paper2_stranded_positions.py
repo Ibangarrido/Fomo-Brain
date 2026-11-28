@@ -79,7 +79,7 @@ def quarantine_persistent_low_liquidity(state, run_id, samples=None, now=None, m
     return quarantined
 
 
-def quarantine_persistent_missing_quotes(state, samples, run_id, now, min_gap_seconds=3600):
+def quarantine_persistent_missing_quotes(state, samples, run_id, now, min_gap_seconds=3600, *, confirmed_missing_keys=()):
     """Release PAPER2 slots only after two independent runs with absent quotes.
 
     This is administrative isolation, not evidence of a sale or zero value.
@@ -101,7 +101,8 @@ def quarantine_persistent_missing_quotes(state, samples, run_id, now, min_gap_se
     for key in list(state["positions"]):
         q = quotes.get(key)
         missing = q is None or not fresh(q)
-        if not missing:
+        # A healthy unrelated quote does not establish target request success.
+        if not missing or key not in confirmed_missing_keys:
             observations.pop(key, None)
             continue
         previous = observations.get(key)
