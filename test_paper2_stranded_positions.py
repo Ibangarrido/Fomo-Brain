@@ -70,13 +70,20 @@ class StrandedPositionsTest(unittest.TestCase):
         before = copy.deepcopy(self.state)
         def healthy(t):
             return [{"key":"other:pool","ts":t,"price":1.0,"liquidity":20000}]
-        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(1000), "run-1", 1000), [])
-        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(5000), "run-1", 5000), [])
-        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(5000), "run-2", 5000), ["mint:pool"])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(1000), "run-1", 1000, confirmed_missing_keys=("mint:pool",)), [])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(5000), "run-1", 5000, confirmed_missing_keys=("mint:pool",)), [])
+        self.assertEqual(quarantine_persistent_missing_quotes(self.state, healthy(5000), "run-2", 5000, confirmed_missing_keys=("mint:pool",)), ["mint:pool"])
         self.assertEqual(self.state["cash"], before["cash"])
         self.assertEqual(self.state["closed"], before["closed"])
         self.assertEqual(self.state["isolated_positions"]["mint:pool"]["cost"], 10)
         self.assertIsNone(self.state["isolated_positions"]["mint:pool"]["realizable_value_eur"])
+
+    def test_unrelated_healthy_quote_is_not_target_evidence(self):
+        for t, run in ((1000, "run-1"), (5000, "run-2")):
+            samples = [{"key":"other:pool","ts":t,"price":1.0,"liquidity":20000}]
+            self.assertEqual(quarantine_persistent_missing_quotes(self.state, samples, run, t), [])
+        self.assertIn("mint:pool", self.state["positions"])
+        self.assertEqual(self.state["stranded_missing_quote_observations"], {})
 
     def test_empty_or_stale_feed_never_quarantines(self):
         healthy = [{"key":"other:pool","ts":1000,"price":1.0,"liquidity":20000}]
