@@ -52,7 +52,7 @@ def quarantine_persistent_low_liquidity(state, run_id, samples=None, now=None, m
         ts, liq, price = q.get("ts"), q.get("liquidity"), q.get("price")
         valid = all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
                     for v in (ts, liq, price))
-        if not valid or ts > now + 60 or ts < now - MAX_AGE_SECONDS or price <= 0 or liq <= 0:
+        if not valid or ts > now + 60 or ts < now - MAX_AGE_SECONDS or price <= 0 or liq < 0 or (liq == 0 and q.get("liquidity_zero_verified") is not True):
             observations.pop(key, None)
             continue
         if liq >= MIN_LIQ:
