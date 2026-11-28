@@ -29,6 +29,14 @@ def run():
     brain.REPORT_FILE = REPORT_FILE
     brain.load_state = lambda path=None: paper2.load_existing()
     original_step = brain.step
+    original_sample = brain.sample
+    def paper2_sample(pair, now):
+        quote = original_sample(pair, now)
+        liquidity = pair.get("liquidity")
+        raw = liquidity.get("usd") if isinstance(liquidity, dict) else None
+        quote["liquidity_zero_verified"] = type(raw) in (int, float) and raw == 0
+        return quote
+    brain.sample = paper2_sample
     from paper2_stranded_positions import (quarantine_persistent_low_liquidity,
         quarantine_persistent_missing_quotes)
     def paper2_step(state, samples, now=None):
@@ -51,6 +59,7 @@ def run():
         brain.main()
     finally:
         brain.step = original_step
+        brain.sample = original_sample
     with open(REPORT_FILE, encoding="utf-8") as handle:
         report = json.load(handle)
     if report.get("run", {}).get("id") != os.environ.get("GITHUB_RUN_ID"):
