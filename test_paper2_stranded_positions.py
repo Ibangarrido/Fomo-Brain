@@ -22,6 +22,21 @@ class StrandedPositionsTest(unittest.TestCase):
         self.assertEqual(isolated["isolation_status"], "ADMINISTRATIVE_NOT_SOLD")
         self.assertFalse(isolated["isolation_evidence"]["exit_unexecutable"])
 
+    def test_zero_liquidity_requires_explicit_evidence(self):
+        for t, run in ((1000, "run-1"), (5000, "run-2")):
+            q = {"key":"mint:pool","ts":t,"price":0.01,"liquidity":0}
+            self.assertEqual(quarantine_persistent_low_liquidity(self.state,run,[q],t),[])
+        self.assertIn("mint:pool",self.state["positions"])
+        self.assertEqual(self.state["stranded_observations"],{})
+
+    def test_verified_zero_liquidity_two_runs(self):
+        q = {"key":"mint:pool","ts":1000,"price":0.01,"liquidity":0,"liquidity_zero_verified":True}
+        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-1",[q],1000),[])
+        self.assertEqual(quarantine_persistent_low_liquidity(self.state,"run-2",[{**q,"ts":5000}],5000),["mint:pool"])
+        self.assertEqual(self.state["cash"],72.28)
+        self.assertEqual(len(self.state["closed"]),1)
+        self.assertEqual(self.state["isolated_positions"]["mint:pool"]["isolation_status"],"ADMINISTRATIVE_NOT_SOLD")
+
     def test_recovered_liquidity_resets_counter(self):
         low = [{"key":"mint:pool","ts":1000,"price":0.01,"liquidity":100}]
         recovered = [{"key":"mint:pool","ts":5000,"price":0.01,"liquidity":20000}]
