@@ -10,7 +10,7 @@ def quarantine_exact_positions(state, keys, evidence):
     if not isinstance(keys, (list, tuple)) or not keys or len(keys) != len(set(keys)):
         raise ValueError("Explicit unique position keys required")
     positions = state["positions"]
-    isolated = state.setdefault("isolated_positions", {})
+    isolated = state.get("isolated_positions", {})
     if not isinstance(isolated, dict):
         raise ValueError("Invalid quarantine ledger")
     for key in keys:
@@ -20,6 +20,7 @@ def quarantine_exact_positions(state, keys, evidence):
         if not isinstance(proof, dict) or (proof.get("exit_unexecutable") is not True and proof.get("administrative_only") is not True) or not proof.get("source"):
             raise ValueError("Specific documented non-executable exit evidence required")
     result = copy.deepcopy(state)
+    result.setdefault("isolated_positions", {})
     for key in keys:
         pos = result["positions"].pop(key)
         result["isolated_positions"][key] = {
