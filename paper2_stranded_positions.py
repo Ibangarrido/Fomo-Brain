@@ -17,13 +17,13 @@ def quarantine_exact_positions(state, keys, evidence):
         if key not in positions or key in isolated:
             raise ValueError("Position absent or already quarantined: " + str(key))
         proof = evidence.get(key) if isinstance(evidence, dict) else None
-        if not isinstance(proof, dict) or proof.get("exit_unexecutable") is not True or not proof.get("source"):
+        if not isinstance(proof, dict) or (proof.get("exit_unexecutable") is not True and proof.get("administrative_only") is not True) or not proof.get("source"):
             raise ValueError("Specific documented non-executable exit evidence required")
     result = copy.deepcopy(state)
     for key in keys:
         pos = result["positions"].pop(key)
         result["isolated_positions"][key] = {
-            **pos, "isolation_status": "UNEXECUTABLE_NOT_SOLD",
+            **pos, "isolation_status": ("ADMINISTRATIVE_NOT_SOLD" if evidence[key].get("administrative_only") is True else "UNEXECUTABLE_NOT_SOLD"),
             "isolation_evidence": copy.deepcopy(evidence[key]),
             "realizable_value_eur": None,
         }
@@ -64,7 +64,7 @@ def quarantine_persistent_low_liquidity(state, run_id, samples=None, now=None, m
             continue
         if previous["run_id"] == str(run_id) or ts < previous["ts"] + min_gap_seconds:
             continue
-        proof = {key: {"exit_unexecutable": True,
+        proof = {key: {"administrative_only": True, "exit_unexecutable": False,
             "source": "PAPER2_TWO_RUN_FRESH_LOW_LIQUIDITY_PROXY_NOT_ROUTE_PROOF",
             "first_run": previous["run_id"], "second_run": str(run_id),
             "first_ts": previous["ts"], "second_ts": ts,
@@ -111,7 +111,7 @@ def quarantine_persistent_missing_quotes(state, samples, run_id, now, min_gap_se
             continue
         if str(previous["run_id"]) == str(run_id) or now < previous["ts"] + min_gap_seconds:
             continue
-        proof = {key: {"exit_unexecutable": True,
+        proof = {key: {"administrative_only": True, "exit_unexecutable": False,
             "source": "PAPER2_TWO_RUN_MISSING_QUOTES_ADMINISTRATIVE_ONLY",
             "first_run": previous["run_id"], "second_run": str(run_id),
             "first_ts": previous["ts"], "second_ts": now,
